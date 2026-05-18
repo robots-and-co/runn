@@ -1,0 +1,1391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Runn</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#b85c1f">
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<link rel="apple-touch-icon" href="/icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Runn">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --paper:   #f8f5ef;
+    --paper-2: #f1ece3;
+    --paper-3: #e7e0d2;
+    --ink:     #2a2620;
+    --ink-2:   #5a544a;
+    --ink-3:   #8c8578;
+    --line:    #d5cdbb;
+    --accent:  #b85c1f;
+    --accent-soft: #f4dfd0;
+  }
+
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    background: var(--paper-2);
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* ── Header ──────────────────────────────────────────────── */
+  .header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 16px; height: 56px;
+    background: var(--paper); border-bottom: 1px solid var(--line);
+    flex-shrink: 0; position: sticky; top: 0; z-index: 10;
+  }
+  .header-logo {
+    font-size: 15px; font-weight: 700; color: var(--ink);
+    cursor: pointer; user-select: none;
+    padding: 8px 10px; margin: -8px -10px;  /* enlarge tap target without changing layout */
+    border-radius: 8px;
+    display: flex; align-items: center; gap: 8px;
+    transition: background .12s;
+  }
+  .header-logo:hover, .header-logo:active { background: var(--paper-3); }
+  .header-board {
+    font-size: 15px; color: var(--ink-3);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .header-board::before { content: '/'; color: var(--line); }
+  .header-sep { flex: 1; }
+  .header-btn {
+    width: 44px; height: 44px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; background: none;
+    color: var(--ink-3); border-radius: 8px; cursor: pointer;
+    font-size: 20px; transition: background .1s, color .1s;
+  }
+  .header-btn:hover { background: var(--paper-3); color: var(--ink); }
+  .ws-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--ink-3); transition: background .15s;
+    flex-shrink: 0;
+  }
+  .ws-dot.live { background: #3a7d44; }
+
+  .header-toggle {
+    display: flex; align-items: center; gap: 4px;
+    height: 36px; padding: 0 10px;
+    background: none; border: 1px solid var(--line);
+    border-radius: 8px; color: var(--ink-3);
+    font-size: 13px; font-family: inherit;
+    cursor: pointer; user-select: none;
+    transition: background .12s, color .12s, opacity .12s;
+  }
+  .header-toggle:hover { color: var(--ink); }
+  .header-toggle.off { opacity: .5; text-decoration: line-through; }
+
+  /* ── Scroll area ─────────────────────────────────────────── */
+  .main { flex: 1; overflow-y: auto; padding: 14px 14px 8px; }
+
+  /* ── Board ───────────────────────────────────────────────── */
+  .board { width: 100%; max-width: 600px; margin: 0 auto; }
+  .items { display: flex; flex-direction: column-reverse; gap: 6px; }
+
+  /* ── Card ────────────────────────────────────────────────── */
+  .card {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 12px;
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 8px; cursor: pointer; position: relative;
+  }
+  .card.active { border-color: var(--ink-3); box-shadow: 0 0 0 1px var(--ink-3); }
+
+  .card.drop-before::before, .card.drop-after::after {
+    content: ''; position: absolute;
+    left: 0; right: 0; height: 2px;
+    background: var(--accent); border-radius: 2px; pointer-events: none;
+  }
+  .card.drop-before::before { top: -4px; }
+  .card.drop-after::after   { bottom: -4px; }
+  .card.drop-nest { border-color: var(--accent); background: var(--accent-soft); }
+  .card.dragging  { opacity: .4; }
+  .card.flash { animation: flash .6s ease-out; }
+  @keyframes flash {
+    0%   { background: var(--accent-soft); }
+    100% { background: var(--paper); }
+  }
+  .card .pulse {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: transparent; transition: background .15s;
+    flex-shrink: 0;
+  }
+  .card .pulse.live {
+    background: #3a7d44;
+    animation: pulse 1.2s ease-out;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(58, 125, 68, .55); }
+    100% { box-shadow: 0 0 0 8px rgba(58, 125, 68, 0); }
+  }
+
+  .card-body { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .card-row1 { display: flex; align-items: center; gap: 8px; }
+  .card-row2 { display: flex; align-items: center; gap: 6px; }
+
+  .card-title {
+    flex: 1; font-size: 15px; color: var(--ink); line-height: 1.35;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .card.done .card-title { text-decoration: line-through; color: var(--ink-3); }
+
+  .chevron {
+    width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; user-select: none; flex-shrink: 0;
+    transition: transform .18s;
+  }
+  .chevron::before {
+    content: ''; display: block; width: 11px; height: 11px;
+    border-top: 2.5px solid var(--line); border-left: 2.5px solid var(--line);
+    transform: rotate(45deg) translate(2px, 2px);
+    transition: border-color .12s;
+  }
+  .chevron:hover::before { border-color: var(--ink-3); }
+  .card.collapsed .chevron { transform: rotate(90deg); }
+  .card:not([data-has-children]) .chevron { visibility: hidden; pointer-events: none; }
+
+  .card-controls {
+    display: flex; flex-direction: row; align-items: center;
+    align-self: stretch; gap: 2px;
+  }
+  .handle {
+    color: var(--line); cursor: grab; font-size: 18px;
+    user-select: none; flex-shrink: 0; padding: 4px 0;
+  }
+  .handle:active { cursor: grabbing; }
+
+  .card-add-step {
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; background: none; color: var(--line);
+    cursor: pointer; border-radius: 4px; flex-shrink: 0;
+    font-size: 18px; line-height: 1; font-family: inherit;
+    transition: background .12s, color .12s;
+  }
+  .card-add-step:hover { color: var(--ink-3); background: var(--paper-3); }
+
+  .inline-step-input {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px;
+    background: var(--paper);
+    border: 1px dashed var(--accent);
+    border-radius: 8px;
+  }
+  .inline-step-input input {
+    flex: 1; font-family: inherit; font-size: 15px;
+    background: none; border: none; outline: none;
+    color: var(--ink); min-width: 0;
+  }
+  .inline-step-input input::placeholder { color: var(--ink-3); }
+
+  .chip {
+    font-size: 11px; font-weight: 600; padding: 2px 8px;
+    border-radius: 4px; white-space: nowrap; flex-shrink: 0;
+    border: none; cursor: pointer; font-family: inherit;
+  }
+  .chip:hover { filter: brightness(0.96); }
+  .chip-todo    { background: var(--paper-3);     color: var(--ink-3); }
+  .chip-doing   { background: var(--accent-soft); color: var(--accent); }
+  .chip-done    { background: #dff0e2;            color: #3a7d44; }
+  .chip-blocked { background: #fde8de;            color: #b84f1f; }
+
+  .badge-ext {
+    font-size: 10px; font-weight: 600; padding: 1px 6px;
+    border-radius: 3px; white-space: nowrap; flex-shrink: 0;
+    background: #ebe6dc; color: var(--ink-3);
+    border: 1px dashed var(--ink-3);
+    letter-spacing: .03em; text-transform: uppercase;
+  }
+  .badge-ext::before { content: '↗ '; }
+
+  .due-chip {
+    font-size: 10px; font-weight: 600; padding: 1px 6px;
+    border-radius: 3px; white-space: nowrap; flex-shrink: 0;
+    text-transform: uppercase; letter-spacing: .03em;
+  }
+  .due-chip.future  { background: var(--paper-3); color: var(--ink-3); }
+  .due-chip.today   { background: var(--accent-soft); color: var(--accent); }
+  .due-chip.overdue { background: #fde8de; color: #b84f1f; }
+
+  .detail-btn {
+    font-size: 13px; padding: 6px 12px;
+    background: none; border: 1px solid var(--line);
+    border-radius: 6px; color: var(--ink-2); cursor: pointer;
+    font-family: inherit;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .detail-btn:hover { color: var(--ink); border-color: var(--ink-3); background: var(--paper); }
+  .detail-btn:disabled { opacity: .5; cursor: wait; }
+  .detail-btn.primary {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
+  .detail-btn.primary:hover { filter: brightness(0.95); color: #fff; }
+
+  .empty-state {
+    text-align: center; padding: 60px 20px;
+    color: var(--ink-3); font-size: 14px; line-height: 1.6;
+  }
+  .empty-state code {
+    font-family: ui-monospace, "SF Mono", monospace;
+    background: var(--paper-3); padding: 2px 6px;
+    border-radius: 4px; color: var(--ink);
+  }
+
+  /* ── Chat panel ──────────────────────────────────────────── */
+  .chat-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(42, 38, 32, .35);
+    z-index: 20; opacity: 0; pointer-events: none;
+    transition: opacity .18s ease;
+  }
+  .chat-backdrop.open { opacity: 1; pointer-events: auto; }
+
+  .chat-panel {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: 520px; max-width: 100vw;
+    background: var(--paper-2);
+    border-left: 1px solid var(--line);
+    box-shadow: -4px 0 24px rgba(0,0,0,.08);
+    z-index: 21; display: flex; flex-direction: column;
+    transform: translateX(100%);
+    transition: transform .22s ease;
+  }
+  .chat-panel.open { transform: translateX(0); }
+  @media (max-width: 700px) {
+    .chat-panel { width: 100vw; border-left: none; box-shadow: none; }
+  }
+
+  .chat-header {
+    flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+    padding: 0 8px 0 4px; height: 56px;
+    background: var(--paper); border-bottom: 1px solid var(--line);
+  }
+  .chat-back {
+    width: 44px; height: 44px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; background: none; color: var(--ink-2);
+    cursor: pointer; border-radius: 8px; font-size: 22px;
+  }
+  .chat-back:hover { background: var(--paper-3); color: var(--ink); }
+  .chat-title-input {
+    flex: 1; font-size: 15px; font-weight: 600; color: var(--ink);
+    background: none; border: none; outline: none;
+    font-family: inherit; padding: 6px 4px; min-width: 0;
+  }
+  .chat-title-input:focus {
+    background: var(--paper-2); border-radius: 4px;
+  }
+  .chat-archive {
+    font-size: 12px; padding: 6px 10px;
+    background: none; border: 1px solid var(--line);
+    border-radius: 6px; color: var(--ink-3); cursor: pointer;
+    font-family: inherit;
+  }
+  .chat-archive:hover { color: var(--ink); border-color: var(--ink-3); }
+
+  .chat-toolbar {
+    flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; background: var(--paper);
+    border-bottom: 1px solid var(--line);
+    font-size: 12px; color: var(--ink-3);
+  }
+  .chat-toolbar .chip { cursor: pointer; }
+  .chat-due-wrap {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 11px; color: var(--ink-3);
+  }
+  .chat-due, .chat-due-time {
+    font-family: inherit; font-size: 12px;
+    background: var(--paper-2); border: 1px solid var(--line);
+    border-radius: 4px; padding: 3px 6px; color: var(--ink-2);
+    outline: none; min-width: 0;
+  }
+  .chat-due:focus, .chat-due-time:focus { border-color: var(--accent); }
+  .chat-due-time { max-width: 90px; }
+  .chat-due-time:disabled { opacity: .4; cursor: not-allowed; }
+  .chat-due-clear {
+    background: none; border: none; cursor: pointer;
+    color: var(--ink-3); font-size: 14px; padding: 0 2px;
+    line-height: 1; opacity: .6;
+  }
+  .chat-due-clear:hover { opacity: 1; color: var(--accent); }
+  .chat-meta-text {
+    flex: 1; min-width: 0;
+    font-family: ui-monospace, monospace; font-size: 11px;
+    color: var(--ink-3); text-align: right;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .chat-body {
+    flex: 1; overflow-y: auto;
+    padding: 14px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .chat-empty {
+    text-align: center; padding: 40px 20px;
+    color: var(--ink-3); font-size: 14px;
+  }
+
+  .chat-notes {
+    flex-shrink: 0;
+    width: 100%; min-height: 60px;
+    font-family: inherit; font-size: 14px; color: var(--ink-2);
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 6px; padding: 8px 10px; resize: vertical; outline: none;
+    line-height: 1.5;
+  }
+  .chat-notes:focus { border-color: var(--accent); }
+
+  .chat-step-row {
+    flex-shrink: 0;
+    display: flex; align-items: center; gap: 6px;
+    background: var(--paper-2); border: 1px dashed var(--line);
+    border-radius: 8px; padding: 4px 6px 4px 12px;
+    transition: border-color .15s, background .15s;
+  }
+  .chat-step-row:focus-within {
+    border-style: solid; border-color: var(--accent); background: var(--paper);
+  }
+  .chat-step-input {
+    flex: 1; font-family: inherit; font-size: 14px;
+    color: var(--ink); background: none; border: none; outline: none; min-width: 0;
+    padding: 6px 0;
+  }
+  .chat-step-input::placeholder { color: var(--ink-3); }
+  .chat-step-add {
+    width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; border-radius: 6px; cursor: pointer;
+    font-size: 16px; flex-shrink: 0;
+    background: var(--accent); color: #fff;
+    transition: opacity .12s;
+  }
+  .chat-step-add:disabled { opacity: .35; cursor: default; }
+
+  .chat-steps {
+    flex-shrink: 0;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .chat-steps:empty { display: none; }
+  .chat-step {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 6px; cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  .chat-step:hover { background: var(--paper-3); border-color: var(--ink-3); }
+  .chat-step.active { border-color: var(--ink-3); box-shadow: 0 0 0 1px var(--ink-3); }
+  .chat-step-title {
+    flex: 1; font-size: 13px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chat-step.done .chat-step-title { text-decoration: line-through; color: var(--ink-3); }
+  .chat-step .badge-ext { font-size: 9px; padding: 1px 4px; }
+
+  .chat-aiify-zone {
+    flex-shrink: 0;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    padding: 30px 20px; text-align: center;
+    background: var(--paper); border: 1px dashed var(--line); border-radius: 8px;
+  }
+  .chat-aiify-btn { font-size: 15px; padding: 10px 20px; }
+  .chat-aiify-hint { font-size: 12px; color: var(--ink-3); }
+
+  .chat-transcript {
+    flex: 1; display: flex; flex-direction: column; gap: 12px;
+    min-height: 0;
+  }
+
+  .chat-footer {
+    flex-shrink: 0;
+    padding: 10px 12px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    background: var(--paper); border-top: 1px solid var(--line);
+  }
+  .chat-footer .footer-input-row {
+    /* reuse the same styling as the board footer */
+  }
+  .chat-error {
+    font-size: 12px; color: var(--accent);
+    padding: 6px 4px 0; text-align: center;
+  }
+
+  .turn { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+  .turn-user {
+    align-self: flex-end; max-width: 90%;
+    background: var(--paper-3); color: var(--ink);
+    padding: 10px 12px; border-radius: 12px 12px 2px 12px;
+    white-space: pre-wrap; word-wrap: break-word;
+    font-size: 14px; line-height: 1.5;
+  }
+  .turn-assistant {
+    align-self: flex-start; max-width: 100%; width: 100%;
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 12px 12px 12px 2px;
+    padding: 10px 12px;
+    font-size: 14px; line-height: 1.5;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .turn-system {
+    align-self: center;
+    font-size: 12px; color: var(--ink-3); font-style: italic;
+    background: var(--paper-2);
+    padding: 6px 12px; border-radius: 6px;
+    max-width: 90%; text-align: center;
+  }
+  .turn-text { white-space: pre-wrap; word-wrap: break-word; }
+  .turn-text:empty { display: none; }
+
+  .group {
+    border: 1.5px solid var(--line); border-radius: 10px;
+    padding: 5px; display: flex; flex-direction: column-reverse;
+    gap: 4px; background: var(--paper-3);
+  }
+  [data-indent="1"] { margin-left: 36px; }
+  [data-indent="2"] { margin-left: 72px; }
+  [data-indent="3"] { margin-left: 108px; }
+  [data-indent="4"] { margin-left: 144px; }
+
+  /* ── Footer ──────────────────────────────────────────────── */
+  .footer {
+    flex-shrink: 0; padding: 10px 14px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    background: var(--paper); border-top: 1px solid var(--line);
+  }
+  .footer-input-row {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--paper-2); border: 1px solid var(--line);
+    border-radius: 12px; padding: 6px 8px 6px 10px;
+    transition: border-color .15s;
+  }
+  .footer-input-row:focus-within { border-color: var(--accent); }
+
+  .mode-toggle {
+    display: flex; background: var(--paper-3);
+    border-radius: 7px; padding: 2px; gap: 2px; flex-shrink: 0;
+  }
+  .mode-btn {
+    font-size: 12px; font-weight: 600;
+    padding: 4px 10px; border-radius: 6px; border: none; background: none;
+    color: var(--ink-3); cursor: pointer;
+    transition: background .12s, color .12s; font-family: inherit;
+  }
+  .mode-btn.active {
+    background: var(--paper); color: var(--ink);
+    box-shadow: 0 1px 2px rgba(0,0,0,.08);
+  }
+  .mode-btn.active.chat { color: #6b52b8; }
+
+  .footer-input {
+    flex: 1; font-family: inherit; font-size: 15px;
+    color: var(--ink); background: none; border: none; outline: none; min-width: 0;
+  }
+  .footer-input::placeholder { color: var(--ink-3); }
+
+  .footer-send {
+    width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; border-radius: 9px; cursor: pointer;
+    font-size: 16px; flex-shrink: 0;
+    background: var(--accent); color: #fff;
+    transition: opacity .12s;
+  }
+  .footer-send:disabled { opacity: .35; cursor: default; }
+
+  .footer-input-row.chat-mode { border-color: #c8bcec; background: #f5f2fd; }
+  .footer-input-row.chat-mode:focus-within { border-color: #6b52b8; }
+  .footer-input-row.chat-mode .footer-send { background: #6b52b8; }
+  .footer-input-row.busy .footer-send {
+    background: var(--ink-3); cursor: wait;
+  }
+  .footer-error {
+    font-size: 12px; color: var(--accent);
+    padding: 6px 4px 0; text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-logo" onclick="location.reload()" title="Tap to refresh">
+    <div class="ws-dot" id="wsDot" title="WS status"></div>
+    Runn
+  </div>
+  <div class="header-sep"></div>
+  <button class="header-toggle" id="toggleDone" title="Show/hide done cards">✓ done</button>
+  <button class="header-btn" title="More">⋯</button>
+</header>
+
+<main class="main">
+  <div class="board">
+    <div class="items" id="items"></div>
+    <div class="empty-state" id="emptyState" hidden>
+      No sessions yet.<br>
+      Run <code>claude</code> in any terminal — a card will appear here.
+    </div>
+  </div>
+</main>
+
+<div class="chat-backdrop" id="chatBackdrop" onclick="closeChat()"></div>
+<aside class="chat-panel" id="chatPanel" aria-hidden="true">
+  <div class="chat-header">
+    <button class="chat-back" onclick="closeChat()" title="Close">←</button>
+    <input class="chat-title-input" id="chatTitle" type="text" placeholder="Title" autocomplete="off">
+    <button class="chat-archive" id="chatArchive">archive</button>
+  </div>
+  <div class="chat-toolbar">
+    <button class="chip" id="chatChip"></button>
+    <span class="badge-ext" id="chatBadgeExt" hidden>ext</span>
+    <span class="chat-due-wrap">
+      <span>due</span>
+      <input type="date" class="chat-due" id="chatDue">
+      <input type="time" class="chat-due-time" id="chatDueTime">
+      <button class="chat-due-clear" id="chatDueClear" title="Clear due date" hidden>×</button>
+    </span>
+    <span class="chat-meta-text" id="chatMetaText"></span>
+  </div>
+  <div class="chat-body" id="chatBody">
+    <textarea class="chat-notes" id="chatNotes" placeholder="Notes…"></textarea>
+    <div class="chat-step-row">
+      <input class="chat-step-input" id="chatStepInput" type="text" placeholder="+ add step under this card…" autocomplete="off">
+      <button class="chat-step-add" id="chatStepAdd" title="Add step">↵</button>
+    </div>
+    <div class="chat-steps" id="chatSteps"></div>
+    <div class="chat-aiify-zone" id="chatAiifyZone" hidden>
+      <button class="detail-btn primary chat-aiify-btn" id="chatAiifyBtn">✨ AI-ify this card</button>
+      <div class="chat-aiify-hint">Spawn a Claude session for this card.</div>
+    </div>
+    <div class="chat-transcript" id="chatTranscript" hidden></div>
+    <div class="chat-empty" id="chatEmpty" hidden>No turns yet — session hasn't received a message.</div>
+  </div>
+  <div class="chat-footer" id="chatFooter" hidden>
+    <div class="footer-input-row" id="chatInputRow">
+      <input class="footer-input" id="chatInput" type="text" placeholder="Reply to this session…" autocomplete="off">
+      <button class="footer-send" id="chatSend">↑</button>
+    </div>
+    <div class="chat-error" id="chatErrorMsg" hidden></div>
+  </div>
+</aside>
+
+<footer class="footer">
+  <div class="footer-input-row" id="footerRow">
+    <input class="footer-input" id="footerInput" type="text" placeholder="What else do you need to do?" autocomplete="off">
+    <button class="footer-send" id="footerSend" onclick="handleSubmit()">↑</button>
+  </div>
+  <div class="footer-error" id="footerError" hidden></div>
+</footer>
+
+<script>
+'use strict';
+
+// ── State ────────────────────────────────────────────────────
+const cards = new Map(); // id -> card json
+let mode = 'add';
+let showDone = localStorage.getItem('runn:showDone') !== '0'; // default true
+const STATUS_CYCLE = { todo: 'doing', doing: 'done', done: 'todo', blocked: 'todo' };
+const list = document.getElementById('items');
+const emptyState = document.getElementById('emptyState');
+const toggleDoneBtn = document.getElementById('toggleDone');
+
+function applyDoneToggleClass() { toggleDoneBtn.classList.toggle('off', !showDone); }
+applyDoneToggleClass();
+toggleDoneBtn.addEventListener('click', () => {
+  showDone = !showDone;
+  localStorage.setItem('runn:showDone', showDone ? '1' : '0');
+  applyDoneToggleClass();
+  renderAll();
+});
+
+// ── API ──────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? { 'content-type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`${method} ${path}: ${res.status}`);
+  return res.json();
+}
+const patchCard   = (id, patch) => api('PATCH', `/cards/${id}`, patch);
+const archiveCard = (id)        => api('POST',  `/cards/${id}/archive`);
+const sendMessage = (id, text)  => api('POST',  `/cards/${id}/message`, { text });
+const aiifyCard   = (id)        => api('POST',  `/cards/${id}/ai-ify`);
+
+// ── Render ───────────────────────────────────────────────────
+function depthOf(card) {
+  let d = 0, c = card;
+  while (c && c.parent_id) {
+    c = cards.get(c.parent_id);
+    if (!c) break;
+    if (++d > 4) break;
+  }
+  return d;
+}
+
+function renderCard(card) {
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.draggable = true;
+  el.dataset.cardId = card.id;
+  el.innerHTML = `
+    <div class="card-body">
+      <div class="card-row1"><div class="card-title"></div><span class="pulse"></span></div>
+      <div class="card-row2">
+        <button class="chip"></button>
+        <span class="badge-ext" hidden>ext</span>
+        <span class="due-chip" hidden></span>
+      </div>
+    </div>
+    <div class="card-controls">
+      <button class="card-add-step" title="Add step" onclick="inlineAddStep(event, this)">+</button>
+      <span class="chevron" onclick="toggleCollapse(event,this)"></span>
+      <span class="handle">⠿</span>
+    </div>`;
+  applyCard(el, card);
+
+  el.querySelector('.chip').addEventListener('click', e => {
+    e.stopPropagation();
+    const next = STATUS_CYCLE[card.status] || 'todo';
+    patchCard(card.id, { status: next }).catch(err => console.error(err));
+  });
+
+  return el;
+}
+
+function applyCard(el, card) {
+  el.querySelector('.card-title').textContent = card.title;
+  const chip = el.querySelector('.chip');
+  chip.className = `chip chip-${card.status}`;
+  chip.textContent = card.status;
+  el.classList.toggle('done', card.status === 'done');
+  el.querySelector('.badge-ext').hidden = card.origin !== 'external';
+  // Due chip
+  const due = el.querySelector('.due-chip');
+  if (card.due) {
+    const dStatus = dueStatus(card.due);
+    due.className = `due-chip ${dStatus}`;
+    due.textContent = formatDue(card.due);
+    due.hidden = false;
+  } else {
+    due.hidden = true;
+  }
+  el.classList.toggle('active', card.id === openCardId);
+  const d = depthOf(card);
+  if (d === 0) delete el.dataset.indent; else el.dataset.indent = String(d);
+}
+
+function splitDue(value) {
+  if (!value) return { date: '', time: '' };
+  const [d, t = ''] = String(value).split('T');
+  return { date: d || '', time: t.slice(0, 5) };
+}
+function joinDue(date, time) {
+  if (!date) return null;
+  return time ? `${date}T${time}` : date;
+}
+function formatDue(value) {
+  if (!value) return '';
+  const { date, time } = splitDue(value);
+  const d = new Date(date + 'T00:00:00');
+  if (isNaN(d)) return value;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diff = Math.round((d - today) / 86400000);
+  let dateStr;
+  if      (diff === 0)  dateStr = 'today';
+  else if (diff === 1)  dateStr = 'tomorrow';
+  else if (diff === -1) dateStr = 'yesterday';
+  else dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  if (!time) return dateStr;
+  const dt = new Date(`${date}T${time}`);
+  const timeStr = dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+                    .toLowerCase().replace(/\s+/g, '');
+  return `${dateStr} ${timeStr}`;
+}
+function dueStatus(value) {
+  if (!value) return 'none';
+  const { date, time } = splitDue(value);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const dayD = new Date(date + 'T00:00:00');
+  if (isNaN(dayD)) return 'future';
+  if (time) {
+    const target = new Date(`${date}T${time}`);
+    if (target < new Date()) return 'overdue';
+    if (dayD.getTime() === today.getTime()) return 'today';
+    return 'future';
+  }
+  if (dayD < today) return 'overdue';
+  if (dayD.getTime() === today.getTime()) return 'today';
+  return 'future';
+}
+
+function renderAll() {
+  list.innerHTML = '';
+  // Walk parent→child tree so children always immediately follow their parent in DOM order.
+  const byParent = new Map(); // parent_id (or null) → [cards]
+  for (const c of cards.values()) {
+    if (!showDone && c.status === 'done') continue;
+    const pid = c.parent_id || null;
+    if (!byParent.has(pid)) byParent.set(pid, []);
+    byParent.get(pid).push(c);
+  }
+  for (const arr of byParent.values()) arr.sort((a, b) => a.sort_order - b.sort_order);
+  let rendered = 0;
+  (function walk(parentId) {
+    const children = byParent.get(parentId) || [];
+    for (const c of children) {
+      list.appendChild(renderCard(c));
+      rendered++;
+      walk(c.id);
+    }
+  })(null);
+  rebuildGroups();
+  emptyState.hidden = rendered > 0;
+}
+
+// ── Group / chevron / collapse (lifted from scaffold) ────────
+const allCardEls = () => [...document.querySelectorAll('.card')];
+const getIndent = c => parseInt(c.dataset.indent || 0);
+const setIndent = (c, n) => {
+  n = Math.max(0, n);
+  if (n === 0) delete c.dataset.indent; else c.dataset.indent = String(n);
+};
+
+function descendants(card) {
+  const els = allCardEls();
+  const base = getIndent(card);
+  const idx  = els.indexOf(card);
+  const out  = [];
+  for (let i = idx + 1; i < els.length; i++) {
+    if (getIndent(els[i]) > base) out.push(els[i]); else break;
+  }
+  return out;
+}
+
+function rebuildGroups() {
+  document.querySelectorAll('.group').forEach(g => {
+    [...g.children].forEach(c => list.insertBefore(c, g));
+    g.remove();
+  });
+  const els = [...list.children].filter(el => el.classList.contains('card'));
+  els.forEach(card => {
+    if (getIndent(card) !== 0) return;
+    const desc = descendants(card);
+    if (!desc.length) return;
+    const g = document.createElement('div');
+    g.className = 'group';
+    list.insertBefore(g, card);
+    g.appendChild(card);
+    desc.forEach(c => g.appendChild(c));
+  });
+  markParents();
+}
+
+function markParents() {
+  const els = allCardEls();
+  els.forEach((c, i) => {
+    const next = els[i + 1];
+    if (next && getIndent(next) > getIndent(c)) c.dataset.hasChildren = '1';
+    else delete c.dataset.hasChildren;
+  });
+}
+
+list.addEventListener('click', e => {
+  if (e.target.closest('.card-controls') || e.target.closest('.chip')) return;
+  const cardEl = e.target.closest('.card');
+  if (!cardEl) return;
+  openChat(cardEl.dataset.cardId);
+});
+
+function toggleCollapse(e, chevron) {
+  e.stopPropagation();
+  const card = chevron.closest('.card');
+  const collapsed = card.classList.toggle('collapsed');
+  descendants(card).forEach(c => c.style.display = collapsed ? 'none' : '');
+}
+
+function inlineAddStep(e, btn) {
+  e.stopPropagation();
+  const parentCard = btn.closest('.card');
+  const parentId   = parentCard.dataset.cardId;
+  // If an input is already open for this parent, focus it instead
+  const existing = document.querySelector(`.inline-step-input[data-parent="${CSS.escape(parentId)}"]`);
+  if (existing) { existing.querySelector('input').focus(); return; }
+
+  const row = document.createElement('div');
+  row.className = 'inline-step-input';
+  row.dataset.parent = parentId;
+  const parentIndent = parseInt(parentCard.dataset.indent || 0);
+  if (parentIndent + 1 > 0) row.dataset.indent = String(parentIndent + 1);
+  row.innerHTML = `<input type="text" placeholder="add step under this card…" autocomplete="off">`;
+  parentCard.after(row);
+
+  const input = row.querySelector('input');
+  input.focus();
+
+  let dismissed = false;
+  const dismiss = () => { if (!dismissed) { dismissed = true; row.remove(); } };
+  const submit = async () => {
+    if (dismissed) return;
+    const val = input.value.trim();
+    if (!val) { dismiss(); return; }
+    input.value = '';
+    try {
+      await api('POST', '/cards', { title: val, parent_id: parentId, sort_order: Date.now() });
+      // WS card.added → renderAll() will wipe this input anyway; that's fine.
+      // But focus may have been lost mid-render; keep an option to re-open via the + button.
+    } catch (err) {
+      console.error('add step failed', err);
+      input.value = val;
+    }
+  };
+  input.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter')  { ev.preventDefault(); submit(); }
+    if (ev.key === 'Escape') { ev.preventDefault(); dismiss(); }
+  });
+  // Blur dismisses if empty, otherwise submits (gives mobile users a chance after tap-away)
+  input.addEventListener('blur', () => {
+    setTimeout(() => { if (input.value.trim()) submit(); else dismiss(); }, 120);
+  });
+}
+
+// ── Drag-to-reorder + drag-to-indent (lifted from scaffold; now persists) ─
+let dragged, dragGroup = [], dragMoved = false;
+
+function getDragGroup(card) {
+  const els = allCardEls();
+  const base = getIndent(card);
+  const idx  = els.indexOf(card);
+  const grp  = [card];
+  for (let i = idx + 1; i < els.length; i++) {
+    if (getIndent(els[i]) > base) grp.push(els[i]); else break;
+  }
+  return grp;
+}
+
+function clearDropClasses() {
+  document.querySelectorAll('.card').forEach(c =>
+    c.classList.remove('drop-before', 'drop-after', 'drop-nest'));
+}
+
+function dropZone(e, rect) {
+  const y = e.clientY - rect.top;
+  if (y < 24)                return 'before';
+  if (y > rect.height - 24)  return 'after';
+  return 'nest';
+}
+
+list.addEventListener('dragstart', e => {
+  dragged = e.target.closest('.card');
+  if (!dragged) return;
+  dragGroup = getDragGroup(dragged);
+  dragMoved = false;
+  setTimeout(() => dragGroup.forEach(c => c.classList.add('dragging')), 0);
+});
+
+list.addEventListener('dragover', e => {
+  if (!dragged) return;
+  e.preventDefault();
+  const target = e.target.closest('.card');
+  if (!target || dragGroup.includes(target)) return;
+  clearDropClasses();
+  target.classList.add('drop-' + dropZone(e, target.getBoundingClientRect()));
+});
+
+list.addEventListener('dragleave', e => {
+  if (!e.target.closest('.card')) clearDropClasses();
+});
+
+list.addEventListener('drop', e => {
+  e.preventDefault();
+  if (!dragged) return;
+  const target = e.target.closest('.card');
+  if (!target || dragGroup.includes(target)) return;
+  const zone  = dropZone(e, target.getBoundingClientRect());
+  const delta = (zone === 'nest' ? getIndent(target) + 1 : getIndent(target)) - getIndent(dragged);
+  clearDropClasses();
+  dragGroup.forEach(c => setIndent(c, getIndent(c) + delta));
+  dragGroup.forEach(c => list.appendChild(c));
+  if (zone === 'before') dragGroup.forEach(c => target.before(c));
+  else { let ref = target; dragGroup.forEach(c => { ref.after(c); ref = c; }); }
+  dragMoved = true;
+});
+
+list.addEventListener('dragend', async () => {
+  dragGroup.forEach(c => c.classList.remove('dragging'));
+  clearDropClasses();
+  rebuildGroups();
+  const moved = dragMoved;
+  const draggedRef = dragged;
+  dragged = null; dragGroup = []; dragMoved = false;
+  if (moved && draggedRef) {
+    try { await persistDragged(draggedRef); }
+    catch (err) { console.error('drag persist failed', err); }
+  }
+});
+
+async function persistDragged(cardEl) {
+  const cardId = cardEl.dataset.cardId;
+  const newIndent = getIndent(cardEl);
+
+  // Determine new parent_id: walk back in flat DOM order, find first card at indent N-1.
+  const allEls = allCardEls();
+  const myIdx  = allEls.indexOf(cardEl);
+  let newParentId = null;
+  if (newIndent > 0) {
+    for (let i = myIdx - 1; i >= 0; i--) {
+      if (getIndent(allEls[i]) === newIndent - 1) {
+        newParentId = allEls[i].dataset.cardId;
+        break;
+      }
+    }
+  }
+
+  // Determine new sort_order: midpoint of immediate same-indent same-parent neighbours,
+  // skipping over my descendants (which sit between me and the next sibling).
+  let prevCard = null, nextCard = null;
+  for (let i = myIdx - 1; i >= 0; i--) {
+    const ind = getIndent(allEls[i]);
+    if (ind < newIndent) break;            // exited the parent group
+    if (ind === newIndent) { prevCard = cards.get(allEls[i].dataset.cardId); break; }
+  }
+  for (let i = myIdx + 1; i < allEls.length; i++) {
+    const ind = getIndent(allEls[i]);
+    if (ind < newIndent) break;
+    if (ind === newIndent) { nextCard = cards.get(allEls[i].dataset.cardId); break; }
+  }
+  let newSortOrder;
+  if (prevCard && nextCard)      newSortOrder = (prevCard.sort_order + nextCard.sort_order) / 2;
+  else if (prevCard)             newSortOrder = prevCard.sort_order + 1024;
+  else if (nextCard)             newSortOrder = nextCard.sort_order - 1024;
+  else                           newSortOrder = Date.now();
+
+  await patchCard(cardId, { parent_id: newParentId, sort_order: newSortOrder });
+}
+
+// ── Footer: spawn new session ────────────────────────────────
+const footerRow   = document.getElementById('footerRow');
+const footerInput = document.getElementById('footerInput');
+const footerSend  = document.getElementById('footerSend');
+const footerError = document.getElementById('footerError');
+
+async function handleSubmit() {
+  const val = footerInput.value.trim();
+  if (!val) return;
+  footerError.hidden = true;
+  // Clear input immediately — POST is fast, optimistic UX
+  footerInput.value = '';
+  try {
+    await api('POST', '/cards', { title: val, sort_order: Date.now() });
+    // card.added WS event populates the list
+  } catch (err) {
+    footerError.textContent = `Add failed: ${err.message}`;
+    footerError.hidden = false;
+    footerInput.value = val; // restore so the user can retry
+  } finally {
+    footerInput.focus();
+  }
+}
+
+footerInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
+});
+
+// ── Side panel: card detail + (optional) transcript + reply ─
+const chatPanel       = document.getElementById('chatPanel');
+const chatBackdrop    = document.getElementById('chatBackdrop');
+const chatTitle       = document.getElementById('chatTitle');
+const chatChip        = document.getElementById('chatChip');
+const chatBadgeExt    = document.getElementById('chatBadgeExt');
+const chatMetaText    = document.getElementById('chatMetaText');
+const chatNotes       = document.getElementById('chatNotes');
+const chatDue         = document.getElementById('chatDue');
+const chatDueTime     = document.getElementById('chatDueTime');
+const chatDueClear    = document.getElementById('chatDueClear');
+const chatAiifyZone   = document.getElementById('chatAiifyZone');
+const chatAiifyBtn    = document.getElementById('chatAiifyBtn');
+const chatTranscript  = document.getElementById('chatTranscript');
+const chatEmpty       = document.getElementById('chatEmpty');
+const chatFooter      = document.getElementById('chatFooter');
+const chatArchive     = document.getElementById('chatArchive');
+const chatSteps       = document.getElementById('chatSteps');
+let openCardId = null;
+
+function renderSteps() {
+  chatSteps.innerHTML = '';
+  if (!openCardId) return;
+  const children = [...cards.values()]
+    .filter(c => c.parent_id === openCardId)
+    .sort((a, b) => a.sort_order - b.sort_order);
+  for (const step of children) {
+    const el = document.createElement('div');
+    el.className = 'chat-step';
+    if (step.status === 'done') el.classList.add('done');
+    el.dataset.stepId = step.id;
+    el.innerHTML = `
+      <button class="chip chip-${step.status}">${step.status}</button>
+      <div class="chat-step-title"></div>
+      <span class="badge-ext" hidden>ext</span>
+    `;
+    el.querySelector('.chat-step-title').textContent = step.title;
+    el.querySelector('.badge-ext').hidden = step.origin !== 'external';
+    el.querySelector('.chip').addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const next = STATUS_CYCLE[step.status] || 'todo';
+      patchCard(step.id, { status: next }).catch(console.error);
+    });
+    el.addEventListener('click', () => openChat(step.id));
+    chatSteps.appendChild(el);
+  }
+}
+
+function applyPanel(card) {
+  if (!card) return;
+  if (document.activeElement !== chatTitle) chatTitle.value = card.title;
+  chatChip.className = `chip chip-${card.status}`;
+  chatChip.textContent = card.status;
+  chatBadgeExt.hidden = card.origin !== 'external';
+  if (document.activeElement !== chatNotes) chatNotes.value = card.notes_md || '';
+  const dueParts = splitDue(card.due);
+  if (document.activeElement !== chatDue) chatDue.value = dueParts.date;
+  if (document.activeElement !== chatDueTime) chatDueTime.value = dueParts.time;
+  chatDueTime.disabled = !dueParts.date;
+  chatDueClear.hidden = !card.due;
+  const meta = [];
+  if (card.session_id) meta.push(`session ${card.session_id.slice(0, 8)}`);
+  if (card.location && card.location.cwd) meta.push(card.location.cwd);
+  chatMetaText.textContent = meta.join(' · ');
+  // Toggle which body section is active
+  const hasSession = !!card.session_id;
+  chatAiifyZone.hidden    = hasSession;
+  chatTranscript.hidden   = !hasSession;
+  chatFooter.hidden       = !hasSession;
+  chatEmpty.hidden        = !hasSession; // only meaningful for session cards before turns load
+}
+
+async function openChat(cardId) {
+  const wasOpen = !!openCardId;
+  openCardId = cardId;
+  const card = cards.get(cardId);
+  applyPanel(card);
+  renderSteps();
+  chatTranscript.innerHTML = '';
+  chatPanel.classList.add('open');
+  chatBackdrop.classList.add('open');
+  chatPanel.setAttribute('aria-hidden', 'false');
+  // Reflect "active" on the card on the board
+  for (const el of document.querySelectorAll('.card.active')) el.classList.remove('active');
+  const cardEl = list.querySelector(`[data-card-id="${CSS.escape(cardId)}"]`);
+  if (cardEl) cardEl.classList.add('active');
+  // Push a history entry so the Android back button (and browser back) closes the sidebar.
+  if (!wasOpen && history.state?.runnSidebar !== true) {
+    history.pushState({ runnSidebar: true }, '');
+  }
+  if (card && card.session_id) {
+    try {
+      const t = await api('GET', `/cards/${cardId}/transcript`);
+      if (openCardId !== cardId) return;
+      renderTranscript(t.turns);
+    } catch (err) {
+      chatTranscript.innerHTML = `<div class="chat-empty">Failed to load transcript: ${err.message}</div>`;
+    }
+  }
+}
+
+function dismissPanel() {
+  openCardId = null;
+  chatPanel.classList.remove('open');
+  chatBackdrop.classList.remove('open');
+  chatPanel.setAttribute('aria-hidden', 'true');
+  for (const el of document.querySelectorAll('.card.active')) el.classList.remove('active');
+}
+
+function closeChat() {
+  const hadHistoryEntry = history.state?.runnSidebar === true;
+  dismissPanel();
+  if (hadHistoryEntry) history.back();
+}
+
+// Hardware/browser back button → close sidebar instead of leaving the page
+window.addEventListener('popstate', () => {
+  if (openCardId) dismissPanel();
+});
+
+// Panel wiring (one-time)
+chatTitle.addEventListener('blur', () => {
+  if (!openCardId) return;
+  const card = cards.get(openCardId);
+  if (!card) return;
+  const val = chatTitle.value.trim();
+  if (!val) { chatTitle.value = card.title; return; }
+  if (val !== card.title) patchCard(openCardId, { title: val }).catch(console.error);
+});
+chatTitle.addEventListener('keydown', e => {
+  if (e.key === 'Enter')  { e.preventDefault(); chatTitle.blur(); }
+  if (e.key === 'Escape') { chatTitle.value = cards.get(openCardId)?.title || ''; chatTitle.blur(); }
+});
+
+chatNotes.addEventListener('blur', () => {
+  if (!openCardId) return;
+  const card = cards.get(openCardId);
+  if (!card) return;
+  if (chatNotes.value !== (card.notes_md || '')) {
+    patchCard(openCardId, { notes_md: chatNotes.value }).catch(console.error);
+  }
+});
+
+function commitDue() {
+  if (!openCardId) return;
+  const val = joinDue(chatDue.value, chatDueTime.value);
+  chatDueTime.disabled = !chatDue.value;
+  if (!chatDue.value) chatDueTime.value = '';
+  patchCard(openCardId, { due: val }).catch(console.error);
+}
+chatDue.addEventListener('change', commitDue);
+chatDueTime.addEventListener('change', commitDue);
+chatDueClear.addEventListener('click', () => {
+  if (!openCardId) return;
+  chatDue.value = '';
+  chatDueTime.value = '';
+  chatDueTime.disabled = true;
+  patchCard(openCardId, { due: null }).catch(console.error);
+});
+
+chatChip.addEventListener('click', () => {
+  if (!openCardId) return;
+  const card = cards.get(openCardId);
+  if (!card) return;
+  const next = STATUS_CYCLE[card.status] || 'todo';
+  patchCard(openCardId, { status: next }).catch(console.error);
+});
+
+chatArchive.addEventListener('click', async () => {
+  if (!openCardId) return;
+  try { await archiveCard(openCardId); closeChat(); } catch (e) { console.error(e); }
+});
+
+// + add step under current card
+const chatStepInput = document.getElementById('chatStepInput');
+const chatStepAdd   = document.getElementById('chatStepAdd');
+async function addStep() {
+  if (!openCardId) return;
+  const val = chatStepInput.value.trim();
+  if (!val) return;
+  chatStepInput.value = '';
+  try {
+    await api('POST', '/cards', {
+      title: val,
+      parent_id: openCardId,
+      sort_order: Date.now(),
+    });
+    // WS card.added will place it on the board under its parent
+  } catch (err) {
+    chatStepInput.value = val;
+    console.error('add step failed', err);
+  } finally {
+    chatStepInput.focus();
+  }
+}
+chatStepAdd.addEventListener('click', addStep);
+chatStepInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); addStep(); }
+});
+
+chatAiifyBtn.addEventListener('click', async () => {
+  if (!openCardId) return;
+  chatAiifyBtn.disabled = true;
+  chatAiifyBtn.textContent = '✨ spawning…';
+  try {
+    await aiifyCard(openCardId);
+    // card.changed will reframe the panel into transcript+footer
+  } catch (err) {
+    chatAiifyBtn.textContent = '✨ AI-ify this card';
+    chatAiifyBtn.disabled = false;
+    alert(`AI-ify failed: ${err.message}`);
+  }
+});
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  }[c]));
+}
+
+function renderTurn(t) {
+  if (t.kind === 'user') {
+    const div = document.createElement('div');
+    div.className = 'turn';
+    div.innerHTML = `<div class="turn-user">${escapeHtml(t.text)}</div>`;
+    return div;
+  }
+  if (t.kind === 'system') {
+    const div = document.createElement('div');
+    div.className = 'turn';
+    div.innerHTML = `<div class="turn-system">${escapeHtml(t.text)}</div>`;
+    return div;
+  }
+  // assistant
+  const div = document.createElement('div');
+  div.className = 'turn';
+  div.innerHTML = `<div class="turn-assistant"><div class="turn-text">${escapeHtml(t.text)}</div></div>`;
+  return div;
+}
+
+function renderTranscript(turns) {
+  const chatBody = document.getElementById('chatBody');
+  const nearBottom = chatBody.scrollHeight - chatBody.scrollTop - chatBody.clientHeight < 80;
+  chatTranscript.innerHTML = '';
+  chatEmpty.hidden = turns.length > 0;
+  for (const t of turns) chatTranscript.appendChild(renderTurn(t));
+  if (nearBottom) chatBody.scrollTop = chatBody.scrollHeight;
+}
+
+async function refreshOpenTranscript() {
+  if (!openCardId) return;
+  try {
+    const t = await api('GET', `/cards/${openCardId}/transcript`);
+    if (!openCardId) return;
+    renderTranscript(t.turns);
+  } catch {}
+}
+
+// Close on Escape
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && openCardId) closeChat();
+});
+
+// ── Chat input: send message to open session ─────────────────
+const chatInput    = document.getElementById('chatInput');
+const chatSend     = document.getElementById('chatSend');
+const chatInputRow = document.getElementById('chatInputRow');
+const chatErrorMsg = document.getElementById('chatErrorMsg');
+
+async function handleChatSubmit() {
+  if (!openCardId) return;
+  const val = chatInput.value.trim();
+  if (!val) return;
+  chatInputRow.classList.add('busy');
+  chatInput.disabled = true;
+  chatSend.disabled = true;
+  chatErrorMsg.hidden = true;
+  try {
+    await sendMessage(openCardId, val);
+    chatInput.value = '';
+    // Transcript will refresh via session.updated WS event.
+  } catch (err) {
+    chatErrorMsg.textContent = `Send failed: ${err.message}`;
+    chatErrorMsg.hidden = false;
+  } finally {
+    chatInputRow.classList.remove('busy');
+    chatInput.disabled = false;
+    chatSend.disabled = false;
+    chatInput.focus();
+  }
+}
+chatSend.addEventListener('click', handleChatSubmit);
+chatInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChatSubmit(); }
+});
+
+// ── WebSocket ────────────────────────────────────────────────
+const wsDot = document.getElementById('wsDot');
+let ws;
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => wsDot.classList.add('live');
+  ws.onclose = () => {
+    wsDot.classList.remove('live');
+    setTimeout(connectWS, 1000);
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'card.added') {
+      cards.set(msg.card.id, msg.card);
+      renderAll();
+      flash(msg.card.id);
+      if (openCardId && msg.card.parent_id === openCardId) renderSteps();
+    } else if (msg.type === 'card.changed') {
+      cards.set(msg.card.id, msg.card);
+      const el = list.querySelector(`[data-card-id="${CSS.escape(msg.card.id)}"]`);
+      if (el) {
+        applyCard(el, msg.card);
+        flash(msg.card.id);
+        renderAll();
+      } else {
+        renderAll();
+      }
+      // If this card is currently open in the panel, refresh panel state
+      if (openCardId === msg.card.id) applyPanel(msg.card);
+      // If this card is a step of the open card, refresh the steps list
+      if (openCardId && msg.card.parent_id === openCardId) renderSteps();
+    } else if (msg.type === 'card.removed') {
+      cards.delete(msg.card.id);
+      renderAll();
+      if (openCardId) renderSteps();
+    } else if (msg.type === 'session.updated') {
+      pulseSession(msg.session_id);
+      // If the chat panel is open for a card with this session, refresh it.
+      if (openCardId) {
+        const c = cards.get(openCardId);
+        if (c && c.session_id === msg.session_id) refreshOpenTranscript();
+      }
+    }
+  };
+}
+
+function pulseSession(sessionId) {
+  for (const c of cards.values()) {
+    if (c.session_id !== sessionId) continue;
+    const el = list.querySelector(`[data-card-id="${CSS.escape(c.id)}"]`);
+    const dot = el && el.querySelector('.pulse');
+    if (!dot) continue;
+    dot.classList.remove('live');
+    void dot.offsetWidth;
+    dot.classList.add('live');
+    setTimeout(() => dot.classList.remove('live'), 1500);
+  }
+}
+
+function flash(id) {
+  const el = list.querySelector(`[data-card-id="${CSS.escape(id)}"]`);
+  if (!el) return;
+  el.classList.remove('flash');
+  void el.offsetWidth; // restart animation
+  el.classList.add('flash');
+}
+
+// ── PWA service worker ───────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(err => console.warn('sw register failed:', err));
+  });
+}
+
+// ── Boot ─────────────────────────────────────────────────────
+(async function boot() {
+  const initial = await api('GET', '/cards');
+  document.title = 'Runn';
+  for (const c of initial) cards.set(c.id, c);
+  renderAll();
+  connectWS();
+})().catch(err => {
+  document.getElementById('boardName').textContent = 'failed to load';
+  console.error(err);
+});
+</script>
+</body>
+</html>

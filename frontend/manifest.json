@@ -1,0 +1,19 @@
+{
+  "name": "Runn",
+  "short_name": "Runn",
+  "description": "Plan and run your tasks with Claude as the engine.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f8f5ef",
+  "theme_color": "#b85c1f",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
