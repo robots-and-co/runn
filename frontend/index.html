@@ -902,6 +902,53 @@
   }
   .chat-step.done .chat-step-title { text-decoration: line-through; color: var(--ink-3); }
   .chat-step .badge-ext { font-size: 9px; padding: 1px 4px; }
+  .chat-step .step-handle {
+    cursor: grab; color: var(--ink-3); font-size: 14px;
+    user-select: none; padding: 0 2px;
+  }
+  .chat-step .step-handle:active { cursor: grabbing; }
+  .chat-step .step-assignee {
+    font-size: 14px; cursor: pointer; user-select: none;
+    padding: 1px 4px; border-radius: 4px;
+  }
+  .chat-step .step-assignee:hover { background: var(--paper-3); }
+  .chat-step[data-assignee="ai"] { border-left: 2px solid #7a86a8; }
+  .chat-step[data-assignee="human"] { border-left: 2px solid #c8b88a; }
+  .chat-step .step-run, .chat-step .step-check {
+    font-size: 11px; padding: 2px 6px;
+    background: var(--paper-3); border: 1px solid var(--line);
+    border-radius: 4px; cursor: pointer; color: var(--ink-2);
+  }
+  .chat-step .step-run:hover, .chat-step .step-check:hover {
+    background: var(--paper); border-color: var(--ink-3);
+  }
+  .chat-step .step-check.has-check { color: #4a7a4a; border-color: #4a7a4a; }
+  .chat-step.dragging { opacity: 0.4; }
+  .chat-step.drop-before { box-shadow: 0 -2px 0 var(--ink-2); }
+  .chat-step.drop-after  { box-shadow: 0  2px 0 var(--ink-2); }
+  .tasks-summary {
+    font-size: 11px; color: var(--ink-3);
+    margin-left: 6px;
+  }
+  .chat-client-wrap {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; color: var(--ink-3);
+  }
+  .chat-client {
+    font-size: 12px; color: var(--ink);
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 4px; padding: 2px 4px;
+    max-width: 160px;
+  }
+  .chat-client-edit {
+    font-size: 11px; padding: 1px 5px;
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 4px; cursor: pointer; color: var(--ink-3);
+  }
+  .chat-client-edit:hover { color: var(--ink); border-color: var(--ink-3); }
+  .chat-step-add[id="chatStepAddAi"] {
+    font-size: 12px;
+  }
 
   .chat-aiify-zone {
     flex-shrink: 0;
@@ -1063,6 +1110,7 @@
     <button class="chat-back" onclick="closeBilling()" title="Close">←</button>
     <div class="billing-title">Billing</div>
     <div class="billing-header-actions">
+      <button class="billing-icon-btn" id="btnNewClient" title="New client">+ client</button>
       <button class="billing-icon-btn" id="btnAppSettings" title="App settings">⚙</button>
     </div>
   </div>
@@ -1139,43 +1187,62 @@
   </div>
 </div>
 
-<!-- Tag settings modal -->
-<div class="modal" id="modalTagSettings" aria-hidden="true">
+<!-- Client settings modal -->
+<div class="modal" id="modalClientSettings" aria-hidden="true">
   <div class="modal-header">
-    <div class="modal-title" id="tsTitle">Tag settings</div>
+    <div class="modal-title" id="csTitle">Client</div>
     <button class="modal-close" onclick="closeAllModals()">×</button>
   </div>
   <div class="modal-body">
     <div class="form-field">
-      <label>Client (company) name</label>
-      <input type="text" id="tsClientName" placeholder="Zimmermann Industries">
+      <label>Client name (short)</label>
+      <input type="text" id="csName" placeholder="Zimmermann">
+    </div>
+    <div class="form-field">
+      <label>Company (as it appears on invoice)</label>
+      <input type="text" id="csCompany" placeholder="Zimmermann Industries Pty Ltd">
     </div>
     <div class="form-field">
       <label>Contact (Att:)</label>
-      <input type="text" id="tsClientContact" placeholder="Shellie Evans">
+      <input type="text" id="csContact" placeholder="Shellie Evans">
     </div>
     <div class="form-field">
       <label>Address (multi-line)</label>
-      <textarea id="tsClientAddress" rows="3" placeholder="9 Trade Place&#10;Lilydale, Vic&#10;Australia 3140"></textarea>
+      <textarea id="csAddress" rows="3" placeholder="9 Trade Place&#10;Lilydale, Vic&#10;Australia 3140"></textarea>
+    </div>
+    <div class="form-field">
+      <label>ABN / ACN</label>
+      <input type="text" id="csAbn" placeholder="11 222 333 444">
     </div>
     <div class="form-field-row">
       <div class="form-field">
         <label>Invoice prefix</label>
-        <input type="text" id="tsPrefix" placeholder="ZIS">
+        <input type="text" id="csPrefix" placeholder="ZIS">
       </div>
       <div class="form-field">
         <label>Next invoice number</label>
-        <input type="number" id="tsSeq" min="1" placeholder="2604">
+        <input type="number" id="csSeq" min="1" placeholder="2604">
       </div>
       <div class="form-field">
         <label>Rate / hour</label>
-        <input type="number" id="tsRate" step="1" min="0" placeholder="120">
+        <input type="number" id="csRate" step="1" min="0" placeholder="120">
+      </div>
+    </div>
+    <div class="form-field-row">
+      <div class="form-field">
+        <label>Currency</label>
+        <input type="text" id="csCurrency" placeholder="AUD">
+      </div>
+      <div class="form-field">
+        <label>GST rate (e.g. 0.1 = 10%)</label>
+        <input type="number" id="csGst" step="0.01" min="0" placeholder="0.1">
       </div>
     </div>
   </div>
   <div class="modal-footer">
+    <button class="detail-btn" id="csDelete" style="margin-right:auto;color:#b84f1f;" hidden>delete</button>
     <button class="detail-btn" onclick="closeAllModals()">cancel</button>
-    <button class="detail-btn primary" id="tsSave">save</button>
+    <button class="detail-btn primary" id="csSave">save</button>
   </div>
 </div>
 
@@ -1235,6 +1302,11 @@
   <div class="chat-toolbar">
     <button class="chip" id="chatChip"></button>
     <span class="badge-ext" id="chatBadgeExt" hidden>ext</span>
+    <span class="chat-client-wrap" id="chatClientWrap" hidden>
+      <span>client</span>
+      <select class="chat-client" id="chatClient"></select>
+      <button class="chat-client-edit" id="chatClientEdit" title="Manage clients">⚙</button>
+    </span>
     <span class="chat-due-wrap">
       <span>due</span>
       <input type="date" class="chat-due" id="chatDue">
@@ -1255,8 +1327,9 @@
       <div class="chat-tags-dropdown" id="chatTagsDropdown" hidden></div>
     </div>
     <div class="chat-step-row">
-      <input class="chat-step-input" id="chatStepInput" type="text" placeholder="+ add step under this card…" autocomplete="off">
-      <button class="chat-step-add" id="chatStepAdd" title="Add step">↵</button>
+      <input class="chat-step-input" id="chatStepInput" type="text" placeholder="+ add task (human)…" autocomplete="off">
+      <button class="chat-step-add" id="chatStepAdd" title="Add human task">↵</button>
+      <button class="chat-step-add" id="chatStepAddAi" title="Add AI task">🤖↵</button>
     </div>
     <div class="chat-steps" id="chatSteps"></div>
     <div class="chat-aiify-zone" id="chatAiifyZone" hidden>
@@ -1288,6 +1361,7 @@
 
 // ── State ────────────────────────────────────────────────────
 const cards = new Map(); // id -> card json
+const clients = new Map(); // id -> client json
 const expandedCardIds = new Set(); // parents the user has explicitly expanded; everything else stays collapsed
 let mode = 'add';
 let showDone = localStorage.getItem('runn:showDone') !== '0'; // default true
@@ -1361,16 +1435,28 @@ function outstandingTotal() {
   }
   return t;
 }
+function resolveClientId(card) {
+  // Walk parent_id to root, return its client_id (or null for personal/unassigned).
+  let c = card;
+  let guard = 0;
+  while (c && c.parent_id && guard++ < 8) {
+    c = cards.get(c.parent_id);
+  }
+  return c ? (c.client_id || null) : null;
+}
+
 function billingGroups() {
-  // Group done + (unbilled OR invoiced) cards by primary tag (first tag), or '_untagged'
-  const groups = new Map(); // tag → { unbilled: [cards], invoiced: [cards], hours: { unbilled, invoiced } }
+  // Group done + (unbilled OR invoiced) cards by their project's client_id.
+  // Cards without a client are skipped — they're personal projects, not billable.
+  const groups = new Map(); // client_id → { unbilled, invoiced, hours }
   for (const c of cards.values()) {
     const b = c.billing || 'unbilled';
     if (c.status !== 'done' || b === 'paid') continue;
     if (typeof c.hours !== 'number' || c.hours === 0) continue;
-    const tag = (c.tags && c.tags[0]) || '_untagged';
-    if (!groups.has(tag)) groups.set(tag, { unbilled: [], invoiced: [], hours: { unbilled: 0, invoiced: 0 } });
-    const g = groups.get(tag);
+    const clientId = resolveClientId(c);
+    if (!clientId) continue;
+    if (!groups.has(clientId)) groups.set(clientId, { unbilled: [], invoiced: [], hours: { unbilled: 0, invoiced: 0 } });
+    const g = groups.get(clientId);
     g[b].push(c);
     g.hours[b] += c.hours;
   }
@@ -1474,8 +1560,44 @@ function applyCard(el, card) {
     });
     row2.appendChild(btn);
   }
-  const d = depthOf(card);
-  if (d === 0) delete el.dataset.indent; else el.dataset.indent = String(d);
+  delete el.dataset.indent;
+  // Show a small task summary chip on project cards: e.g. "3/5 tasks · 1 running"
+  let summaryEl = el.querySelector('.tasks-summary');
+  const summary = projectTaskSummary(card.id);
+  if (summary) {
+    if (!summaryEl) {
+      summaryEl = document.createElement('span');
+      summaryEl.className = 'tasks-summary';
+      el.querySelector('.card-row2').appendChild(summaryEl);
+    }
+    summaryEl.textContent = summary;
+  } else if (summaryEl) {
+    summaryEl.remove();
+  }
+}
+
+function refreshProjectSummary(projectId) {
+  if (!projectId) return;
+  const project = cards.get(projectId);
+  if (!project) return;
+  const el = list.querySelector(`[data-card-id="${CSS.escape(projectId)}"]`);
+  if (el) applyCard(el, project);
+}
+
+function projectTaskSummary(projectId) {
+  let total = 0, done = 0, doing = 0, blocked = 0;
+  for (const c of cards.values()) {
+    if (c.parent_id !== projectId) continue;
+    total++;
+    if (c.status === 'done') done++;
+    else if (c.status === 'doing') doing++;
+    else if (c.status === 'blocked') blocked++;
+  }
+  if (!total) return '';
+  const bits = [`${done}/${total} tasks`];
+  if (doing) bits.push(`${doing} running`);
+  if (blocked) bits.push(`${blocked} blocked`);
+  return bits.join(' · ');
 }
 
 function splitDue(value) {
@@ -1543,28 +1665,18 @@ function cardMatchesFilter(c) {
 
 function renderAll() {
   list.innerHTML = '';
-  // Walk parent→child tree so children always immediately follow their parent in DOM order.
-  const byParent = new Map(); // parent_id (or null) → [cards]
+  // Main board shows projects only — top-level cards (parent_id === null).
+  // Tasks (children) live inside the chat panel for the open project.
+  const projects = [];
   for (const c of cards.values()) {
+    if (c.parent_id) continue;
     if (!showDone && c.status === 'done') continue;
     if (!cardMatchesFilter(c)) continue;
-    const pid = c.parent_id || null;
-    if (!byParent.has(pid)) byParent.set(pid, []);
-    byParent.get(pid).push(c);
+    projects.push(c);
   }
-  for (const arr of byParent.values()) arr.sort((a, b) => a.sort_order - b.sort_order);
-  let rendered = 0;
-  (function walk(parentId) {
-    const children = byParent.get(parentId) || [];
-    for (const c of children) {
-      list.appendChild(renderCard(c));
-      rendered++;
-      walk(c.id);
-    }
-  })(null);
-  rebuildGroups();
-  applyCollapsedDefaults();
-  emptyState.hidden = rendered > 0;
+  projects.sort((a, b) => a.sort_order - b.sort_order);
+  for (const c of projects) list.appendChild(renderCard(c));
+  emptyState.hidden = projects.length > 0;
 }
 
 // ── Outstanding header chip + Billing panel ─────────────────
@@ -1594,30 +1706,29 @@ function renderBillingPanel() {
   const groups = billingGroups();
   billingBody.innerHTML = '';
   if (groups.size === 0) {
-    billingBody.innerHTML = '<div class="billing-empty">Nothing to bill.<br>Done cards with hours set will appear here.</div>';
+    billingBody.innerHTML = '<div class="billing-empty">Nothing to bill.<br>Done cards with hours set on client projects will appear here.</div>';
     return;
   }
   // Sort groups: most outstanding hours first
   const entries = [...groups.entries()].sort((a, b) =>
     (b[1].hours.unbilled + b[1].hours.invoiced) - (a[1].hours.unbilled + a[1].hours.invoiced));
-  for (const [tag, g] of entries) {
+  for (const [clientId, g] of entries) {
+    const client = clients.get(clientId);
     const grp = document.createElement('div');
     grp.className = 'billing-group';
 
     const header = document.createElement('div');
     header.className = 'billing-group-header';
-    const tagEl = document.createElement('span');
-    tagEl.className = 'billing-group-tag';
-    if (tag === '_untagged') {
-      tagEl.textContent = '(untagged)';
-      tagEl.style.color = 'var(--ink-3)';
-      tagEl.style.fontStyle = 'italic';
+    const labelEl = document.createElement('span');
+    labelEl.className = 'billing-group-tag';
+    if (client) {
+      labelEl.textContent = client.name || client.id;
     } else {
-      tagEl.textContent = '#' + tag;
-      const c = tagColor(tag);
-      tagEl.style.color = c.fg;
+      labelEl.textContent = `(missing client: ${clientId})`;
+      labelEl.style.color = 'var(--ink-3)';
+      labelEl.style.fontStyle = 'italic';
     }
-    header.appendChild(tagEl);
+    header.appendChild(labelEl);
     const total = document.createElement('span');
     total.className = 'billing-group-total';
     total.textContent = fmtHours(g.hours.unbilled + g.hours.invoiced);
@@ -1684,7 +1795,8 @@ function renderBillingPanel() {
     copyBtn.textContent = 'copy invoice text';
     copyBtn.addEventListener('click', () => {
       const lines = [];
-      lines.push(tag === '_untagged' ? 'Outstanding work:' : `[${tag}] outstanding work:`);
+      const clientName = client ? (client.name || client.id) : clientId;
+      lines.push(`[${clientName}] outstanding work:`);
       const items = [...g.unbilled, ...g.invoiced].sort((a, b) => a.sort_order - b.sort_order);
       for (const c of items) lines.push(`- ${c.title} — ${fmtHours(c.hours)}`);
       lines.push(`Total: ${fmtHours(g.hours.unbilled + g.hours.invoiced)}`);
@@ -1893,14 +2005,8 @@ function inlineAddStep(e, btn) {
 let dragged, dragGroup = [], dragMoved = false;
 
 function getDragGroup(card) {
-  const els = allCardEls();
-  const base = getIndent(card);
-  const idx  = els.indexOf(card);
-  const grp  = [card];
-  for (let i = idx + 1; i < els.length; i++) {
-    if (getIndent(els[i]) > base) grp.push(els[i]); else break;
-  }
-  return grp;
+  // Main board: cards have no descendants visible here, so the group is just the card itself.
+  return [card];
 }
 
 function clearDropClasses() {
@@ -1937,7 +2043,10 @@ list.addEventListener('dragover', e => {
   const target = e.target.closest('.card');
   if (!target || dragGroup.includes(target)) return;
   clearDropClasses();
-  target.classList.add('drop-' + dropZone(e, target.getBoundingClientRect()));
+  // Main board: only before/after, no nesting (no children on main board).
+  const rect = target.getBoundingClientRect();
+  const after = (e.clientY - rect.top) > (rect.height / 2);
+  target.classList.add(after ? 'drop-after' : 'drop-before');
 });
 
 list.addEventListener('dragleave', e => {
@@ -1949,13 +2058,11 @@ list.addEventListener('drop', e => {
   if (!dragged) return;
   const target = e.target.closest('.card');
   if (!target || dragGroup.includes(target)) return;
-  const zone  = dropZone(e, target.getBoundingClientRect());
-  const delta = (zone === 'nest' ? getIndent(target) + 1 : getIndent(target)) - getIndent(dragged);
+  const rect = target.getBoundingClientRect();
+  const after = (e.clientY - rect.top) > (rect.height / 2);
   clearDropClasses();
-  dragGroup.forEach(c => setIndent(c, getIndent(c) + delta));
-  dragGroup.forEach(c => list.appendChild(c));
-  if (zone === 'before') dragGroup.forEach(c => target.before(c));
-  else { let ref = target; dragGroup.forEach(c => { ref.after(c); ref = c; }); }
+  if (after) target.after(dragged);
+  else       target.before(dragged);
   dragMoved = true;
 });
 
@@ -1973,42 +2080,18 @@ list.addEventListener('dragend', async () => {
 });
 
 async function persistDragged(cardEl) {
+  // Main board: all cards are projects (parent_id === null). Only sort_order changes.
   const cardId = cardEl.dataset.cardId;
-  const newIndent = getIndent(cardEl);
-
-  // Determine new parent_id: walk back in flat DOM order, find first card at indent N-1.
   const allEls = allCardEls();
   const myIdx  = allEls.indexOf(cardEl);
-  let newParentId = null;
-  if (newIndent > 0) {
-    for (let i = myIdx - 1; i >= 0; i--) {
-      if (getIndent(allEls[i]) === newIndent - 1) {
-        newParentId = allEls[i].dataset.cardId;
-        break;
-      }
-    }
-  }
-
-  // Determine new sort_order: midpoint of immediate same-indent same-parent neighbours,
-  // skipping over my descendants (which sit between me and the next sibling).
-  let prevCard = null, nextCard = null;
-  for (let i = myIdx - 1; i >= 0; i--) {
-    const ind = getIndent(allEls[i]);
-    if (ind < newIndent) break;            // exited the parent group
-    if (ind === newIndent) { prevCard = cards.get(allEls[i].dataset.cardId); break; }
-  }
-  for (let i = myIdx + 1; i < allEls.length; i++) {
-    const ind = getIndent(allEls[i]);
-    if (ind < newIndent) break;
-    if (ind === newIndent) { nextCard = cards.get(allEls[i].dataset.cardId); break; }
-  }
+  const prevCard = myIdx > 0 ? cards.get(allEls[myIdx - 1].dataset.cardId) : null;
+  const nextCard = myIdx < allEls.length - 1 ? cards.get(allEls[myIdx + 1].dataset.cardId) : null;
   let newSortOrder;
   if (prevCard && nextCard)      newSortOrder = (prevCard.sort_order + nextCard.sort_order) / 2;
   else if (prevCard)             newSortOrder = prevCard.sort_order + 1024;
   else if (nextCard)             newSortOrder = nextCard.sort_order - 1024;
   else                           newSortOrder = Date.now();
-
-  await patchCard(cardId, { parent_id: newParentId, sort_order: newSortOrder });
+  await patchCard(cardId, { sort_order: newSortOrder });
 }
 
 // ── Footer: spawn new session ────────────────────────────────
@@ -2072,10 +2155,18 @@ function renderSteps() {
     el.className = 'chat-step';
     if (step.status === 'done') el.classList.add('done');
     el.dataset.stepId = step.id;
+    el.dataset.cardId = step.id;
+    const assignee = step.assignee || 'human';
+    el.dataset.assignee = assignee;
+    const isAi = assignee === 'ai';
     el.innerHTML = `
+      <span class="step-handle" draggable="true" title="Drag to reorder">⠿</span>
       <button class="chip chip-${step.status}">${step.status}</button>
+      <span class="step-assignee" title="Toggle assignee">${isAi ? '🤖' : '👤'}</span>
       <div class="chat-step-title"></div>
       <span class="badge-ext" hidden>ext</span>
+      ${isAi && !step.session_id && step.status === 'todo' ? '<button class="step-run" title="Run with Claude">▶</button>' : ''}
+      ${isAi ? '<button class="step-check" title="Acceptance check">✓?</button>' : ''}
     `;
     el.querySelector('.chat-step-title').textContent = step.title;
     el.querySelector('.badge-ext').hidden = step.origin !== 'external';
@@ -2084,9 +2175,120 @@ function renderSteps() {
       const next = STATUS_CYCLE[step.status] || 'todo';
       patchCard(step.id, { status: next }).catch(console.error);
     });
+    el.querySelector('.step-assignee').addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      patchCard(step.id, { assignee: isAi ? 'human' : 'ai' }).catch(console.error);
+    });
+    const runBtn = el.querySelector('.step-run');
+    if (runBtn) {
+      runBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        runBtn.disabled = true;
+        aiifyCard(step.id).catch(err => { console.error(err); runBtn.disabled = false; });
+      });
+    }
+    const checkBtn = el.querySelector('.step-check');
+    if (checkBtn) {
+      const hasCheck = !!(step.acceptance_check && step.acceptance_check.value);
+      if (hasCheck) checkBtn.classList.add('has-check');
+      checkBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openAcceptanceEditor(step);
+      });
+    }
     el.addEventListener('click', () => openChat(step.id));
     chatSteps.appendChild(el);
   }
+  attachStepDnd();
+}
+
+// Drag-to-reorder for chat-panel steps. Listeners are idempotent (only attached once).
+let _stepDndAttached = false;
+let stepDragged = null;
+function attachStepDnd() {
+  if (_stepDndAttached) return;
+  _stepDndAttached = true;
+  chatSteps.addEventListener('dragstart', e => {
+    const handle = e.target.closest('.step-handle');
+    if (!handle) return;
+    stepDragged = handle.closest('.chat-step');
+    if (!stepDragged) return;
+    if (e.dataTransfer && e.dataTransfer.setDragImage) {
+      const r = stepDragged.getBoundingClientRect();
+      e.dataTransfer.setDragImage(stepDragged, e.clientX - r.left, e.clientY - r.top);
+      e.dataTransfer.effectAllowed = 'move';
+    }
+    stepDragged.classList.add('dragging');
+  });
+  chatSteps.addEventListener('dragover', e => {
+    if (!stepDragged) return;
+    e.preventDefault();
+    const target = e.target.closest('.chat-step');
+    if (!target || target === stepDragged) return;
+    for (const s of chatSteps.querySelectorAll('.chat-step')) s.classList.remove('drop-before', 'drop-after');
+    const r = target.getBoundingClientRect();
+    const after = (e.clientY - r.top) > (r.height / 2);
+    target.classList.add(after ? 'drop-after' : 'drop-before');
+  });
+  chatSteps.addEventListener('drop', e => {
+    if (!stepDragged) return;
+    e.preventDefault();
+    const target = e.target.closest('.chat-step');
+    if (!target || target === stepDragged) return;
+    const r = target.getBoundingClientRect();
+    const after = (e.clientY - r.top) > (r.height / 2);
+    if (after) target.after(stepDragged);
+    else       target.before(stepDragged);
+    for (const s of chatSteps.querySelectorAll('.chat-step')) s.classList.remove('drop-before', 'drop-after');
+  });
+  chatSteps.addEventListener('dragend', async () => {
+    if (!stepDragged) return;
+    stepDragged.classList.remove('dragging');
+    for (const s of chatSteps.querySelectorAll('.chat-step')) s.classList.remove('drop-before', 'drop-after');
+    const moved = stepDragged;
+    stepDragged = null;
+    // Persist new sort_order based on DOM siblings (same parent_id = openCardId).
+    const els = [...chatSteps.querySelectorAll('.chat-step')];
+    const idx = els.indexOf(moved);
+    const prev = idx > 0 ? cards.get(els[idx - 1].dataset.cardId) : null;
+    const next = idx < els.length - 1 ? cards.get(els[idx + 1].dataset.cardId) : null;
+    let newSort;
+    if (prev && next) newSort = (prev.sort_order + next.sort_order) / 2;
+    else if (prev)    newSort = prev.sort_order + 1024;
+    else if (next)    newSort = next.sort_order - 1024;
+    else              newSort = Date.now();
+    try { await patchCard(moved.dataset.cardId, { sort_order: newSort }); }
+    catch (err) { console.error('step reorder persist failed', err); }
+  });
+}
+
+function openAcceptanceEditor(step) {
+  const current = step.acceptance_check || { type: 'shell', value: '' };
+  const type = prompt(
+    `Acceptance check for "${step.title}"\nType: "shell" runs an sh command (exit 0 = pass), "prompt" sends a follow-up to Claude (must end with PASS).\n\nLeave blank for "none" (trust process exit).`,
+    current.type || 'shell'
+  );
+  if (type === null) return;
+  if (!type.trim()) {
+    patchCard(step.id, { acceptance_check: null }).catch(console.error);
+    return;
+  }
+  if (type !== 'shell' && type !== 'prompt') {
+    alert('Type must be "shell" or "prompt"');
+    return;
+  }
+  const value = prompt(
+    type === 'shell'
+      ? 'Shell command (e.g. "npm test"):'
+      : 'Prompt for Claude — must produce a trailing PASS or FAIL token:',
+    current.value || ''
+  );
+  if (value === null) return;
+  if (!value.trim()) {
+    patchCard(step.id, { acceptance_check: null }).catch(console.error);
+    return;
+  }
+  patchCard(step.id, { acceptance_check: { type, value: value.trim() } }).catch(console.error);
 }
 
 function applyPanel(card) {
@@ -2119,6 +2321,7 @@ function applyPanel(card) {
   chatTranscript.hidden   = !hasSession;
   chatFooter.hidden       = !hasSession;
   chatEmpty.hidden        = !hasSession; // only meaningful for session cards before turns load
+  refreshClientSelector(card);
 }
 
 async function openChat(cardId) {
@@ -2321,7 +2524,8 @@ chatTagsInput.addEventListener('keydown', (e) => {
 // + add step under current card
 const chatStepInput = document.getElementById('chatStepInput');
 const chatStepAdd   = document.getElementById('chatStepAdd');
-async function addStep() {
+const chatStepAddAi = document.getElementById('chatStepAddAi');
+async function addStep(assignee) {
   if (!openCardId) return;
   const val = chatStepInput.value.trim();
   if (!val) return;
@@ -2331,8 +2535,8 @@ async function addStep() {
       title: val,
       parent_id: openCardId,
       sort_order: Date.now(),
+      assignee: assignee || 'human',
     });
-    // WS card.added will place it on the board under its parent
   } catch (err) {
     chatStepInput.value = val;
     console.error('add step failed', err);
@@ -2340,9 +2544,13 @@ async function addStep() {
     chatStepInput.focus();
   }
 }
-chatStepAdd.addEventListener('click', addStep);
+chatStepAdd.addEventListener('click', () => addStep('human'));
+chatStepAddAi.addEventListener('click', () => addStep('ai'));
 chatStepInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); addStep(); }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    addStep(e.shiftKey ? 'ai' : 'human');
+  }
 });
 
 chatAiifyBtn.addEventListener('click', async () => {
@@ -2456,22 +2664,23 @@ function connectWS() {
     const msg = JSON.parse(e.data);
     if (msg.type === 'card.added') {
       cards.set(msg.card.id, msg.card);
-      // Auto-expand the parent so the new step is actually visible.
-      if (msg.card.parent_id) expandedCardIds.add(msg.card.parent_id);
       renderAll();
-      flash(msg.card.id);
+      if (!msg.card.parent_id) flash(msg.card.id);
       if (openCardId && msg.card.parent_id === openCardId) renderSteps();
+      // Project card summaries depend on child counts — re-apply parent if relevant.
+      if (msg.card.parent_id) refreshProjectSummary(msg.card.parent_id);
       refreshOutstanding();
       if (billingPanel.classList.contains('open')) renderBillingPanel();
     } else if (msg.type === 'card.changed') {
       cards.set(msg.card.id, msg.card);
-      const el = list.querySelector(`[data-card-id="${CSS.escape(msg.card.id)}"]`);
-      if (el) {
-        applyCard(el, msg.card);
-        flash(msg.card.id);
-        renderAll();
+      if (!msg.card.parent_id) {
+        // It's a project — re-render its tile.
+        const el = list.querySelector(`[data-card-id="${CSS.escape(msg.card.id)}"]`);
+        if (el) { applyCard(el, msg.card); flash(msg.card.id); }
+        else renderAll();
       } else {
-        renderAll();
+        // A task changed → update parent project's summary chip.
+        refreshProjectSummary(msg.card.parent_id);
       }
       // If this card is currently open in the panel, refresh panel state
       if (openCardId === msg.card.id) applyPanel(msg.card);
@@ -2492,6 +2701,20 @@ function connectWS() {
         const c = cards.get(openCardId);
         if (c && c.session_id === msg.session_id) refreshOpenTranscript();
       }
+    } else if (msg.type === 'client.added' || msg.type === 'client.changed') {
+      clients.set(msg.client.id, msg.client);
+      if (openCardId) {
+        const c = cards.get(openCardId);
+        if (c && !c.parent_id) refreshClientSelector(c);
+      }
+      if (billingPanel.classList.contains('open')) renderBillingPanel();
+    } else if (msg.type === 'client.removed') {
+      clients.delete(msg.client.id);
+      if (openCardId) {
+        const c = cards.get(openCardId);
+        if (c && !c.parent_id) refreshClientSelector(c);
+      }
+      if (billingPanel.classList.contains('open')) renderBillingPanel();
     }
   };
 }
@@ -2527,14 +2750,13 @@ if ('serviceWorker' in navigator) {
 // ── Invoicing: modals, composer, preview page, list ─────────
 const modalBackdrop  = document.getElementById('modalBackdrop');
 const modalAppSet    = document.getElementById('modalAppSettings');
-const modalTagSet    = document.getElementById('modalTagSettings');
 const modalComposer  = document.getElementById('modalComposer');
 const invoicePage    = document.getElementById('invoicePage');
 const invoiceDoc     = document.getElementById('invoiceDoc');
 const invStatusBadge = document.getElementById('invStatusBadge');
 
 let currentInvoiceId = null;       // when on invoice route
-let composerCtx = null;            // { tag, items: mutable }
+let composerCtx = null;            // { client_id, items: mutable, gstRate, currencySymbol }
 let currentBillingTab = 'outstanding';
 
 function openModal(el) {
@@ -2570,6 +2792,7 @@ async function openAppSettings() {
   openModal(modalAppSet);
 }
 document.getElementById('btnAppSettings').addEventListener('click', openAppSettings);
+document.getElementById('btnNewClient').addEventListener('click', () => openClientSettings(null));
 document.getElementById('apsSave').addEventListener('click', async () => {
   const body = {
     business_name:         document.getElementById('apsBusinessName').value.trim(),
@@ -2590,46 +2813,121 @@ document.getElementById('apsSave').addEventListener('click', async () => {
   closeAllModals();
 });
 
-// ── Tag settings dialog ───────────────────────────────────
-let tsCurrentTag = null;
-async function openTagSettings(tag) {
-  tsCurrentTag = tag;
-  document.getElementById('tsTitle').textContent = `Settings for #${tag}`;
-  const t = await api('GET', `/tags/${encodeURIComponent(tag)}`);
-  document.getElementById('tsClientName').value    = t.client_name || '';
-  document.getElementById('tsClientContact').value = t.client_contact || '';
-  document.getElementById('tsClientAddress').value = (t.client_address_lines || []).join('\n');
-  document.getElementById('tsPrefix').value        = t.invoice_prefix || tag.toUpperCase();
-  document.getElementById('tsSeq').value           = t.invoice_seq || 1;
-  document.getElementById('tsRate').value          = (t.rate_per_hour != null) ? t.rate_per_hour : '';
-  openModal(modalTagSet);
+// ── Client settings dialog ───────────────────────────────────
+let csCurrentId = null; // null = creating new
+const modalClientSet = document.getElementById('modalClientSettings');
+function openClientSettings(clientId) {
+  csCurrentId = clientId;
+  const c = clientId ? (clients.get(clientId) || {}) : {};
+  document.getElementById('csTitle').textContent = clientId ? `Edit client` : 'New client';
+  document.getElementById('csName').value     = c.name || '';
+  document.getElementById('csCompany').value  = c.company || '';
+  document.getElementById('csContact').value  = c.contact || '';
+  document.getElementById('csAddress').value  = (c.address_lines || []).join('\n');
+  document.getElementById('csAbn').value      = c.abn || '';
+  document.getElementById('csPrefix').value   = c.invoice_prefix || '';
+  document.getElementById('csSeq').value      = c.invoice_seq || 1;
+  document.getElementById('csRate').value     = (c.rate_per_hour != null) ? c.rate_per_hour : '';
+  document.getElementById('csCurrency').value = c.currency || '';
+  document.getElementById('csGst').value      = (c.gst_rate != null) ? c.gst_rate : '';
+  document.getElementById('csDelete').hidden  = !clientId;
+  openModal(modalClientSet);
 }
-document.getElementById('tsSave').addEventListener('click', async () => {
-  if (!tsCurrentTag) return;
+document.getElementById('csSave').addEventListener('click', async () => {
   const body = {
-    client_name:           document.getElementById('tsClientName').value.trim(),
-    client_contact:        document.getElementById('tsClientContact').value.trim(),
-    client_address_lines:  document.getElementById('tsClientAddress').value.split('\n').map(l => l.trimEnd()).filter(Boolean),
-    invoice_prefix:        document.getElementById('tsPrefix').value.trim().toUpperCase() || tsCurrentTag.toUpperCase(),
-    invoice_seq:           Number(document.getElementById('tsSeq').value) || 1,
-    rate_per_hour:         document.getElementById('tsRate').value === '' ? null : Number(document.getElementById('tsRate').value),
+    name:           document.getElementById('csName').value.trim(),
+    company:        document.getElementById('csCompany').value.trim(),
+    contact:        document.getElementById('csContact').value.trim(),
+    address_lines:  document.getElementById('csAddress').value.split('\n').map(l => l.trimEnd()).filter(Boolean),
+    abn:            document.getElementById('csAbn').value.trim(),
+    invoice_prefix: document.getElementById('csPrefix').value.trim().toUpperCase(),
+    invoice_seq:    Number(document.getElementById('csSeq').value) || 1,
+    rate_per_hour:  document.getElementById('csRate').value === '' ? null : Number(document.getElementById('csRate').value),
+    currency:       document.getElementById('csCurrency').value.trim(),
+    gst_rate:       document.getElementById('csGst').value === '' ? null : Number(document.getElementById('csGst').value),
   };
-  await api('PUT', `/tags/${encodeURIComponent(tsCurrentTag)}`, body);
+  if (!body.name) { alert('Client name is required'); return; }
+  let saved;
+  try {
+    if (csCurrentId) saved = await api('PATCH', `/clients/${encodeURIComponent(csCurrentId)}`, body);
+    else             saved = await api('POST', '/clients', body);
+  } catch (err) { alert(`Save failed: ${err.message}`); return; }
+  clients.set(saved.id, saved);
+  // If we just created a new client and a project is open, auto-assign it.
+  if (!csCurrentId && openCardId) {
+    const c = cards.get(openCardId);
+    if (c && !c.parent_id) {
+      try { await patchCard(openCardId, { client_id: saved.id }); } catch {}
+    }
+  }
+  csCurrentId = saved.id;
   closeAllModals();
+  if (openCardId) {
+    const c = cards.get(openCardId);
+    if (c && !c.parent_id) refreshClientSelector(c);
+  }
+  if (billingPanel.classList.contains('open')) renderBillingPanel();
+});
+document.getElementById('csDelete').addEventListener('click', async () => {
+  if (!csCurrentId) return;
+  if (!confirm(`Delete client "${clients.get(csCurrentId)?.name || csCurrentId}"? Projects pointing to it will keep the id but it will no longer resolve.`)) return;
+  try { await api('DELETE', `/clients/${encodeURIComponent(csCurrentId)}`); }
+  catch (err) { alert(`Delete failed: ${err.message}`); return; }
+  clients.delete(csCurrentId);
+  csCurrentId = null;
+  closeAllModals();
+  if (openCardId) {
+    const c = cards.get(openCardId);
+    if (c && !c.parent_id) refreshClientSelector(c);
+  }
   if (billingPanel.classList.contains('open')) renderBillingPanel();
 });
 
+// Client selector in the chat-panel header
+const chatClientWrap = document.getElementById('chatClientWrap');
+const chatClient     = document.getElementById('chatClient');
+const chatClientEdit = document.getElementById('chatClientEdit');
+function refreshClientSelector(card) {
+  if (!card || card.parent_id) { chatClientWrap.hidden = true; return; }
+  chatClientWrap.hidden = false;
+  const sorted = [...clients.values()].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  let html = '<option value="">(none — personal project)</option>';
+  for (const cl of sorted) {
+    html += `<option value="${escapeHtml(cl.id)}">${escapeHtml(cl.name || cl.id)}</option>`;
+  }
+  html += '<option value="__new__">+ new client…</option>';
+  chatClient.innerHTML = html;
+  chatClient.value = card.client_id || '';
+}
+chatClient.addEventListener('change', () => {
+  if (!openCardId) return;
+  const val = chatClient.value;
+  if (val === '__new__') {
+    const card = cards.get(openCardId);
+    chatClient.value = card?.client_id || '';
+    openClientSettings(null);
+    return;
+  }
+  patchCard(openCardId, { client_id: val || null }).catch(console.error);
+});
+chatClientEdit.addEventListener('click', () => {
+  const card = cards.get(openCardId);
+  if (!card) return;
+  openClientSettings(card.client_id || null);
+});
+
 // ── Invoice composer ──────────────────────────────────────
-async function openComposer(tag) {
-  const t = await api('GET', `/tags/${encodeURIComponent(tag)}`);
+async function openComposer(clientId) {
+  const client = clients.get(clientId) || await api('GET', `/clients/${encodeURIComponent(clientId)}`).catch(() => null);
+  if (!client) { alert(`Client not found: ${clientId}`); return; }
   const s = await api('GET', '/settings');
-  const rate = (t.rate_per_hour != null) ? t.rate_per_hour : (s.default_rate_per_hour || 0);
-  // Collect this tag's done+unbilled cards
+  const rate = (client.rate_per_hour != null) ? client.rate_per_hour : (s.default_rate_per_hour || 0);
+  // Collect this client's done+unbilled cards (children of any project owned by client)
   const items = [];
   for (const c of cards.values()) {
     if (c.status !== 'done') continue;
     if ((c.billing || 'unbilled') !== 'unbilled') continue;
-    if (!(c.tags || []).includes(tag)) continue;
+    if (resolveClientId(c) !== clientId) continue;
     const hours = (typeof c.hours === 'number') ? c.hours : 0;
     const amount = round2(hours * rate);
     items.push({
@@ -2639,10 +2937,11 @@ async function openComposer(tag) {
       amount_ex_gst: amount,
     });
   }
-  composerCtx = { tag, items, gstRate: s.default_gst_rate || 0.10, currencySymbol: s.currency_symbol || '$' };
-  document.getElementById('compTitle').textContent = `New invoice for #${tag}`;
+  const gstRate = (client.gst_rate != null) ? client.gst_rate : (s.default_gst_rate || 0.10);
+  composerCtx = { client_id: clientId, items, gstRate, currencySymbol: s.currency_symbol || '$' };
+  document.getElementById('compTitle').textContent = `New invoice for ${client.name || client.id}`;
   document.getElementById('compClientHint').textContent =
-    t.client_name ? `To: ${t.client_name}` : `(No client name set — click ⚙ on the tag to add details)`;
+    client.company ? `To: ${client.company}` : `(No company set — click ⚙ to add details)`;
   document.getElementById('compIssued').value = todayISOC();
   document.getElementById('compDue').value    = addDaysISO(todayISOC(), s.default_due_days || 14);
   document.getElementById('compNotes').value  = '';
@@ -2710,7 +3009,7 @@ document.getElementById('compIssue').addEventListener('click', async () => {
   btn.textContent = 'issuing…';
   try {
     const inv = await api('POST', '/invoices', {
-      tag: composerCtx.tag,
+      client_id: composerCtx.client_id,
       items: composerCtx.items,
       issued_at: document.getElementById('compIssued').value,
       due_at:    document.getElementById('compDue').value,
@@ -2744,23 +3043,22 @@ renderBillingPanel = function() {
 
 function renderOutstandingTab() {
   _origRenderBillingPanel();
-  // Inject per-group "Generate invoice" buttons + edit-tag affordances
+  // Inject per-group "Generate invoice" buttons + edit-client affordances
   const groups = billingGroups();
   const grpEls = billingBody.querySelectorAll('.billing-group');
   let i = 0;
-  for (const [tag, g] of [...groups.entries()].sort((a, b) =>
+  for (const [clientId, g] of [...groups.entries()].sort((a, b) =>
         (b[1].hours.unbilled + b[1].hours.invoiced) - (a[1].hours.unbilled + a[1].hours.invoiced))) {
     const grpEl = grpEls[i++];
     if (!grpEl) continue;
-    if (tag === '_untagged') continue;
-    // Add edit-tag button in header
+    // Add edit-client button in header
     const header = grpEl.querySelector('.billing-group-header');
     if (header && !header.querySelector('.billing-group-edit')) {
       const editBtn = document.createElement('button');
       editBtn.className = 'billing-group-edit';
-      editBtn.title = 'Edit tag settings';
+      editBtn.title = 'Edit client';
       editBtn.textContent = '⚙';
-      editBtn.addEventListener('click', (ev) => { ev.stopPropagation(); openTagSettings(tag); });
+      editBtn.addEventListener('click', (ev) => { ev.stopPropagation(); openClientSettings(clientId); });
       header.insertBefore(editBtn, header.querySelector('.billing-group-total'));
     }
     // Add "Generate invoice" button to actions row
@@ -2769,7 +3067,7 @@ function renderOutstandingTab() {
       const genBtn = document.createElement('button');
       genBtn.className = 'detail-btn primary gen-invoice-btn';
       genBtn.textContent = 'generate invoice';
-      genBtn.addEventListener('click', () => openComposer(tag));
+      genBtn.addEventListener('click', () => openComposer(clientId));
       actions.insertBefore(genBtn, actions.firstChild);
     }
   }
@@ -2788,9 +3086,12 @@ async function renderInvoicesTab() {
     const row = document.createElement('div');
     row.className = 'billing-invoice-row';
     const sym = (inv.snapshot && inv.snapshot.currency_symbol) || '$';
+    const recipient = (inv.snapshot && inv.snapshot.to && inv.snapshot.to.company)
+                    || (clients.get(inv.client_id)?.name)
+                    || inv.client_id || inv.tag || '';
     row.innerHTML = `
       <span class="billing-invoice-id">${escapeHtml(inv.id)}</span>
-      <span class="billing-invoice-meta">${escapeHtml(inv.snapshot && inv.snapshot.to && inv.snapshot.to.company || inv.tag)} · ${escapeHtml(inv.issued_at || '')}</span>
+      <span class="billing-invoice-meta">${escapeHtml(recipient)} · ${escapeHtml(inv.issued_at || '')}</span>
       <span class="billing-invoice-total">${sym}${(inv.total_inc_gst || 0).toFixed(2)}</span>
       <span class="billing-invoice-status ${inv.status || 'draft'}">${inv.status || 'draft'}</span>
     `;
@@ -2925,9 +3226,13 @@ async function renderInvoicePage(id) {
 
 // ── Boot ─────────────────────────────────────────────────────
 (async function boot() {
-  const initial = await api('GET', '/cards');
+  const [initial, initialClients] = await Promise.all([
+    api('GET', '/cards'),
+    api('GET', '/clients').catch(() => []),
+  ]);
   document.title = 'Runn';
   for (const c of initial) cards.set(c.id, c);
+  for (const cl of initialClients) clients.set(cl.id, cl);
   renderAll();
   refreshOutstanding();
   connectWS();

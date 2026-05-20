@@ -22,7 +22,7 @@ const DEFAULT_LOCATION = { type: 'local', cwd: path.join(process.env.HOME, 'runn
 // init event arrives carrying the session_id; the child keeps running in
 // the background and writes to its session jsonl, which Runn picks up via
 // the discovery watcher.
-function spawnSession({ title, location }) {
+function spawnSession({ title, location, onExit }) {
   location = location || DEFAULT_LOCATION;
   if (location.type === 'ssh') {
     return Promise.reject(new Error('SSH transport not yet implemented — see slice 2d'));
@@ -42,6 +42,11 @@ function spawnSession({ title, location }) {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+
+    // Attach exit listener BEFORE unref so it still fires while the worker is alive.
+    if (typeof onExit === 'function') {
+      child.on('exit', (code) => { try { onExit(code); } catch (err) { console.error('[bridge] onExit threw', err); } });
+    }
 
     let resolved = false;
     const rl = readline.createInterface({ input: child.stdout });

@@ -9,6 +9,8 @@ const readline = require('readline');
 const { WebSocketServer } = require('ws');
 const chokidar = require('chokidar');
 const bridge = require('./bridge');
+const queue = require('./queue');
+const migrateClients = require('./migrate-clients');
 
 // ── Config ───────────────────────────────────────────────────
 const HOME = process.env.HOME;
@@ -16,6 +18,7 @@ const DATA_ROOT = path.join(HOME, 'runn-data');
 const CARDS_DIR = path.join(DATA_ROOT, 'cards');
 const ARCHIVE_DIR = path.join(CARDS_DIR, 'archive');
 const TAGS_DIR = path.join(DATA_ROOT, 'tags');
+const CLIENTS_DIR = path.join(DATA_ROOT, 'clients');
 const INVOICES_DIR = path.join(DATA_ROOT, 'invoices');
 const ASSETS_DIR = path.join(DATA_ROOT, 'assets');
 const SETTINGS_PATH = path.join(DATA_ROOT, 'settings.json');
@@ -27,6 +30,7 @@ const FRONTEND_DIR = path.join(__dirname, '..', 'frontend');
 const cardPath = (id) => path.join(CARDS_DIR, `${id}.json`);
 const archivePath = (id) => path.join(ARCHIVE_DIR, `${id}.json`);
 const tagPath = (name) => path.join(TAGS_DIR, `${name}.json`);
+const clientPath = (id) => path.join(CLIENTS_DIR, `${id}.json`);
 const invoicePath = (id) => path.join(INVOICES_DIR, `${id}.json`);
 const readJson = async (p) => JSON.parse(await fsp.readFile(p, 'utf8'));
 const readJsonOr = async (p, fallback) => {
@@ -63,19 +67,19 @@ function addDays(iso, days) {
 function round2(n) { return Math.round(n * 100) / 100; }
 
 async function createInvoice(body) {
-  // body: { tag, items: [{card_id, description, date, amount_ex_gst}], notes?, due_at?, issued_at? }
-  if (!body.tag) throw new Error('tag required');
+  // body: { client_id, items: [{card_id, description, date, amount_ex_gst}], notes?, due_at?, issued_at? }
+  if (!body.client_id) throw new Error('client_id required');
   if (!Array.isArray(body.items) || !body.items.length) throw new Error('items required');
 
   const settings = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
-  const tagMeta = await readJsonOr(tagPath(body.tag), { tag: body.tag });
+  const client = await readJson(clientPath(body.client_id));
 
-  // Mint id: {prefix}{seq}, bump seq, persist back to tag file
-  const prefix = (tagMeta.invoice_prefix || body.tag).toUpperCase();
-  const seq = Number.isFinite(tagMeta.invoice_seq) ? tagMeta.invoice_seq : 1;
+  // Mint id: {prefix}{seq}, bump seq, persist back to client file
+  const prefix = (client.invoice_prefix || (client.name || 'INV')).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const seq = Number.isFinite(client.invoice_seq) ? client.invoice_seq : 1;
   const id = `${prefix}${seq}`;
-  const updatedTagMeta = { ...tagMeta, tag: body.tag, invoice_prefix: prefix, invoice_seq: seq + 1 };
-  await atomicWriteJson(tagPath(body.tag), updatedTagMeta);
+  const updatedClient = { ...client, invoice_prefix: prefix, invoice_seq: seq + 1, updated_at: nowIso() };
+  await atomicWriteJson(clientPath(body.client_id), updatedClient);
 
   const items = body.items.map(it => ({
     card_id:        it.card_id || null,
@@ -84,7 +88,9 @@ async function createInvoice(body) {
     amount_ex_gst:  round2(Number(it.amount_ex_gst) || 0),
   }));
   const subtotal = round2(items.reduce((s, it) => s + it.amount_ex_gst, 0));
-  const gstRate  = (typeof body.gst_rate === 'number') ? body.gst_rate : (settings.default_gst_rate || 0);
+  const gstRate  = (typeof body.gst_rate === 'number') ? body.gst_rate
+                 : (typeof client.gst_rate === 'number') ? client.gst_rate
+                 : (settings.default_gst_rate || 0);
   const gst      = round2(subtotal * gstRate);
   const total    = round2(subtotal + gst);
 
@@ -93,7 +99,7 @@ async function createInvoice(body) {
 
   const inv = {
     id,
-    tag: body.tag,
+    client_id: body.client_id,
     issued_at: issued,
     due_at: due,
     items,
@@ -113,12 +119,13 @@ async function createInvoice(body) {
         logo_path: settings.logo_path || '',
       },
       to: {
-        company: tagMeta.client_name || body.tag,
-        contact: tagMeta.client_contact || '',
-        address_lines: tagMeta.client_address_lines || [],
+        company: client.company || client.name || '',
+        contact: client.contact || '',
+        address_lines: client.address_lines || [],
+        abn: client.abn || '',
       },
       bank: settings.bank || { bank: '', name: '', bsb: '', acc: '' },
-      currency: settings.currency || 'AUD',
+      currency: client.currency || settings.currency || 'AUD',
       currency_symbol: settings.currency_symbol || '$',
       date_format: settings.date_format || 'DD/MM/YYYY',
     },
@@ -382,6 +389,9 @@ const server = http.createServer(async (req, res) => {
         tags: Array.isArray(body.tags) ? body.tags : [],
         hours: (typeof body.hours === 'number' ? body.hours : null),
         billing: body.billing || 'unbilled',
+        assignee: body.assignee === 'ai' ? 'ai' : 'human',
+        client_id: body.client_id ?? null,
+        acceptance_check: body.acceptance_check ?? null,
         created_at: nowIso(),
         updated_at: nowIso(),
       };
@@ -399,6 +409,14 @@ const server = http.createServer(async (req, res) => {
         updated_at: nowIso(),
       };
       await atomicWriteJson(p, merged);
+      // Resume queue when a human task transitions to done.
+      const wasNotDone = card.status !== 'done';
+      const nowDone = merged.status === 'done';
+      const isHuman = (merged.assignee || 'human') === 'human';
+      if (wasNotDone && nowDone && isHuman && merged.parent_id) {
+        queue.maybeAdvanceQueue(merged.parent_id, queueDeps).catch(err =>
+          console.error('[runn] queue advance after human done failed', err));
+      }
       return sendJson(res, 200, merged);
     }
     if (m === 'POST' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/archive$/))) {
@@ -416,14 +434,20 @@ const server = http.createServer(async (req, res) => {
       if (card.session_id) return sendJson(res, 400, { error: 'card already has a session' });
       const location = card.location || bridge.DEFAULT_LOCATION;
       try {
+        const cardId = card.id;
         const { session_id, session_path, location: resolvedLoc } = await bridge.spawnSession({
           title: card.title,
           location,
+          onExit: (code) => {
+            queue.handleAiExit(cardId, code, queueDeps).catch(err =>
+              console.error('[runn] queue handleAiExit failed', err));
+          },
         });
         sessionIndex.set(session_id, card.id);
         const merged = {
           ...card,
           status: 'doing',
+          assignee: 'ai',
           session_id,
           session_path,
           location: resolvedLoc,
@@ -450,7 +474,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, merged);
     }
 
-    // ── Tag metadata (per-tag config used for invoicing) ───
+    // ── Tag metadata (legacy; tags are pure labels post-migration) ───
     if (m === 'GET' && (mm = url.pathname.match(/^\/tags\/([^/]+)$/))) {
       const tag = mm[1];
       const data = await readJsonOr(tagPath(tag), { tag });
@@ -460,9 +484,68 @@ const server = http.createServer(async (req, res) => {
       const tag = mm[1];
       const body = await readBody(req);
       const current = await readJsonOr(tagPath(tag), { tag });
-      const merged = { ...current, ...body, tag };
+      // Strip client_* and invoice_* keys — those now live on clients.
+      const sanitized = {};
+      for (const [k, v] of Object.entries(body)) {
+        if (k.startsWith('client_') || k.startsWith('invoice_')) continue;
+        sanitized[k] = v;
+      }
+      const merged = { ...current, ...sanitized, tag };
       await atomicWriteJson(tagPath(tag), merged);
       return sendJson(res, 200, merged);
+    }
+
+    // ── Clients (first-class invoice recipients) ───────────
+    if (m === 'GET' && url.pathname === '/clients') {
+      const files = await fsp.readdir(CLIENTS_DIR).catch(() => []);
+      const out = [];
+      for (const f of files) {
+        if (!f.endsWith('.json') || f.endsWith('.tmp')) continue;
+        try { out.push(await readJson(path.join(CLIENTS_DIR, f))); } catch {}
+      }
+      out.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      return sendJson(res, 200, out);
+    }
+    if (m === 'GET' && (mm = url.pathname.match(/^\/clients\/([^/]+)$/))) {
+      return sendJson(res, 200, await readJson(clientPath(mm[1])));
+    }
+    if (m === 'POST' && url.pathname === '/clients') {
+      const body = await readBody(req);
+      const id = body.id || `cl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,6)}`;
+      const client = {
+        id,
+        name: body.name || 'Untitled',
+        company: body.company || '',
+        address_lines: Array.isArray(body.address_lines) ? body.address_lines : [],
+        abn: body.abn || '',
+        currency: body.currency || '',
+        gst_rate: typeof body.gst_rate === 'number' ? body.gst_rate : null,
+        rate_per_hour: typeof body.rate_per_hour === 'number' ? body.rate_per_hour : null,
+        invoice_prefix: body.invoice_prefix || '',
+        invoice_seq: Number.isFinite(body.invoice_seq) ? body.invoice_seq : 1,
+        contact: body.contact || '',
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      await atomicWriteJson(clientPath(id), client);
+      return sendJson(res, 201, client);
+    }
+    if (m === 'PATCH' && (mm = url.pathname.match(/^\/clients\/([^/]+)$/))) {
+      const p = clientPath(mm[1]);
+      const current = await readJson(p);
+      const body = await readBody(req);
+      const merged = {
+        ...current, ...body,
+        id: current.id,
+        created_at: current.created_at,
+        updated_at: nowIso(),
+      };
+      await atomicWriteJson(p, merged);
+      return sendJson(res, 200, merged);
+    }
+    if (m === 'DELETE' && (mm = url.pathname.match(/^\/clients\/([^/]+)$/))) {
+      await fsp.unlink(clientPath(mm[1])).catch(() => {});
+      return sendJson(res, 200, { ok: true });
     }
 
     // ── Invoices ──────────────────────────────────────────
@@ -609,6 +692,39 @@ cardsWatcher.on('add',    cardEvent('card.added'));
 cardsWatcher.on('change', cardEvent('card.changed'));
 cardsWatcher.on('unlink', cardEvent('card.removed'));
 
+// ── Clients-dir watcher ──────────────────────────────────────
+const clientsWatcher = chokidar.watch(CLIENTS_DIR, {
+  ignored: (p) => p.endsWith('.tmp'),
+  ignoreInitial: true,
+  awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 25 },
+  depth: 1,
+});
+function clientEvent(type) {
+  return async (p) => {
+    if (!p.endsWith('.json') || p.endsWith('.tmp')) return;
+    const id = path.basename(p, '.json');
+    let client;
+    if (type === 'client.removed') {
+      client = { id };
+    } else {
+      try { client = await readJson(p); } catch { return; }
+    }
+    broadcast({ type, client });
+  };
+}
+clientsWatcher.on('add',    clientEvent('client.added'));
+clientsWatcher.on('change', clientEvent('client.changed'));
+clientsWatcher.on('unlink', clientEvent('client.removed'));
+
+// ── Queue dependencies (injected so queue.js stays I/O-isolated) ──
+const queueDeps = {
+  readJson, atomicWriteJson, cardPath, bridge, broadcast,
+  listCards, nowIso,
+  onAiExit: (cardId, code) =>
+    queue.handleAiExit(cardId, code, queueDeps).catch(err =>
+      console.error('[runn] queue handleAiExit failed', err)),
+};
+
 // ── Session-discovery watcher ────────────────────────────────
 // In-memory index: session_id → card_id (so we can dedup and update titles)
 const sessionIndex = new Map();
@@ -707,9 +823,15 @@ sessionsWatcher.on('change', async (p) => {
   await fsp.mkdir(CARDS_DIR, { recursive: true });
   await fsp.mkdir(ARCHIVE_DIR, { recursive: true });
   await fsp.mkdir(TAGS_DIR, { recursive: true });
+  await fsp.mkdir(CLIENTS_DIR, { recursive: true });
   await fsp.mkdir(INVOICES_DIR, { recursive: true });
   await fsp.mkdir(ASSETS_DIR, { recursive: true });
   await rebuildSessionIndex();
+  await migrateClients.run({
+    DATA_ROOT, CARDS_DIR, TAGS_DIR, CLIENTS_DIR, SETTINGS_PATH,
+    readJson, readJsonOr, atomicWriteJson, listCards,
+    DEFAULT_SETTINGS, nowIso,
+  }).catch(err => console.error('[runn] migration v1_clients failed', err));
 
   server.listen(PORT, HOST, () => {
     const urls = [`http://localhost:${PORT}`];
