@@ -15,6 +15,10 @@ const HOME = process.env.HOME;
 const DATA_ROOT = path.join(HOME, 'runn-data');
 const CARDS_DIR = path.join(DATA_ROOT, 'cards');
 const ARCHIVE_DIR = path.join(CARDS_DIR, 'archive');
+const TAGS_DIR = path.join(DATA_ROOT, 'tags');
+const INVOICES_DIR = path.join(DATA_ROOT, 'invoices');
+const ASSETS_DIR = path.join(DATA_ROOT, 'assets');
+const SETTINGS_PATH = path.join(DATA_ROOT, 'settings.json');
 const CLAUDE_PROJECTS = path.join(HOME, '.claude', 'projects');
 const PORT = Number(process.env.PORT || 17777);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -22,12 +26,108 @@ const FRONTEND_DIR = path.join(__dirname, '..', 'frontend');
 
 const cardPath = (id) => path.join(CARDS_DIR, `${id}.json`);
 const archivePath = (id) => path.join(ARCHIVE_DIR, `${id}.json`);
+const tagPath = (name) => path.join(TAGS_DIR, `${name}.json`);
+const invoicePath = (id) => path.join(INVOICES_DIR, `${id}.json`);
 const readJson = async (p) => JSON.parse(await fsp.readFile(p, 'utf8'));
+const readJsonOr = async (p, fallback) => {
+  try { return await readJson(p); } catch { return fallback; }
+};
 
 async function atomicWriteJson(p, data) {
   const tmp = `${p}.tmp`;
   await fsp.writeFile(tmp, JSON.stringify(data, null, 2));
   await fsp.rename(tmp, p);
+}
+
+// ── Invoicing defaults + helpers ─────────────────────────────
+const DEFAULT_SETTINGS = {
+  business_name: '',
+  business_address_lines: [],
+  business_abn_acn: '',
+  logo_path: '/assets/logo.png',
+  currency: 'AUD',
+  currency_symbol: '$',
+  default_gst_rate: 0.10,
+  default_due_days: 14,
+  default_rate_per_hour: null,
+  date_format: 'DD/MM/YYYY',
+  bank: { bank: '', name: '', bsb: '', acc: '' },
+};
+
+function todayISO() { return new Date().toISOString().slice(0, 10); }
+function addDays(iso, days) {
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function round2(n) { return Math.round(n * 100) / 100; }
+
+async function createInvoice(body) {
+  // body: { tag, items: [{card_id, description, date, amount_ex_gst}], notes?, due_at?, issued_at? }
+  if (!body.tag) throw new Error('tag required');
+  if (!Array.isArray(body.items) || !body.items.length) throw new Error('items required');
+
+  const settings = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
+  const tagMeta = await readJsonOr(tagPath(body.tag), { tag: body.tag });
+
+  // Mint id: {prefix}{seq}, bump seq, persist back to tag file
+  const prefix = (tagMeta.invoice_prefix || body.tag).toUpperCase();
+  const seq = Number.isFinite(tagMeta.invoice_seq) ? tagMeta.invoice_seq : 1;
+  const id = `${prefix}${seq}`;
+  const updatedTagMeta = { ...tagMeta, tag: body.tag, invoice_prefix: prefix, invoice_seq: seq + 1 };
+  await atomicWriteJson(tagPath(body.tag), updatedTagMeta);
+
+  const items = body.items.map(it => ({
+    card_id:        it.card_id || null,
+    description:    it.description || '',
+    date:           it.date || todayISO(),
+    amount_ex_gst:  round2(Number(it.amount_ex_gst) || 0),
+  }));
+  const subtotal = round2(items.reduce((s, it) => s + it.amount_ex_gst, 0));
+  const gstRate  = (typeof body.gst_rate === 'number') ? body.gst_rate : (settings.default_gst_rate || 0);
+  const gst      = round2(subtotal * gstRate);
+  const total    = round2(subtotal + gst);
+
+  const issued = body.issued_at || todayISO();
+  const due    = body.due_at    || addDays(issued, settings.default_due_days || 14);
+
+  const inv = {
+    id,
+    tag: body.tag,
+    issued_at: issued,
+    due_at: due,
+    items,
+    subtotal_ex_gst: subtotal,
+    gst_rate: gstRate,
+    gst,
+    total_inc_gst: total,
+    paid: 0,
+    balance: total,
+    status: 'draft',
+    notes: body.notes || '',
+    snapshot: {
+      from: {
+        name: settings.business_name || '',
+        address_lines: settings.business_address_lines || [],
+        abn_acn: settings.business_abn_acn || '',
+        logo_path: settings.logo_path || '',
+      },
+      to: {
+        company: tagMeta.client_name || body.tag,
+        contact: tagMeta.client_contact || '',
+        address_lines: tagMeta.client_address_lines || [],
+      },
+      bank: settings.bank || { bank: '', name: '', bsb: '', acc: '' },
+      currency: settings.currency || 'AUD',
+      currency_symbol: settings.currency_symbol || '$',
+      date_format: settings.date_format || 'DD/MM/YYYY',
+    },
+    created_at: nowIso(),
+    updated_at: nowIso(),
+  };
+  await atomicWriteJson(invoicePath(id), inv);
+  console.log(`[runn] issued invoice ${id} (${items.length} items, ${settings.currency_symbol || '$'}${total})`);
+  return inv;
 }
 
 // ── Card store ───────────────────────────────────────────────
@@ -177,22 +277,54 @@ function readBody(req) {
     req.on('error', reject);
   });
 }
+function ctFor(p) {
+  return p.endsWith('.html')      ? 'text/html; charset=utf-8'
+       : p.endsWith('.css')       ? 'text/css'
+       : p.endsWith('.js')        ? 'application/javascript'
+       : p.endsWith('.json')      ? 'application/manifest+json'
+       : p.endsWith('.svg')       ? 'image/svg+xml'
+       : p.endsWith('.png')       ? 'image/png'
+       : p.endsWith('.jpg') || p.endsWith('.jpeg') ? 'image/jpeg'
+       : p.endsWith('.webp')      ? 'image/webp'
+       : p.endsWith('.webmanifest') ? 'application/manifest+json'
+       :                            'application/octet-stream';
+}
+
 function serveStatic(req, res) {
   let p = req.url.split('?')[0];
   if (p === '/') p = '/index.html';
+  // /assets/* served from ~/runn-data/assets/ (logo etc)
+  if (p.startsWith('/assets/')) {
+    let rel;
+    try { rel = decodeURIComponent(p.slice('/assets/'.length)); }
+    catch { res.writeHead(400); res.end('bad url'); return; }
+    const full = path.normalize(path.join(ASSETS_DIR, rel));
+    if (!full.startsWith(ASSETS_DIR)) { res.writeHead(403); res.end(); return; }
+    fs.readFile(full, (err, data) => {
+      if (err) { res.writeHead(404); res.end('not found'); return; }
+      res.writeHead(200, { 'content-type': ctFor(rel) });
+      res.end(data);
+    });
+    return;
+  }
   const full = path.normalize(path.join(FRONTEND_DIR, p));
   if (!full.startsWith(FRONTEND_DIR)) { res.writeHead(403); res.end(); return; }
   fs.readFile(full, (err, data) => {
-    if (err) { res.writeHead(404); res.end('not found'); return; }
-    const ct = p.endsWith('.html')      ? 'text/html; charset=utf-8'
-             : p.endsWith('.css')       ? 'text/css'
-             : p.endsWith('.js')        ? 'application/javascript'
-             : p.endsWith('.json')      ? 'application/manifest+json'
-             : p.endsWith('.svg')       ? 'image/svg+xml'
-             : p.endsWith('.png')       ? 'image/png'
-             : p.endsWith('.webmanifest') ? 'application/manifest+json'
-             :                            'application/octet-stream';
-    res.writeHead(200, { 'content-type': ct });
+    if (err) {
+      // SPA fallback: any extension-less GET path serves index.html so client-side
+      // routing (e.g. /invoices/INV-001) works on direct load + browser reload.
+      if (!path.extname(p)) {
+        fs.readFile(path.join(FRONTEND_DIR, 'index.html'), (err2, html) => {
+          if (err2) { res.writeHead(404); res.end('not found'); return; }
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+          res.end(html);
+        });
+        return;
+      }
+      res.writeHead(404); res.end('not found');
+      return;
+    }
+    res.writeHead(200, { 'content-type': ctFor(p) });
     res.end(data);
   });
 }
@@ -306,6 +438,91 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 500, { error: String(err.message || err) });
       }
     }
+    // ── Settings (global) ──────────────────────────────────
+    if (m === 'GET' && url.pathname === '/settings') {
+      return sendJson(res, 200, await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS));
+    }
+    if (m === 'PUT' && url.pathname === '/settings') {
+      const body = await readBody(req);
+      const current = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
+      const merged = { ...current, ...body };
+      await atomicWriteJson(SETTINGS_PATH, merged);
+      return sendJson(res, 200, merged);
+    }
+
+    // ── Tag metadata (per-tag config used for invoicing) ───
+    if (m === 'GET' && (mm = url.pathname.match(/^\/tags\/([^/]+)$/))) {
+      const tag = mm[1];
+      const data = await readJsonOr(tagPath(tag), { tag });
+      return sendJson(res, 200, data);
+    }
+    if (m === 'PUT' && (mm = url.pathname.match(/^\/tags\/([^/]+)$/))) {
+      const tag = mm[1];
+      const body = await readBody(req);
+      const current = await readJsonOr(tagPath(tag), { tag });
+      const merged = { ...current, ...body, tag };
+      await atomicWriteJson(tagPath(tag), merged);
+      return sendJson(res, 200, merged);
+    }
+
+    // ── Invoices ──────────────────────────────────────────
+    if (m === 'GET' && url.pathname === '/invoices') {
+      const files = await fsp.readdir(INVOICES_DIR).catch(() => []);
+      const out = [];
+      for (const f of files) {
+        if (!f.endsWith('.json') || f.startsWith('_')) continue;
+        try { out.push(await readJson(path.join(INVOICES_DIR, f))); } catch {}
+      }
+      out.sort((a, b) => (b.issued_at || '').localeCompare(a.issued_at || ''));
+      return sendJson(res, 200, out);
+    }
+    if (m === 'GET' && (mm = url.pathname.match(/^\/invoices\/([^/]+)$/))) {
+      // Browser direct-nav (Accept: text/html...) → serve the SPA shell so client-side route renders.
+      // JSON fetch (Accept: application/json) → return the invoice data.
+      const accept = req.headers.accept || '';
+      if (accept.includes('text/html') && !accept.includes('application/json')) {
+        return serveStatic(req, res);
+      }
+      return sendJson(res, 200, await readJson(invoicePath(mm[1])));
+    }
+    if (m === 'POST' && url.pathname === '/invoices') {
+      const body = await readBody(req);
+      const inv = await createInvoice(body);
+      // Flip referenced cards to invoiced + set invoice_id
+      for (const item of inv.items) {
+        if (!item.card_id) continue;
+        try {
+          const cp = cardPath(item.card_id);
+          const c = await readJson(cp);
+          await atomicWriteJson(cp, { ...c, billing: 'invoiced', invoice_id: inv.id, updated_at: nowIso() });
+        } catch (err) {
+          console.error(`[runn] failed to flip card ${item.card_id} → invoiced:`, err.message);
+        }
+      }
+      return sendJson(res, 201, inv);
+    }
+    if (m === 'PATCH' && (mm = url.pathname.match(/^\/invoices\/([^/]+)$/))) {
+      const id = mm[1];
+      const inv = await readJson(invoicePath(id));
+      const body = await readBody(req);
+      const merged = { ...inv, ...body, id: inv.id, updated_at: nowIso() };
+      // Recompute balance if paid changed
+      if (typeof merged.paid === 'number') merged.balance = (merged.total_inc_gst || 0) - merged.paid;
+      await atomicWriteJson(invoicePath(id), merged);
+      // If status flipped to paid, cascade to referenced cards
+      if (body.status === 'paid' && inv.status !== 'paid') {
+        for (const item of inv.items) {
+          if (!item.card_id) continue;
+          try {
+            const cp = cardPath(item.card_id);
+            const c = await readJson(cp);
+            await atomicWriteJson(cp, { ...c, billing: 'paid', updated_at: nowIso() });
+          } catch {}
+        }
+      }
+      return sendJson(res, 200, merged);
+    }
+
     if (m === 'POST' && url.pathname === '/sessions') {
       const body = await readBody(req);
       if (!body.title || !body.title.trim()) return sendJson(res, 400, { error: 'title required' });
@@ -488,6 +705,9 @@ sessionsWatcher.on('change', async (p) => {
 (async function boot() {
   await fsp.mkdir(CARDS_DIR, { recursive: true });
   await fsp.mkdir(ARCHIVE_DIR, { recursive: true });
+  await fsp.mkdir(TAGS_DIR, { recursive: true });
+  await fsp.mkdir(INVOICES_DIR, { recursive: true });
+  await fsp.mkdir(ASSETS_DIR, { recursive: true });
   await rebuildSessionIndex();
 
   server.listen(PORT, HOST, () => {

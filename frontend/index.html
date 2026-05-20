@@ -562,6 +562,267 @@
     text-align: center; padding: 40px 20px;
     color: var(--ink-3); font-size: 14px;
   }
+
+  /* Tabs inside billing panel */
+  .billing-tabs {
+    display: flex; gap: 2px; padding: 4px;
+    background: var(--paper-3); border-bottom: 1px solid var(--line);
+    flex-shrink: 0;
+  }
+  .billing-tab {
+    flex: 1; border: none; background: none; cursor: pointer;
+    padding: 8px 12px; font-family: inherit;
+    font-size: 12px; font-weight: 600;
+    color: var(--ink-3); border-radius: 6px;
+    text-transform: uppercase; letter-spacing: .03em;
+    transition: background .12s, color .12s;
+  }
+  .billing-tab:hover { color: var(--ink); }
+  .billing-tab.active {
+    background: var(--paper); color: var(--ink);
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  }
+
+  .billing-header-actions { margin-left: auto; display: flex; gap: 4px; }
+  .billing-icon-btn {
+    width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; background: none; color: var(--ink-3);
+    cursor: pointer; border-radius: 8px; font-size: 18px;
+  }
+  .billing-icon-btn:hover { background: var(--paper-3); color: var(--ink); }
+
+  /* Edit-tag affordance in group header */
+  .billing-group-edit {
+    border: none; background: none; cursor: pointer;
+    color: var(--ink-3); font-size: 12px; padding: 2px 4px;
+  }
+  .billing-group-edit:hover { color: var(--ink); }
+
+  .billing-invoice-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 6px; cursor: pointer;
+    font-size: 13px;
+    transition: background .12s, border-color .12s;
+  }
+  .billing-invoice-row:hover { background: var(--paper-3); border-color: var(--ink-3); }
+  .billing-invoice-id {
+    font-family: ui-monospace, monospace; font-weight: 600;
+    color: var(--ink);
+  }
+  .billing-invoice-meta { flex: 1; color: var(--ink-3); font-size: 12px; }
+  .billing-invoice-total {
+    font-family: ui-monospace, monospace; font-weight: 600;
+    color: var(--accent);
+  }
+  .billing-invoice-status {
+    font-size: 10px; font-weight: 600; padding: 2px 7px;
+    border-radius: 3px; text-transform: uppercase; letter-spacing: .03em;
+  }
+  .billing-invoice-status.draft    { background: var(--paper-3); color: var(--ink-3); }
+  .billing-invoice-status.sent     { background: #f4dfd0;        color: #b85c1f; }
+  .billing-invoice-status.paid     { background: #dff0e2;        color: #3a7d44; }
+
+  /* ── Modal dialog ────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(42, 38, 32, .5);
+    z-index: 30; opacity: 0; pointer-events: none;
+    transition: opacity .18s;
+  }
+  .modal-backdrop.open { opacity: 1; pointer-events: auto; }
+  .modal {
+    position: fixed; z-index: 31;
+    top: 50%; left: 50%; transform: translate(-50%, -50%) scale(.96);
+    width: 92vw; max-width: 600px; max-height: 90vh;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.18);
+    opacity: 0; pointer-events: none;
+    transition: opacity .18s, transform .18s;
+    display: flex; flex-direction: column;
+  }
+  .modal.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+  @media (max-width: 700px) {
+    .modal { width: 100vw; max-width: 100vw; max-height: 100vh; height: 100vh;
+             top: 0; left: 0; transform: none; border-radius: 0; }
+    .modal.open { transform: none; }
+  }
+  .modal-header {
+    flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+    padding: 14px 16px; border-bottom: 1px solid var(--line);
+  }
+  .modal-title { flex: 1; font-size: 15px; font-weight: 600; color: var(--ink); }
+  .modal-close {
+    width: 32px; height: 32px;
+    border: none; background: none; cursor: pointer;
+    color: var(--ink-3); font-size: 18px; border-radius: 6px;
+  }
+  .modal-close:hover { background: var(--paper-3); color: var(--ink); }
+  .modal-body {
+    flex: 1; overflow-y: auto; padding: 16px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .modal-footer {
+    flex-shrink: 0; display: flex; gap: 8px; justify-content: flex-end;
+    padding: 12px 16px; border-top: 1px solid var(--line);
+    background: var(--paper-2);
+  }
+  .form-field { display: flex; flex-direction: column; gap: 4px; }
+  .form-field label {
+    font-size: 11px; font-weight: 600; color: var(--ink-3);
+    text-transform: uppercase; letter-spacing: .03em;
+  }
+  .form-field input, .form-field textarea, .form-field select {
+    font-family: inherit; font-size: 14px; color: var(--ink);
+    background: var(--paper-2); border: 1px solid var(--line);
+    border-radius: 6px; padding: 8px 10px; outline: none;
+  }
+  .form-field input:focus, .form-field textarea:focus, .form-field select:focus {
+    border-color: var(--accent);
+  }
+  .form-field textarea { resize: vertical; min-height: 60px; line-height: 1.4; }
+  .form-field-row { display: flex; gap: 8px; }
+  .form-field-row > .form-field { flex: 1; }
+  .form-help { font-size: 11px; color: var(--ink-3); margin-top: -2px; }
+
+  /* Invoice composer line items table */
+  .composer-items {
+    display: flex; flex-direction: column; gap: 4px;
+    border: 1px solid var(--line); border-radius: 6px;
+    background: var(--paper-2); padding: 6px;
+  }
+  .composer-item {
+    display: grid;
+    grid-template-columns: 1fr 100px 90px 30px;
+    gap: 4px; align-items: center;
+  }
+  .composer-item input {
+    font-family: inherit; font-size: 12px; color: var(--ink);
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 4px; padding: 5px 7px; outline: none;
+  }
+  .composer-item input:focus { border-color: var(--accent); }
+  .composer-item .rm {
+    border: none; background: none; cursor: pointer;
+    color: var(--ink-3); font-size: 16px;
+  }
+  .composer-item .rm:hover { color: var(--accent); }
+  .composer-totals {
+    display: flex; flex-direction: column; gap: 4px;
+    align-items: flex-end; padding: 8px 12px;
+    background: var(--paper-2); border: 1px solid var(--line);
+    border-radius: 6px;
+    font-family: ui-monospace, monospace; font-size: 13px;
+  }
+  .composer-totals-row { display: flex; gap: 16px; }
+  .composer-totals-label { color: var(--ink-3); }
+  .composer-totals-row.total { font-weight: 700; color: var(--accent); font-size: 14px; }
+
+  /* ── Invoice preview page (full route at /invoices/:id) ── */
+  .invoice-page {
+    display: none;
+    min-height: 100vh;
+    background: var(--paper-2);
+    padding: 20px;
+    overflow-y: auto;
+  }
+  body.invoice-route .header,
+  body.invoice-route .main,
+  body.invoice-route .footer,
+  body.invoice-route .chat-panel,
+  body.invoice-route .billing-panel,
+  body.invoice-route .chat-backdrop { display: none !important; }
+  body.invoice-route .invoice-page { display: block; }
+
+  .invoice-doc-actions {
+    width: 210mm; max-width: 100%; margin: 0 auto 16px;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .invoice-doc-actions .spacer { flex: 1; }
+  .invoice-doc {
+    /* A4 portrait */
+    width: 210mm; max-width: 100%;
+    min-height: 297mm;
+    margin: 0 auto;
+    background: white;
+    box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    padding: 18mm 20mm;
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    color: #2a2620;
+    font-size: 13px; line-height: 1.5;
+    box-sizing: border-box;
+    /* Flex column so the totals block can be pushed to the page bottom */
+    display: flex; flex-direction: column;
+  }
+  .invoice-doc-header { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 28px; }
+  .invoice-doc-logo {
+    max-width: 180px; max-height: 110px; object-fit: contain;
+  }
+  .invoice-doc-from-meta {
+    margin-top: 8px; font-size: 11px; color: #5a544a;
+    line-height: 1.5;
+  }
+  .invoice-doc-right { text-align: right; }
+  .invoice-doc-title {
+    font-size: 18px; font-weight: 700; margin-bottom: 14px;
+  }
+  .invoice-doc-to {
+    font-size: 12px; line-height: 1.5;
+  }
+  .invoice-doc-table {
+    width: 100%; border-collapse: collapse;
+    margin: 20px 0;
+  }
+  .invoice-doc-table th {
+    text-align: left; font-weight: 400; font-style: italic;
+    color: #8c8578; font-size: 12px;
+    border-bottom: 1px solid #d5cdbb;
+    padding: 8px 4px;
+  }
+  .invoice-doc-table th.right { text-align: right; }
+  .invoice-doc-table td {
+    padding: 12px 4px;
+    border-bottom: 1px solid #f1ece3;
+    font-size: 13px;
+  }
+  .invoice-doc-table td.right { text-align: right; font-family: ui-monospace, monospace; }
+  .invoice-doc-table td.date  { color: #5a544a; }
+  .invoice-doc-footer {
+    margin-top: auto;
+    border: 1px solid #d5cdbb; border-radius: 4px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 32px;
+    padding: 16px 20px;
+  }
+  .invoice-doc-bank { font-size: 12px; line-height: 1.7; }
+  .invoice-doc-bank-row { display: grid; grid-template-columns: 50px 1fr; gap: 8px; }
+  .invoice-doc-bank-row .lbl { color: #8c8578; }
+  .invoice-doc-totals { font-size: 13px; }
+  .invoice-doc-totals-row {
+    display: flex; justify-content: flex-end; gap: 16px;
+    padding: 4px 0; line-height: 1.4;
+  }
+  .invoice-doc-totals-row .lbl { color: #8c8578; }
+  .invoice-doc-totals-row .val {
+    font-family: ui-monospace, monospace; min-width: 70px; text-align: right;
+  }
+  .invoice-doc-totals-row.balance .val.outstanding { color: #b84f1f; font-weight: 700; }
+
+  @page { size: A4; margin: 0; }
+  @media print {
+    body { background: white !important; }
+    .invoice-doc-actions { display: none !important; }
+    .invoice-doc {
+      box-shadow: none;
+      width: 210mm; min-height: 297mm;
+      padding: 18mm 20mm;
+      margin: 0;
+    }
+    body.invoice-route .invoice-page { padding: 0; }
+  }
   .chat-due-clear {
     background: none; border: none; cursor: pointer;
     color: var(--ink-3); font-size: 14px; padding: 0 2px;
@@ -801,9 +1062,170 @@
   <div class="billing-header">
     <button class="chat-back" onclick="closeBilling()" title="Close">←</button>
     <div class="billing-title">Billing</div>
+    <div class="billing-header-actions">
+      <button class="billing-icon-btn" id="btnAppSettings" title="App settings">⚙</button>
+    </div>
+  </div>
+  <div class="billing-tabs">
+    <button class="billing-tab active" data-tab="outstanding">Outstanding</button>
+    <button class="billing-tab" data-tab="invoices">Invoices</button>
   </div>
   <div class="billing-body" id="billingBody"></div>
 </aside>
+
+<!-- App settings modal -->
+<div class="modal-backdrop" id="modalBackdrop" onclick="closeAllModals()"></div>
+<div class="modal" id="modalAppSettings" aria-hidden="true">
+  <div class="modal-header">
+    <div class="modal-title">App settings — invoicing</div>
+    <button class="modal-close" onclick="closeAllModals()">×</button>
+  </div>
+  <div class="modal-body">
+    <div class="form-field">
+      <label>Business name</label>
+      <input type="text" id="apsBusinessName" placeholder="Robots & Co">
+    </div>
+    <div class="form-field">
+      <label>Business address (multi-line)</label>
+      <textarea id="apsBusinessAddress" rows="2" placeholder="PO Box 302 Healesville, Vic 3777"></textarea>
+    </div>
+    <div class="form-field">
+      <label>ABN / ACN</label>
+      <input type="text" id="apsAbnAcn" placeholder="ABN: 12 345 678 901 - ACN ...">
+    </div>
+    <div class="form-field">
+      <label>Logo path <span style="font-weight:400;text-transform:none;">(drop file in <code>~/runn-data/assets/</code>)</span></label>
+      <input type="text" id="apsLogoPath" placeholder="/assets/logo.png">
+    </div>
+    <div class="form-field-row">
+      <div class="form-field">
+        <label>GST rate</label>
+        <input type="number" id="apsGstRate" step="0.01" min="0" max="1" placeholder="0.10">
+      </div>
+      <div class="form-field">
+        <label>Default due (days)</label>
+        <input type="number" id="apsDueDays" min="0" placeholder="14">
+      </div>
+      <div class="form-field">
+        <label>Currency symbol</label>
+        <input type="text" id="apsCurrencySymbol" placeholder="$">
+      </div>
+    </div>
+    <div style="margin-top:8px;font-weight:600;font-size:12px;color:var(--ink-2);">Bank details (shown on invoices)</div>
+    <div class="form-field-row">
+      <div class="form-field">
+        <label>Bank</label>
+        <input type="text" id="apsBankName" placeholder="Westpac">
+      </div>
+      <div class="form-field">
+        <label>Account name</label>
+        <input type="text" id="apsAccName" placeholder="Robots & Co Pty Ltd">
+      </div>
+    </div>
+    <div class="form-field-row">
+      <div class="form-field">
+        <label>BSB</label>
+        <input type="text" id="apsBsb" placeholder="033-397">
+      </div>
+      <div class="form-field">
+        <label>Account number</label>
+        <input type="text" id="apsAccNum" placeholder="451328">
+      </div>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="detail-btn" onclick="closeAllModals()">cancel</button>
+    <button class="detail-btn primary" id="apsSave">save</button>
+  </div>
+</div>
+
+<!-- Tag settings modal -->
+<div class="modal" id="modalTagSettings" aria-hidden="true">
+  <div class="modal-header">
+    <div class="modal-title" id="tsTitle">Tag settings</div>
+    <button class="modal-close" onclick="closeAllModals()">×</button>
+  </div>
+  <div class="modal-body">
+    <div class="form-field">
+      <label>Client (company) name</label>
+      <input type="text" id="tsClientName" placeholder="Zimmermann Industries">
+    </div>
+    <div class="form-field">
+      <label>Contact (Att:)</label>
+      <input type="text" id="tsClientContact" placeholder="Shellie Evans">
+    </div>
+    <div class="form-field">
+      <label>Address (multi-line)</label>
+      <textarea id="tsClientAddress" rows="3" placeholder="9 Trade Place&#10;Lilydale, Vic&#10;Australia 3140"></textarea>
+    </div>
+    <div class="form-field-row">
+      <div class="form-field">
+        <label>Invoice prefix</label>
+        <input type="text" id="tsPrefix" placeholder="ZIS">
+      </div>
+      <div class="form-field">
+        <label>Next invoice number</label>
+        <input type="number" id="tsSeq" min="1" placeholder="2604">
+      </div>
+      <div class="form-field">
+        <label>Rate / hour</label>
+        <input type="number" id="tsRate" step="1" min="0" placeholder="120">
+      </div>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="detail-btn" onclick="closeAllModals()">cancel</button>
+    <button class="detail-btn primary" id="tsSave">save</button>
+  </div>
+</div>
+
+<!-- Invoice composer modal -->
+<div class="modal" id="modalComposer" aria-hidden="true">
+  <div class="modal-header">
+    <div class="modal-title" id="compTitle">New invoice</div>
+    <button class="modal-close" onclick="closeAllModals()">×</button>
+  </div>
+  <div class="modal-body">
+    <div id="compClientHint" style="font-size:12px;color:var(--ink-3);"></div>
+    <div class="form-field-row">
+      <div class="form-field">
+        <label>Issued</label>
+        <input type="date" id="compIssued">
+      </div>
+      <div class="form-field">
+        <label>Due</label>
+        <input type="date" id="compDue">
+      </div>
+    </div>
+    <div class="form-field">
+      <label>Line items</label>
+      <div class="composer-items" id="compItems"></div>
+      <button class="detail-btn" id="compAddRow" style="align-self:flex-start;margin-top:6px;">+ add line</button>
+    </div>
+    <div class="composer-totals" id="compTotals"></div>
+    <div class="form-field">
+      <label>Notes (shown on invoice — optional)</label>
+      <textarea id="compNotes" rows="2"></textarea>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="detail-btn" onclick="closeAllModals()">cancel</button>
+    <button class="detail-btn primary" id="compIssue">issue invoice</button>
+  </div>
+</div>
+
+<!-- Invoice preview page (full route) -->
+<div class="invoice-page" id="invoicePage">
+  <div class="invoice-doc-actions">
+    <button class="detail-btn" onclick="history.back()">← back</button>
+    <span class="spacer"></span>
+    <span id="invStatusBadge"></span>
+    <button class="detail-btn" id="invMarkSent">mark sent</button>
+    <button class="detail-btn" id="invMarkPaid">mark paid</button>
+    <button class="detail-btn primary" onclick="window.print()">print / pdf</button>
+  </div>
+  <div class="invoice-doc" id="invoiceDoc"></div>
+</div>
 <aside class="chat-panel" id="chatPanel" aria-hidden="true">
   <div class="chat-header">
     <button class="chat-back" onclick="closeChat()" title="Close">←</button>
@@ -901,7 +1323,10 @@ toggleDoneBtn.addEventListener('click', () => {
 async function api(method, path, body) {
   const res = await fetch(path, {
     method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
+    headers: {
+      'accept': 'application/json',
+      ...(body ? { 'content-type': 'application/json' } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new Error(`${method} ${path}: ${res.status}`);
@@ -2099,6 +2524,405 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+// ── Invoicing: modals, composer, preview page, list ─────────
+const modalBackdrop  = document.getElementById('modalBackdrop');
+const modalAppSet    = document.getElementById('modalAppSettings');
+const modalTagSet    = document.getElementById('modalTagSettings');
+const modalComposer  = document.getElementById('modalComposer');
+const invoicePage    = document.getElementById('invoicePage');
+const invoiceDoc     = document.getElementById('invoiceDoc');
+const invStatusBadge = document.getElementById('invStatusBadge');
+
+let currentInvoiceId = null;       // when on invoice route
+let composerCtx = null;            // { tag, items: mutable }
+let currentBillingTab = 'outstanding';
+
+function openModal(el) {
+  modalBackdrop.classList.add('open');
+  el.classList.add('open');
+  el.setAttribute('aria-hidden', 'false');
+}
+function closeAllModals() {
+  modalBackdrop.classList.remove('open');
+  for (const m of document.querySelectorAll('.modal.open')) {
+    m.classList.remove('open');
+    m.setAttribute('aria-hidden', 'true');
+  }
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.querySelector('.modal.open')) closeAllModals();
+});
+
+// ── App settings dialog ───────────────────────────────────
+async function openAppSettings() {
+  const s = await api('GET', '/settings');
+  document.getElementById('apsBusinessName').value     = s.business_name || '';
+  document.getElementById('apsBusinessAddress').value  = (s.business_address_lines || []).join('\n');
+  document.getElementById('apsAbnAcn').value           = s.business_abn_acn || '';
+  document.getElementById('apsLogoPath').value         = s.logo_path || '/assets/logo.png';
+  document.getElementById('apsGstRate').value          = (s.default_gst_rate != null) ? s.default_gst_rate : 0.10;
+  document.getElementById('apsDueDays').value          = (s.default_due_days != null) ? s.default_due_days : 14;
+  document.getElementById('apsCurrencySymbol').value   = s.currency_symbol || '$';
+  document.getElementById('apsBankName').value = (s.bank && s.bank.bank) || '';
+  document.getElementById('apsAccName').value  = (s.bank && s.bank.name) || '';
+  document.getElementById('apsBsb').value      = (s.bank && s.bank.bsb)  || '';
+  document.getElementById('apsAccNum').value   = (s.bank && s.bank.acc)  || '';
+  openModal(modalAppSet);
+}
+document.getElementById('btnAppSettings').addEventListener('click', openAppSettings);
+document.getElementById('apsSave').addEventListener('click', async () => {
+  const body = {
+    business_name:         document.getElementById('apsBusinessName').value.trim(),
+    business_address_lines: document.getElementById('apsBusinessAddress').value.split('\n').map(l => l.trimEnd()).filter(Boolean),
+    business_abn_acn:      document.getElementById('apsAbnAcn').value.trim(),
+    logo_path:             document.getElementById('apsLogoPath').value.trim() || '/assets/logo.png',
+    default_gst_rate:      Number(document.getElementById('apsGstRate').value) || 0,
+    default_due_days:      Number(document.getElementById('apsDueDays').value) || 14,
+    currency_symbol:       document.getElementById('apsCurrencySymbol').value || '$',
+    bank: {
+      bank: document.getElementById('apsBankName').value.trim(),
+      name: document.getElementById('apsAccName').value.trim(),
+      bsb:  document.getElementById('apsBsb').value.trim(),
+      acc:  document.getElementById('apsAccNum').value.trim(),
+    },
+  };
+  await api('PUT', '/settings', body);
+  closeAllModals();
+});
+
+// ── Tag settings dialog ───────────────────────────────────
+let tsCurrentTag = null;
+async function openTagSettings(tag) {
+  tsCurrentTag = tag;
+  document.getElementById('tsTitle').textContent = `Settings for #${tag}`;
+  const t = await api('GET', `/tags/${encodeURIComponent(tag)}`);
+  document.getElementById('tsClientName').value    = t.client_name || '';
+  document.getElementById('tsClientContact').value = t.client_contact || '';
+  document.getElementById('tsClientAddress').value = (t.client_address_lines || []).join('\n');
+  document.getElementById('tsPrefix').value        = t.invoice_prefix || tag.toUpperCase();
+  document.getElementById('tsSeq').value           = t.invoice_seq || 1;
+  document.getElementById('tsRate').value          = (t.rate_per_hour != null) ? t.rate_per_hour : '';
+  openModal(modalTagSet);
+}
+document.getElementById('tsSave').addEventListener('click', async () => {
+  if (!tsCurrentTag) return;
+  const body = {
+    client_name:           document.getElementById('tsClientName').value.trim(),
+    client_contact:        document.getElementById('tsClientContact').value.trim(),
+    client_address_lines:  document.getElementById('tsClientAddress').value.split('\n').map(l => l.trimEnd()).filter(Boolean),
+    invoice_prefix:        document.getElementById('tsPrefix').value.trim().toUpperCase() || tsCurrentTag.toUpperCase(),
+    invoice_seq:           Number(document.getElementById('tsSeq').value) || 1,
+    rate_per_hour:         document.getElementById('tsRate').value === '' ? null : Number(document.getElementById('tsRate').value),
+  };
+  await api('PUT', `/tags/${encodeURIComponent(tsCurrentTag)}`, body);
+  closeAllModals();
+  if (billingPanel.classList.contains('open')) renderBillingPanel();
+});
+
+// ── Invoice composer ──────────────────────────────────────
+async function openComposer(tag) {
+  const t = await api('GET', `/tags/${encodeURIComponent(tag)}`);
+  const s = await api('GET', '/settings');
+  const rate = (t.rate_per_hour != null) ? t.rate_per_hour : (s.default_rate_per_hour || 0);
+  // Collect this tag's done+unbilled cards
+  const items = [];
+  for (const c of cards.values()) {
+    if (c.status !== 'done') continue;
+    if ((c.billing || 'unbilled') !== 'unbilled') continue;
+    if (!(c.tags || []).includes(tag)) continue;
+    const hours = (typeof c.hours === 'number') ? c.hours : 0;
+    const amount = round2(hours * rate);
+    items.push({
+      card_id: c.id,
+      description: c.title,
+      date: (c.updated_at || '').slice(0, 10) || todayISOC(),
+      amount_ex_gst: amount,
+    });
+  }
+  composerCtx = { tag, items, gstRate: s.default_gst_rate || 0.10, currencySymbol: s.currency_symbol || '$' };
+  document.getElementById('compTitle').textContent = `New invoice for #${tag}`;
+  document.getElementById('compClientHint').textContent =
+    t.client_name ? `To: ${t.client_name}` : `(No client name set — click ⚙ on the tag to add details)`;
+  document.getElementById('compIssued').value = todayISOC();
+  document.getElementById('compDue').value    = addDaysISO(todayISOC(), s.default_due_days || 14);
+  document.getElementById('compNotes').value  = '';
+  renderComposerItems();
+  openModal(modalComposer);
+}
+function todayISOC() { return new Date().toISOString().slice(0, 10); }
+function addDaysISO(iso, days) {
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function round2(n) { return Math.round(n * 100) / 100; }
+
+function renderComposerItems() {
+  const cont = document.getElementById('compItems');
+  cont.innerHTML = '';
+  for (let i = 0; i < composerCtx.items.length; i++) {
+    const it = composerCtx.items[i];
+    const row = document.createElement('div');
+    row.className = 'composer-item';
+    row.innerHTML = `
+      <input type="text" placeholder="Description" value="">
+      <input type="date" value="">
+      <input type="number" step="0.01" min="0" placeholder="amount" value="">
+      <button class="rm" title="Remove">×</button>
+    `;
+    const [descIn, dateIn, amtIn, rmBtn] = row.querySelectorAll('input,button');
+    descIn.value = it.description;
+    dateIn.value = it.date;
+    amtIn.value  = it.amount_ex_gst;
+    descIn.addEventListener('input', () => { composerCtx.items[i].description = descIn.value; });
+    dateIn.addEventListener('change', () => { composerCtx.items[i].date = dateIn.value; });
+    amtIn.addEventListener('input', () => {
+      composerCtx.items[i].amount_ex_gst = Number(amtIn.value) || 0;
+      renderComposerTotals();
+    });
+    rmBtn.addEventListener('click', () => {
+      composerCtx.items.splice(i, 1);
+      renderComposerItems();
+    });
+    cont.appendChild(row);
+  }
+  renderComposerTotals();
+}
+function renderComposerTotals() {
+  const sym = composerCtx.currencySymbol;
+  const subtotal = round2(composerCtx.items.reduce((s, it) => s + (Number(it.amount_ex_gst) || 0), 0));
+  const gst      = round2(subtotal * composerCtx.gstRate);
+  const total    = round2(subtotal + gst);
+  document.getElementById('compTotals').innerHTML = `
+    <div class="composer-totals-row"><span class="composer-totals-label">Subtotal ex GST:</span><span>${sym}${subtotal.toFixed(2)}</span></div>
+    <div class="composer-totals-row"><span class="composer-totals-label">GST (${(composerCtx.gstRate*100).toFixed(0)}%):</span><span>${sym}${gst.toFixed(2)}</span></div>
+    <div class="composer-totals-row total"><span class="composer-totals-label">Total inc GST:</span><span>${sym}${total.toFixed(2)}</span></div>
+  `;
+}
+document.getElementById('compAddRow').addEventListener('click', () => {
+  composerCtx.items.push({ card_id: null, description: '', date: todayISOC(), amount_ex_gst: 0 });
+  renderComposerItems();
+});
+document.getElementById('compIssue').addEventListener('click', async () => {
+  if (!composerCtx) return;
+  const btn = document.getElementById('compIssue');
+  btn.disabled = true;
+  btn.textContent = 'issuing…';
+  try {
+    const inv = await api('POST', '/invoices', {
+      tag: composerCtx.tag,
+      items: composerCtx.items,
+      issued_at: document.getElementById('compIssued').value,
+      due_at:    document.getElementById('compDue').value,
+      notes:     document.getElementById('compNotes').value,
+      gst_rate:  composerCtx.gstRate,
+    });
+    closeAllModals();
+    navigateTo(`/invoices/${inv.id}`);
+  } catch (err) {
+    alert(`Issue failed: ${err.message}`);
+    btn.disabled = false; btn.textContent = 'issue invoice';
+  }
+});
+
+// ── Billing panel tabs ────────────────────────────────────
+for (const t of document.querySelectorAll('.billing-tab')) {
+  t.addEventListener('click', () => {
+    for (const x of document.querySelectorAll('.billing-tab')) x.classList.remove('active');
+    t.classList.add('active');
+    currentBillingTab = t.dataset.tab;
+    renderBillingPanel();
+  });
+}
+
+// Override the original renderBillingPanel to support tabs
+const _origRenderBillingPanel = renderBillingPanel;
+renderBillingPanel = function() {
+  if (currentBillingTab === 'invoices') renderInvoicesTab();
+  else renderOutstandingTab();
+};
+
+function renderOutstandingTab() {
+  _origRenderBillingPanel();
+  // Inject per-group "Generate invoice" buttons + edit-tag affordances
+  const groups = billingGroups();
+  const grpEls = billingBody.querySelectorAll('.billing-group');
+  let i = 0;
+  for (const [tag, g] of [...groups.entries()].sort((a, b) =>
+        (b[1].hours.unbilled + b[1].hours.invoiced) - (a[1].hours.unbilled + a[1].hours.invoiced))) {
+    const grpEl = grpEls[i++];
+    if (!grpEl) continue;
+    if (tag === '_untagged') continue;
+    // Add edit-tag button in header
+    const header = grpEl.querySelector('.billing-group-header');
+    if (header && !header.querySelector('.billing-group-edit')) {
+      const editBtn = document.createElement('button');
+      editBtn.className = 'billing-group-edit';
+      editBtn.title = 'Edit tag settings';
+      editBtn.textContent = '⚙';
+      editBtn.addEventListener('click', (ev) => { ev.stopPropagation(); openTagSettings(tag); });
+      header.insertBefore(editBtn, header.querySelector('.billing-group-total'));
+    }
+    // Add "Generate invoice" button to actions row
+    const actions = grpEl.querySelector('.billing-group-actions');
+    if (actions && !actions.querySelector('.gen-invoice-btn')) {
+      const genBtn = document.createElement('button');
+      genBtn.className = 'detail-btn primary gen-invoice-btn';
+      genBtn.textContent = 'generate invoice';
+      genBtn.addEventListener('click', () => openComposer(tag));
+      actions.insertBefore(genBtn, actions.firstChild);
+    }
+  }
+}
+
+async function renderInvoicesTab() {
+  billingBody.innerHTML = '<div class="billing-empty">Loading…</div>';
+  let invoices = [];
+  try { invoices = await api('GET', '/invoices'); } catch {}
+  billingBody.innerHTML = '';
+  if (!invoices.length) {
+    billingBody.innerHTML = '<div class="billing-empty">No invoices yet.<br>Generate one from the Outstanding tab.</div>';
+    return;
+  }
+  for (const inv of invoices) {
+    const row = document.createElement('div');
+    row.className = 'billing-invoice-row';
+    const sym = (inv.snapshot && inv.snapshot.currency_symbol) || '$';
+    row.innerHTML = `
+      <span class="billing-invoice-id">${escapeHtml(inv.id)}</span>
+      <span class="billing-invoice-meta">${escapeHtml(inv.snapshot && inv.snapshot.to && inv.snapshot.to.company || inv.tag)} · ${escapeHtml(inv.issued_at || '')}</span>
+      <span class="billing-invoice-total">${sym}${(inv.total_inc_gst || 0).toFixed(2)}</span>
+      <span class="billing-invoice-status ${inv.status || 'draft'}">${inv.status || 'draft'}</span>
+    `;
+    row.addEventListener('click', () => navigateTo(`/invoices/${inv.id}`));
+    billingBody.appendChild(row);
+  }
+}
+
+// ── SPA routing ───────────────────────────────────────────
+function navigateTo(path) {
+  history.pushState({}, '', path);
+  route();
+}
+function route() {
+  const m = location.pathname.match(/^\/invoices\/(.+)$/);
+  if (m) {
+    document.body.classList.add('invoice-route');
+    closeBilling();
+    closeChat();
+    closeAllModals();
+    currentInvoiceId = m[1];
+    renderInvoicePage(m[1]);
+  } else {
+    document.body.classList.remove('invoice-route');
+    currentInvoiceId = null;
+  }
+}
+window.addEventListener('popstate', route);
+
+async function renderInvoicePage(id) {
+  invoiceDoc.innerHTML = '<div style="text-align:center;padding:40px;color:#8c8578;">Loading…</div>';
+  let inv;
+  try { inv = await api('GET', `/invoices/${encodeURIComponent(id)}`); }
+  catch (err) {
+    invoiceDoc.innerHTML = `<div style="text-align:center;padding:40px;color:#b84f1f;">Invoice not found: ${escapeHtml(err.message)}</div>`;
+    return;
+  }
+  document.title = `Tax Invoice ${inv.id} — Runn`;
+  const snap = inv.snapshot || {};
+  const from = snap.from || {};
+  const to   = snap.to   || {};
+  const bank = snap.bank || {};
+  const sym  = snap.currency_symbol || '$';
+
+  function fmt$(n) { return sym + (Number(n) || 0).toFixed(2); }
+  function fmtAUDate(iso) {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}/${y}`;
+  }
+
+  const itemsHtml = inv.items.map(it => `
+    <tr>
+      <td>${escapeHtml(it.description || '')}</td>
+      <td class="date">${fmtAUDate(it.date)}</td>
+      <td class="right">${fmt$(it.amount_ex_gst)}</td>
+    </tr>
+  `).join('');
+
+  const logoHtml = from.logo_path
+    ? `<img class="invoice-doc-logo" src="${escapeHtml(from.logo_path)}" alt="logo" onerror="this.style.display='none'">`
+    : '';
+
+  const balance = (typeof inv.balance === 'number') ? inv.balance : (inv.total_inc_gst - (inv.paid || 0));
+  const balanceClass = balance > 0 ? 'outstanding' : '';
+
+  invoiceDoc.innerHTML = `
+    <div class="invoice-doc-header">
+      <div>
+        ${logoHtml}
+        <div class="invoice-doc-from-meta">
+          ${(from.address_lines || []).map(escapeHtml).join('<br>')}
+          ${from.abn_acn ? '<br>' + escapeHtml(from.abn_acn) : ''}
+        </div>
+      </div>
+      <div class="invoice-doc-right">
+        <div class="invoice-doc-title">Tax Invoice ${escapeHtml(inv.id)}</div>
+        <div class="invoice-doc-to">
+          ${to.contact ? 'Att:<br>' + escapeHtml(to.contact) + '<br>' : ''}
+          ${to.company ? escapeHtml(to.company) + '<br>' : ''}
+          ${(to.address_lines || []).map(escapeHtml).join('<br>')}
+        </div>
+      </div>
+    </div>
+    <table class="invoice-doc-table">
+      <thead>
+        <tr>
+          <th>Item Description</th>
+          <th>Date</th>
+          <th class="right">Amount ExGST</th>
+        </tr>
+      </thead>
+      <tbody>${itemsHtml}</tbody>
+    </table>
+    <div class="invoice-doc-footer">
+      <div class="invoice-doc-bank">
+        <div class="invoice-doc-bank-row"><span class="lbl">Due:</span><span>${fmtAUDate(inv.due_at)}</span></div>
+        ${bank.bank ? `<div class="invoice-doc-bank-row"><span class="lbl">Bank:</span><span>${escapeHtml(bank.bank)}</span></div>` : ''}
+        ${bank.name ? `<div class="invoice-doc-bank-row"><span class="lbl">Name:</span><span>${escapeHtml(bank.name)}</span></div>` : ''}
+        ${bank.bsb  ? `<div class="invoice-doc-bank-row"><span class="lbl">BSB:</span><span>${escapeHtml(bank.bsb)}</span></div>` : ''}
+        ${bank.acc  ? `<div class="invoice-doc-bank-row"><span class="lbl">Acc:</span><span>${escapeHtml(bank.acc)}</span></div>` : ''}
+      </div>
+      <div class="invoice-doc-totals">
+        <div class="invoice-doc-totals-row"><span class="lbl">Sub Total Ex GST:</span><span class="val">${fmt$(inv.subtotal_ex_gst)}</span></div>
+        <div class="invoice-doc-totals-row"><span class="lbl">GST:</span><span class="val">${fmt$(inv.gst)}</span></div>
+        <div class="invoice-doc-totals-row"><span class="lbl">Total Inc GST:</span><span class="val">${fmt$(inv.total_inc_gst)}</span></div>
+        <div class="invoice-doc-totals-row"><span class="lbl">Paid:</span><span class="val">${(inv.paid || 0) > 0 ? fmt$(inv.paid) : ''}</span></div>
+        <div class="invoice-doc-totals-row balance"><span class="lbl">Balance:</span><span class="val ${balanceClass}">${fmt$(balance)}</span></div>
+      </div>
+    </div>
+  `;
+
+  // Status badge + action buttons
+  const status = inv.status || 'draft';
+  invStatusBadge.innerHTML = `<span class="billing-invoice-status ${status}">${status}</span>`;
+  const markSent = document.getElementById('invMarkSent');
+  const markPaid = document.getElementById('invMarkPaid');
+  markSent.disabled = (status !== 'draft');
+  markPaid.disabled = (status === 'paid');
+  markSent.onclick = async () => {
+    await api('PATCH', `/invoices/${encodeURIComponent(inv.id)}`, { status: 'sent' });
+    renderInvoicePage(inv.id);
+  };
+  markPaid.onclick = async () => {
+    await api('PATCH', `/invoices/${encodeURIComponent(inv.id)}`, {
+      status: 'paid',
+      paid: inv.total_inc_gst,
+    });
+    renderInvoicePage(inv.id);
+  };
+}
+
 // ── Boot ─────────────────────────────────────────────────────
 (async function boot() {
   const initial = await api('GET', '/cards');
@@ -2107,6 +2931,7 @@ if ('serviceWorker' in navigator) {
   renderAll();
   refreshOutstanding();
   connectWS();
+  route(); // initial path → either board or invoice view
 })().catch(err => {
   document.getElementById('boardName').textContent = 'failed to load';
   console.error(err);
