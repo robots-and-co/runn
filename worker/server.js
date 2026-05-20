@@ -77,21 +77,24 @@ function locationFromSessionPath(sessionPath) {
   return { type: 'local', cwd: slugToCwd(m[1]) };
 }
 
-// Stream-read jsonl, return latest aiTitle (or null).
+// Stream-read jsonl, return latest user-set title (custom-title from CC Desktop renames),
+// falling back to the latest auto-generated ai-title if no rename has happened.
 async function readLatestAiTitle(jsonlPath) {
-  let latest = null;
+  let aiTitle = null;
+  let customTitle = null;
   try {
     const stream = fs.createReadStream(jsonlPath, { encoding: 'utf8' });
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
     for await (const line of rl) {
-      if (!line.includes('"ai-title"')) continue;
+      if (!line.includes('"ai-title"') && !line.includes('"custom-title"')) continue;
       try {
         const o = JSON.parse(line);
-        if (o.type === 'ai-title' && o.aiTitle) latest = o.aiTitle;
+        if (o.type === 'ai-title'     && o.aiTitle)     aiTitle     = o.aiTitle;
+        if (o.type === 'custom-title' && o.customTitle) customTitle = o.customTitle;
       } catch {}
     }
   } catch {}
-  return latest;
+  return customTitle || aiTitle;
 }
 
 // Parse a Claude Code session jsonl into a list of turns suitable for chat-style render.
@@ -244,6 +247,9 @@ const server = http.createServer(async (req, res) => {
         session_path: body.session_path ?? null,
         origin: body.origin || 'runn',
         notes_md: body.notes_md || '',
+        tags: Array.isArray(body.tags) ? body.tags : [],
+        hours: (typeof body.hours === 'number' ? body.hours : null),
+        billing: body.billing || 'unbilled',
         created_at: nowIso(),
         updated_at: nowIso(),
       };

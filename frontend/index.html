@@ -12,6 +12,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Runn">
+<script src="/vendor/drag-drop-touch.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -103,6 +104,20 @@
   }
   .card.active { border-color: var(--ink-3); box-shadow: 0 0 0 1px var(--ink-3); }
 
+  /* Gentle urgency washes — soft left-to-paper gradient + tinted lift */
+  .card.urgency-high {
+    background: linear-gradient(to right, var(--accent-soft) 0%, var(--paper) 32%);
+    box-shadow: 0 1px 4px rgba(184, 92, 31, 0.10);
+  }
+  .card.urgency-overdue {
+    background: linear-gradient(to right, #fde8de 0%, var(--paper) 32%);
+    box-shadow: 0 1px 4px rgba(184, 79, 31, 0.14);
+  }
+  /* If the card is also the active (open) one, keep the active ring on top */
+  .card.urgency-high.active, .card.urgency-overdue.active {
+    box-shadow: 0 0 0 1px var(--ink-3), 0 1px 4px rgba(184, 79, 31, 0.14);
+  }
+
   .card.drop-before::before, .card.drop-after::after {
     content: ''; position: absolute;
     left: 0; right: 0; height: 2px;
@@ -163,7 +178,9 @@
   }
   .handle {
     color: var(--line); cursor: grab; font-size: 18px;
-    user-select: none; flex-shrink: 0; padding: 4px 0;
+    user-select: none; flex-shrink: 0;
+    padding: 4px 8px;          /* larger tap target on mobile */
+    touch-action: none;        /* let the polyfill own the touch gesture */
   }
   .handle:active { cursor: grabbing; }
 
@@ -219,6 +236,104 @@
   .due-chip.future  { background: var(--paper-3); color: var(--ink-3); }
   .due-chip.today   { background: var(--accent-soft); color: var(--accent); }
   .due-chip.overdue { background: #fde8de; color: #b84f1f; }
+
+  /* Tag chips on board cards — bg/color set inline per-tag (hash → hue) */
+  .tag-chip {
+    font-size: 11px; padding: 2px 7px;
+    border-radius: 3px; white-space: nowrap; flex-shrink: 0;
+    cursor: pointer; border: none; font-family: inherit;
+    transition: filter .12s, box-shadow .12s;
+  }
+  .tag-chip::before { content: '#'; opacity: .55; }
+  .tag-chip:hover  { filter: brightness(0.96); }
+  .tag-chip.active { box-shadow: inset 0 0 0 1.5px currentColor; font-weight: 600; }
+
+  /* Filter strip above the board */
+  .filter-strip {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 14px; flex-wrap: wrap;
+    background: var(--paper); border-bottom: 1px solid var(--line);
+    flex-shrink: 0;
+    font-size: 12px; color: var(--ink-3);
+  }
+  .filter-strip[hidden] { display: none; }
+  .filter-strip-label {
+    font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
+  }
+  .filter-tag {
+    font-size: 11px; padding: 2px 4px 2px 7px;
+    border-radius: 3px;
+    display: inline-flex; align-items: center; gap: 2px;
+    font-family: inherit;
+    box-shadow: inset 0 0 0 1.5px currentColor;
+    font-weight: 600;
+  }
+  .filter-tag::before { content: '#'; opacity: .55; }
+  .filter-tag button {
+    background: none; border: none; color: inherit;
+    cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1;
+    opacity: .55;
+  }
+  .filter-tag button:hover { opacity: 1; }
+  .filter-clear {
+    background: none; border: none; cursor: pointer;
+    font-family: inherit; font-size: 12px; color: var(--ink-3);
+    text-decoration: underline; margin-left: auto;
+  }
+  .filter-clear:hover { color: var(--ink); }
+
+  /* Sidebar tag editor */
+  .chat-tags {
+    flex-shrink: 0; position: relative;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+    padding: 6px 8px;
+    background: var(--paper); border: 1px solid var(--line); border-radius: 6px;
+    min-height: 38px;
+    transition: border-color .15s;
+  }
+  .chat-tags:focus-within { border-color: var(--accent); }
+
+  .chat-tags-dropdown {
+    position: absolute;
+    top: calc(100% + 4px); left: 0; right: 0;
+    background: var(--paper);
+    border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px;
+    display: flex; flex-wrap: wrap; gap: 4px;
+    z-index: 5;
+    max-height: 200px; overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,.08);
+  }
+  .chat-tags-suggestion {
+    font-size: 11px; padding: 2px 7px;
+    border-radius: 3px; white-space: nowrap;
+    border: none; cursor: pointer; font-family: inherit;
+    transition: filter .12s;
+  }
+  .chat-tags-suggestion::before { content: '#'; opacity: .55; }
+  .chat-tags-suggestion:hover { filter: brightness(0.95); }
+  .chat-tags-dropdown:empty,
+  .chat-tags-dropdown[hidden] { display: none; }
+  .chat-tags-input {
+    flex: 1; min-width: 80px;
+    font-family: inherit; font-size: 13px;
+    background: none; border: none; outline: none; color: var(--ink);
+    padding: 4px 2px;
+  }
+  .chat-tags-input::placeholder { color: var(--ink-3); }
+  .chat-tag-pill {
+    font-size: 11px; padding: 2px 2px 2px 7px;
+    border-radius: 3px;
+    display: inline-flex; align-items: center; gap: 2px;
+    font-family: inherit;
+  }
+  .chat-tag-pill::before { content: '#'; opacity: .55; }
+  .chat-tag-pill button {
+    background: none; border: none; color: inherit;
+    cursor: pointer; padding: 0 4px; font-size: 14px; line-height: 1;
+    opacity: .55;
+  }
+  .chat-tag-pill button:hover { opacity: 1; }
 
   .detail-btn {
     font-size: 13px; padding: 6px 12px;
@@ -316,6 +431,137 @@
   .chat-due:focus, .chat-due-time:focus { border-color: var(--accent); }
   .chat-due-time { max-width: 90px; }
   .chat-due-time:disabled { opacity: .4; cursor: not-allowed; }
+
+  .chat-hours-wrap {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 11px; color: var(--ink-3);
+  }
+  .chat-hours {
+    font-family: inherit; font-size: 12px;
+    background: var(--paper-2); border: 1px solid var(--line);
+    border-radius: 4px; padding: 3px 6px; color: var(--ink-2);
+    outline: none; width: 60px;
+  }
+  .chat-hours:focus { border-color: var(--accent); }
+
+  .chat-billing {
+    font-size: 10px; font-weight: 600; padding: 3px 8px;
+    border: none; border-radius: 4px; cursor: pointer;
+    font-family: inherit; letter-spacing: .03em; text-transform: uppercase;
+    background: var(--paper-3); color: var(--ink-3);
+    transition: filter .12s;
+  }
+  .chat-billing:hover { filter: brightness(0.95); }
+  .chat-billing.unbilled { background: var(--paper-3);    color: var(--ink-3); }
+  .chat-billing.invoiced { background: #f4dfd0;           color: #b85c1f; }
+  .chat-billing.paid     { background: #dff0e2;           color: #3a7d44; }
+
+  /* Hours chip on board cards */
+  .hours-chip {
+    font-size: 10px; font-weight: 600; padding: 1px 6px;
+    border-radius: 3px; white-space: nowrap; flex-shrink: 0;
+    background: var(--paper-3); color: var(--ink-3);
+    border: 1px solid transparent;
+    font-family: ui-monospace, monospace;
+  }
+  .hours-chip.outstanding {
+    background: var(--paper);
+    color: var(--accent);
+    border-color: var(--accent-soft);
+  }
+  .hours-chip.invoiced {
+    background: #f4dfd0; color: #b85c1f;
+  }
+  .hours-chip.paid {
+    background: #dff0e2; color: #3a7d44;
+  }
+  .hours-chip.rollup::before {
+    content: 'Σ '; opacity: .6;
+  }
+
+  /* Header outstanding total */
+  .header-outstanding {
+    display: flex; align-items: center;
+    height: 36px; padding: 0 10px;
+    background: none; border: 1px solid var(--accent-soft);
+    border-radius: 8px; color: var(--accent);
+    font-size: 13px; font-weight: 600;
+    font-family: ui-monospace, monospace;
+    cursor: pointer; user-select: none;
+    transition: background .12s;
+  }
+  .header-outstanding:hover { background: var(--accent-soft); }
+  .header-outstanding[hidden] { display: none; }
+  .header-outstanding::before { content: '$ '; opacity: .6; margin-right: 2px; }
+
+  /* Billing panel — slides in from right like chat panel */
+  .billing-panel {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: 520px; max-width: 100vw;
+    background: var(--paper-2);
+    border-left: 1px solid var(--line);
+    box-shadow: -4px 0 24px rgba(0,0,0,.08);
+    z-index: 21; display: flex; flex-direction: column;
+    transform: translateX(100%);
+    transition: transform .22s ease;
+  }
+  .billing-panel.open { transform: translateX(0); }
+  @media (max-width: 700px) {
+    .billing-panel { width: 100vw; border-left: none; box-shadow: none; }
+  }
+  .billing-header {
+    flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+    padding: 0 8px 0 4px; height: 56px;
+    background: var(--paper); border-bottom: 1px solid var(--line);
+  }
+  .billing-title {
+    flex: 1; font-size: 15px; font-weight: 600; color: var(--ink);
+  }
+  .billing-body {
+    flex: 1; overflow-y: auto; padding: 14px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .billing-group {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px;
+  }
+  .billing-group-header {
+    display: flex; align-items: center; gap: 8px;
+    padding-bottom: 8px; margin-bottom: 8px;
+    border-bottom: 1px dashed var(--line);
+  }
+  .billing-group-tag {
+    font-size: 13px; font-weight: 600;
+  }
+  .billing-group-total {
+    font-family: ui-monospace, monospace;
+    font-size: 13px; font-weight: 600; color: var(--accent);
+    margin-left: auto;
+  }
+  .billing-group-actions {
+    display: flex; gap: 6px;
+    margin-top: 10px; padding-top: 8px;
+    border-top: 1px dashed var(--line);
+  }
+  .billing-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 4px;
+    font-size: 13px; color: var(--ink);
+  }
+  .billing-item-title {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    cursor: pointer;
+  }
+  .billing-item-title:hover { text-decoration: underline; }
+  .billing-item-hours {
+    font-family: ui-monospace, monospace;
+    color: var(--ink-3); font-size: 12px;
+  }
+  .billing-empty {
+    text-align: center; padding: 40px 20px;
+    color: var(--ink-3); font-size: 14px;
+  }
   .chat-due-clear {
     background: none; border: none; cursor: pointer;
     color: var(--ink-3); font-size: 14px; padding: 0 2px;
@@ -460,6 +706,10 @@
   [data-indent="3"] { margin-left: 108px; }
   [data-indent="4"] { margin-left: 144px; }
 
+  /* Standalone cards (no .group wrapper) get the same horizontal inset
+     as cards inside a group, so chevron/plus/handle align in a column. */
+  .items > .card { margin-left: 6px; margin-right: 6px; }
+
   /* ── Footer ──────────────────────────────────────────────── */
   .footer {
     flex-shrink: 0; padding: 10px 14px;
@@ -473,6 +723,10 @@
     transition: border-color .15s;
   }
   .footer-input-row:focus-within { border-color: var(--accent); }
+
+  /* Match the board's max-width on the bottom input so it doesn't run edge-to-edge on wide screens */
+  .footer > .footer-input-row { max-width: 600px; margin: 0 auto; }
+  .footer > .footer-error    { max-width: 600px; margin: 0 auto; }
 
   .mode-toggle {
     display: flex; background: var(--paper-3);
@@ -526,11 +780,13 @@
     Runn
   </div>
   <div class="header-sep"></div>
+  <button class="header-outstanding" id="headerOutstanding" hidden title="Outstanding billable hours">0h</button>
   <button class="header-toggle" id="toggleDone" title="Show/hide done cards">✓ done</button>
-  <button class="header-btn" title="More">⋯</button>
+  <button class="header-btn" id="btnMenu" title="Billing">⋯</button>
 </header>
 
 <main class="main">
+  <div class="filter-strip" id="filterStrip" hidden></div>
   <div class="board">
     <div class="items" id="items"></div>
     <div class="empty-state" id="emptyState" hidden>
@@ -541,6 +797,13 @@
 </main>
 
 <div class="chat-backdrop" id="chatBackdrop" onclick="closeChat()"></div>
+<aside class="billing-panel" id="billingPanel" aria-hidden="true">
+  <div class="billing-header">
+    <button class="chat-back" onclick="closeBilling()" title="Close">←</button>
+    <div class="billing-title">Billing</div>
+  </div>
+  <div class="billing-body" id="billingBody"></div>
+</aside>
 <aside class="chat-panel" id="chatPanel" aria-hidden="true">
   <div class="chat-header">
     <button class="chat-back" onclick="closeChat()" title="Close">←</button>
@@ -556,10 +819,19 @@
       <input type="time" class="chat-due-time" id="chatDueTime">
       <button class="chat-due-clear" id="chatDueClear" title="Clear due date" hidden>×</button>
     </span>
+    <span class="chat-hours-wrap">
+      <span>hrs</span>
+      <input type="number" class="chat-hours" id="chatHours" step="0.25" min="0" placeholder="—" inputmode="decimal">
+    </span>
+    <button class="chat-billing unbilled" id="chatBilling" title="Cycle billing state">unbilled</button>
     <span class="chat-meta-text" id="chatMetaText"></span>
   </div>
   <div class="chat-body" id="chatBody">
     <textarea class="chat-notes" id="chatNotes" placeholder="Notes…"></textarea>
+    <div class="chat-tags" id="chatTags">
+      <input class="chat-tags-input" id="chatTagsInput" type="text" placeholder="add tag…" autocomplete="off">
+      <div class="chat-tags-dropdown" id="chatTagsDropdown" hidden></div>
+    </div>
     <div class="chat-step-row">
       <input class="chat-step-input" id="chatStepInput" type="text" placeholder="+ add step under this card…" autocomplete="off">
       <button class="chat-step-add" id="chatStepAdd" title="Add step">↵</button>
@@ -594,8 +866,23 @@
 
 // ── State ────────────────────────────────────────────────────
 const cards = new Map(); // id -> card json
+const expandedCardIds = new Set(); // parents the user has explicitly expanded; everything else stays collapsed
 let mode = 'add';
 let showDone = localStorage.getItem('runn:showDone') !== '0'; // default true
+const activeTags = new Set(JSON.parse(localStorage.getItem('runn:activeTags') || '[]'));
+
+// Deterministic warm pastel from any tag string. djb2 hash → hue.
+function tagColor(tag) {
+  let h = 5381;
+  for (let i = 0; i < tag.length; i++) h = ((h << 5) + h + tag.charCodeAt(i)) | 0;
+  const hue = Math.abs(h) % 360;
+  return { bg: `hsl(${hue} 38% 88%)`, fg: `hsl(${hue} 50% 26%)` };
+}
+function styleTag(el, tag) {
+  const { bg, fg } = tagColor(tag);
+  el.style.background = bg;
+  el.style.color = fg;
+}
 const STATUS_CYCLE = { todo: 'doing', doing: 'done', done: 'todo', blocked: 'todo' };
 const list = document.getElementById('items');
 const emptyState = document.getElementById('emptyState');
@@ -625,6 +912,46 @@ const archiveCard = (id)        => api('POST',  `/cards/${id}/archive`);
 const sendMessage = (id, text)  => api('POST',  `/cards/${id}/message`, { text });
 const aiifyCard   = (id)        => api('POST',  `/cards/${id}/ai-ify`);
 
+// ── Hours rollup + outstanding totals ───────────────────────
+function rolledUpHours(cardId) {
+  const card = cards.get(cardId);
+  if (!card) return 0;
+  let total = (typeof card.hours === 'number') ? card.hours : 0;
+  for (const c of cards.values()) {
+    if (c.parent_id === cardId) total += rolledUpHours(c.id);
+  }
+  return total;
+}
+function fmtHours(h) {
+  if (h == null || h === 0) return '';
+  // Show 1h, 1.5h, 2h, 0.25h, etc.
+  return (Math.round(h * 100) / 100) + 'h';
+}
+function outstandingTotal() {
+  let t = 0;
+  for (const c of cards.values()) {
+    if (c.status === 'done' && (c.billing || 'unbilled') === 'unbilled' && typeof c.hours === 'number') {
+      t += c.hours;
+    }
+  }
+  return t;
+}
+function billingGroups() {
+  // Group done + (unbilled OR invoiced) cards by primary tag (first tag), or '_untagged'
+  const groups = new Map(); // tag → { unbilled: [cards], invoiced: [cards], hours: { unbilled, invoiced } }
+  for (const c of cards.values()) {
+    const b = c.billing || 'unbilled';
+    if (c.status !== 'done' || b === 'paid') continue;
+    if (typeof c.hours !== 'number' || c.hours === 0) continue;
+    const tag = (c.tags && c.tags[0]) || '_untagged';
+    if (!groups.has(tag)) groups.set(tag, { unbilled: [], invoiced: [], hours: { unbilled: 0, invoiced: 0 } });
+    const g = groups.get(tag);
+    g[b].push(c);
+    g.hours[b] += c.hours;
+  }
+  return groups;
+}
+
 // ── Render ───────────────────────────────────────────────────
 function depthOf(card) {
   let d = 0, c = card;
@@ -639,7 +966,6 @@ function depthOf(card) {
 function renderCard(card) {
   const el = document.createElement('div');
   el.className = 'card';
-  el.draggable = true;
   el.dataset.cardId = card.id;
   el.innerHTML = `
     <div class="card-body">
@@ -648,12 +974,13 @@ function renderCard(card) {
         <button class="chip"></button>
         <span class="badge-ext" hidden>ext</span>
         <span class="due-chip" hidden></span>
+        <span class="hours-chip" hidden></span>
       </div>
     </div>
     <div class="card-controls">
       <button class="card-add-step" title="Add step" onclick="inlineAddStep(event, this)">+</button>
       <span class="chevron" onclick="toggleCollapse(event,this)"></span>
-      <span class="handle">⠿</span>
+      <span class="handle" draggable="true" title="Drag to reorder">⠿</span>
     </div>`;
   applyCard(el, card);
 
@@ -684,6 +1011,44 @@ function applyCard(el, card) {
     due.hidden = true;
   }
   el.classList.toggle('active', card.id === openCardId);
+  // Gentle urgency treatment
+  el.classList.remove('urgency-high', 'urgency-overdue');
+  const u = urgencyOf(card);
+  if (u) el.classList.add(`urgency-${u}`);
+  // Hours chip — own or rolled-up (for parents)
+  const hoursEl = el.querySelector('.hours-chip');
+  let hasChildHours = false;
+  for (const c of cards.values()) {
+    if (c.parent_id === card.id && typeof c.hours === 'number' && c.hours > 0) { hasChildHours = true; break; }
+  }
+  const ownHours = (typeof card.hours === 'number') ? card.hours : 0;
+  const displayHours = hasChildHours ? rolledUpHours(card.id) : ownHours;
+  if (displayHours > 0) {
+    hoursEl.hidden = false;
+    hoursEl.textContent = fmtHours(displayHours);
+    hoursEl.className = 'hours-chip';
+    if (hasChildHours) hoursEl.classList.add('rollup');
+    const b = card.billing || 'unbilled';
+    if (card.status === 'done' && b === 'unbilled') hoursEl.classList.add('outstanding');
+    else if (b === 'invoiced') hoursEl.classList.add('invoiced');
+    else if (b === 'paid')     hoursEl.classList.add('paid');
+  } else {
+    hoursEl.hidden = true;
+  }
+  // Tag chips on the card
+  const row2 = el.querySelector('.card-row2');
+  for (const old of row2.querySelectorAll('.tag-chip')) old.remove();
+  for (const tag of (card.tags || [])) {
+    const btn = document.createElement('button');
+    btn.className = 'tag-chip' + (activeTags.has(tag) ? ' active' : '');
+    btn.textContent = tag;
+    styleTag(btn, tag);
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      toggleTagFilter(tag);
+    });
+    row2.appendChild(btn);
+  }
   const d = depthOf(card);
   if (d === 0) delete el.dataset.indent; else el.dataset.indent = String(d);
 }
@@ -715,6 +1080,18 @@ function formatDue(value) {
                     .toLowerCase().replace(/\s+/g, '');
   return `${dateStr} ${timeStr}`;
 }
+function urgencyOf(card) {
+  if (card.status === 'done')    return null;
+  if (card.status === 'blocked') return 'overdue';
+  if (card.due) {
+    const s = dueStatus(card.due);
+    if (s === 'overdue') return 'overdue';
+    if (s === 'today')   return 'high';
+  }
+  if (card.status === 'doing')   return 'high';
+  return null;
+}
+
 function dueStatus(value) {
   if (!value) return 'none';
   const { date, time } = splitDue(value);
@@ -732,12 +1109,20 @@ function dueStatus(value) {
   return 'future';
 }
 
+function cardMatchesFilter(c) {
+  if (activeTags.size === 0) return true;
+  const t = c.tags || [];
+  for (const want of activeTags) if (!t.includes(want)) return false;
+  return true;
+}
+
 function renderAll() {
   list.innerHTML = '';
   // Walk parent→child tree so children always immediately follow their parent in DOM order.
   const byParent = new Map(); // parent_id (or null) → [cards]
   for (const c of cards.values()) {
     if (!showDone && c.status === 'done') continue;
+    if (!cardMatchesFilter(c)) continue;
     const pid = c.parent_id || null;
     if (!byParent.has(pid)) byParent.set(pid, []);
     byParent.get(pid).push(c);
@@ -753,7 +1138,221 @@ function renderAll() {
     }
   })(null);
   rebuildGroups();
+  applyCollapsedDefaults();
   emptyState.hidden = rendered > 0;
+}
+
+// ── Outstanding header chip + Billing panel ─────────────────
+const headerOutstanding = document.getElementById('headerOutstanding');
+const billingPanel      = document.getElementById('billingPanel');
+const billingBody       = document.getElementById('billingBody');
+const btnMenu           = document.getElementById('btnMenu');
+
+function refreshOutstanding() {
+  const t = outstandingTotal();
+  if (t <= 0) { headerOutstanding.hidden = true; return; }
+  headerOutstanding.hidden = false;
+  headerOutstanding.textContent = fmtHours(t);
+}
+
+function openBilling() {
+  billingPanel.classList.add('open');
+  billingPanel.setAttribute('aria-hidden', 'false');
+  renderBillingPanel();
+}
+function closeBilling() {
+  billingPanel.classList.remove('open');
+  billingPanel.setAttribute('aria-hidden', 'true');
+}
+
+function renderBillingPanel() {
+  const groups = billingGroups();
+  billingBody.innerHTML = '';
+  if (groups.size === 0) {
+    billingBody.innerHTML = '<div class="billing-empty">Nothing to bill.<br>Done cards with hours set will appear here.</div>';
+    return;
+  }
+  // Sort groups: most outstanding hours first
+  const entries = [...groups.entries()].sort((a, b) =>
+    (b[1].hours.unbilled + b[1].hours.invoiced) - (a[1].hours.unbilled + a[1].hours.invoiced));
+  for (const [tag, g] of entries) {
+    const grp = document.createElement('div');
+    grp.className = 'billing-group';
+
+    const header = document.createElement('div');
+    header.className = 'billing-group-header';
+    const tagEl = document.createElement('span');
+    tagEl.className = 'billing-group-tag';
+    if (tag === '_untagged') {
+      tagEl.textContent = '(untagged)';
+      tagEl.style.color = 'var(--ink-3)';
+      tagEl.style.fontStyle = 'italic';
+    } else {
+      tagEl.textContent = '#' + tag;
+      const c = tagColor(tag);
+      tagEl.style.color = c.fg;
+    }
+    header.appendChild(tagEl);
+    const total = document.createElement('span');
+    total.className = 'billing-group-total';
+    total.textContent = fmtHours(g.hours.unbilled + g.hours.invoiced);
+    header.appendChild(total);
+    grp.appendChild(header);
+
+    function renderItem(c, isInvoiced) {
+      const it = document.createElement('div');
+      it.className = 'billing-item';
+      const title = document.createElement('span');
+      title.className = 'billing-item-title';
+      title.textContent = c.title;
+      title.addEventListener('click', () => { closeBilling(); openChat(c.id); });
+      it.appendChild(title);
+      const hrs = document.createElement('span');
+      hrs.className = 'billing-item-hours';
+      hrs.textContent = fmtHours(c.hours);
+      it.appendChild(hrs);
+      const toggle = document.createElement('button');
+      toggle.className = 'chat-billing ' + (isInvoiced ? 'invoiced' : 'unbilled');
+      toggle.textContent = isInvoiced ? 'invoiced' : 'unbilled';
+      toggle.addEventListener('click', () => {
+        patchCard(c.id, { billing: BILLING_CYCLE[c.billing || 'unbilled'] }).catch(console.error);
+      });
+      it.appendChild(toggle);
+      return it;
+    }
+
+    if (g.unbilled.length) {
+      const label = document.createElement('div');
+      label.style.cssText = 'font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);margin-top:6px;';
+      label.textContent = `unbilled · ${fmtHours(g.hours.unbilled)}`;
+      grp.appendChild(label);
+      for (const c of g.unbilled.sort((a, b) => a.sort_order - b.sort_order)) {
+        grp.appendChild(renderItem(c, false));
+      }
+    }
+    if (g.invoiced.length) {
+      const label = document.createElement('div');
+      label.style.cssText = 'font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);margin-top:10px;';
+      label.textContent = `invoiced · ${fmtHours(g.hours.invoiced)}`;
+      grp.appendChild(label);
+      for (const c of g.invoiced.sort((a, b) => a.sort_order - b.sort_order)) {
+        grp.appendChild(renderItem(c, true));
+      }
+    }
+
+    // Action row
+    const actions = document.createElement('div');
+    actions.className = 'billing-group-actions';
+
+    if (g.unbilled.length) {
+      const markAll = document.createElement('button');
+      markAll.className = 'detail-btn';
+      markAll.textContent = `mark ${g.unbilled.length} invoiced`;
+      markAll.addEventListener('click', async () => {
+        markAll.disabled = true;
+        await Promise.all(g.unbilled.map(c => patchCard(c.id, { billing: 'invoiced' })));
+      });
+      actions.appendChild(markAll);
+    }
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'detail-btn';
+    copyBtn.textContent = 'copy invoice text';
+    copyBtn.addEventListener('click', () => {
+      const lines = [];
+      lines.push(tag === '_untagged' ? 'Outstanding work:' : `[${tag}] outstanding work:`);
+      const items = [...g.unbilled, ...g.invoiced].sort((a, b) => a.sort_order - b.sort_order);
+      for (const c of items) lines.push(`- ${c.title} — ${fmtHours(c.hours)}`);
+      lines.push(`Total: ${fmtHours(g.hours.unbilled + g.hours.invoiced)}`);
+      navigator.clipboard.writeText(lines.join('\n')).then(() => {
+        const orig = copyBtn.textContent;
+        copyBtn.textContent = 'copied ✓';
+        setTimeout(() => { copyBtn.textContent = orig; }, 1200);
+      });
+    });
+    actions.appendChild(copyBtn);
+    grp.appendChild(actions);
+
+    billingBody.appendChild(grp);
+  }
+}
+
+headerOutstanding.addEventListener('click', openBilling);
+btnMenu.addEventListener('click', openBilling);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && billingPanel.classList.contains('open')) closeBilling();
+});
+
+// ── Tag filter strip + tag mutators ─────────────────────────
+const filterStrip = document.getElementById('filterStrip');
+
+function saveActiveTags() {
+  localStorage.setItem('runn:activeTags', JSON.stringify([...activeTags]));
+}
+function toggleTagFilter(tag) {
+  if (activeTags.has(tag)) activeTags.delete(tag);
+  else activeTags.add(tag);
+  saveActiveTags();
+  renderFilterStrip();
+  renderAll();
+}
+function clearTagFilter() {
+  activeTags.clear();
+  saveActiveTags();
+  renderFilterStrip();
+  renderAll();
+}
+function renderFilterStrip() {
+  filterStrip.innerHTML = '';
+  if (!activeTags.size) { filterStrip.hidden = true; return; }
+  filterStrip.hidden = false;
+  const label = document.createElement('span');
+  label.className = 'filter-strip-label';
+  label.textContent = 'filter:';
+  filterStrip.appendChild(label);
+  for (const tag of activeTags) {
+    const el = document.createElement('span');
+    el.className = 'filter-tag';
+    el.innerHTML = `${escapeHtml(tag)} <button title="Remove">×</button>`;
+    styleTag(el, tag);
+    el.querySelector('button').addEventListener('click', () => toggleTagFilter(tag));
+    filterStrip.appendChild(el);
+  }
+  const clr = document.createElement('button');
+  clr.className = 'filter-clear';
+  clr.textContent = 'clear';
+  clr.addEventListener('click', clearTagFilter);
+  filterStrip.appendChild(clr);
+}
+renderFilterStrip();
+
+async function addTagToOpen(raw) {
+  if (!openCardId) return;
+  const card = cards.get(openCardId);
+  if (!card) return;
+  const tag = raw.trim().toLowerCase().replace(/^#+/, '');
+  if (!tag) return;
+  const existing = Array.isArray(card.tags) ? card.tags : [];
+  if (existing.includes(tag)) return;
+  try { await patchCard(openCardId, { tags: [...existing, tag] }); }
+  catch (err) { console.error('add tag failed', err); }
+}
+
+async function removeTagFromOpen(tag) {
+  if (!openCardId) return;
+  const card = cards.get(openCardId);
+  if (!card) return;
+  const next = (card.tags || []).filter(t => t !== tag);
+  try { await patchCard(openCardId, { tags: next }); }
+  catch (err) { console.error('remove tag failed', err); }
+}
+
+function applyCollapsedDefaults() {
+  for (const el of list.querySelectorAll('.card[data-has-children]')) {
+    const id = el.dataset.cardId;
+    const collapsed = !expandedCardIds.has(id);
+    el.classList.toggle('collapsed', collapsed);
+    for (const d of descendants(el)) d.style.display = collapsed ? 'none' : '';
+  }
 }
 
 // ── Group / chevron / collapse (lifted from scaffold) ────────
@@ -813,7 +1412,10 @@ list.addEventListener('click', e => {
 function toggleCollapse(e, chevron) {
   e.stopPropagation();
   const card = chevron.closest('.card');
+  const id = card.dataset.cardId;
   const collapsed = card.classList.toggle('collapsed');
+  if (collapsed) expandedCardIds.delete(id);
+  else expandedCardIds.add(id);
   descendants(card).forEach(c => c.style.display = collapsed ? 'none' : '');
 }
 
@@ -889,8 +1491,16 @@ function dropZone(e, rect) {
 }
 
 list.addEventListener('dragstart', e => {
+  // Drag only fires from the handle (it's the only draggable=true element).
+  // Resolve the actual card by climbing to .card.
   dragged = e.target.closest('.card');
   if (!dragged) return;
+  // Use the whole card as the drag image so the floating preview matches what you grabbed.
+  if (e.dataTransfer && e.dataTransfer.setDragImage) {
+    const r = dragged.getBoundingClientRect();
+    e.dataTransfer.setDragImage(dragged, e.clientX - r.left, e.clientY - r.top);
+    e.dataTransfer.effectAllowed = 'move';
+  }
   dragGroup = getDragGroup(dragged);
   dragMoved = false;
   setTimeout(() => dragGroup.forEach(c => c.classList.add('dragging')), 0);
@@ -1015,6 +1625,8 @@ const chatNotes       = document.getElementById('chatNotes');
 const chatDue         = document.getElementById('chatDue');
 const chatDueTime     = document.getElementById('chatDueTime');
 const chatDueClear    = document.getElementById('chatDueClear');
+const chatHours       = document.getElementById('chatHours');
+const chatBilling     = document.getElementById('chatBilling');
 const chatAiifyZone   = document.getElementById('chatAiifyZone');
 const chatAiifyBtn    = document.getElementById('chatAiifyBtn');
 const chatTranscript  = document.getElementById('chatTranscript');
@@ -1064,6 +1676,14 @@ function applyPanel(card) {
   if (document.activeElement !== chatDueTime) chatDueTime.value = dueParts.time;
   chatDueTime.disabled = !dueParts.date;
   chatDueClear.hidden = !card.due;
+  // Hours + billing
+  if (document.activeElement !== chatHours) {
+    chatHours.value = (typeof card.hours === 'number') ? String(card.hours) : '';
+  }
+  const billing = card.billing || 'unbilled';
+  chatBilling.className = `chat-billing ${billing}`;
+  chatBilling.textContent = billing;
+  renderPanelTags(card);
   const meta = [];
   if (card.session_id) meta.push(`session ${card.session_id.slice(0, 8)}`);
   if (card.location && card.location.cwd) meta.push(card.location.cwd);
@@ -1164,6 +1784,23 @@ chatDueClear.addEventListener('click', () => {
   patchCard(openCardId, { due: null }).catch(console.error);
 });
 
+chatHours.addEventListener('change', () => {
+  if (!openCardId) return;
+  const v = chatHours.value.trim();
+  const num = v === '' ? null : Number(v);
+  if (num !== null && (!isFinite(num) || num < 0)) return;
+  patchCard(openCardId, { hours: num }).catch(console.error);
+});
+
+const BILLING_CYCLE = { unbilled: 'invoiced', invoiced: 'paid', paid: 'unbilled' };
+chatBilling.addEventListener('click', () => {
+  if (!openCardId) return;
+  const card = cards.get(openCardId);
+  if (!card) return;
+  const next = BILLING_CYCLE[card.billing || 'unbilled'];
+  patchCard(openCardId, { billing: next }).catch(console.error);
+});
+
 chatChip.addEventListener('click', () => {
   if (!openCardId) return;
   const card = cards.get(openCardId);
@@ -1175,6 +1812,85 @@ chatChip.addEventListener('click', () => {
 chatArchive.addEventListener('click', async () => {
   if (!openCardId) return;
   try { await archiveCard(openCardId); closeChat(); } catch (e) { console.error(e); }
+});
+
+// Sidebar tag editor
+const chatTags         = document.getElementById('chatTags');
+const chatTagsInput    = document.getElementById('chatTagsInput');
+const chatTagsDropdown = document.getElementById('chatTagsDropdown');
+
+function allKnownTags() {
+  const set = new Set();
+  for (const c of cards.values()) for (const t of (c.tags || [])) set.add(t);
+  return [...set].sort();
+}
+
+function renderTagSuggestions() {
+  if (!openCardId) { chatTagsDropdown.hidden = true; return; }
+  const card = cards.get(openCardId);
+  const used = new Set(card ? (card.tags || []) : []);
+  const q = chatTagsInput.value.trim().toLowerCase().replace(/^#+/, '');
+  const candidates = allKnownTags().filter(t => !used.has(t));
+  const filtered = q ? candidates.filter(t => t.includes(q)) : candidates;
+  chatTagsDropdown.innerHTML = '';
+  if (!filtered.length) { chatTagsDropdown.hidden = true; return; }
+  for (const t of filtered) {
+    const btn = document.createElement('button');
+    btn.className = 'chat-tags-suggestion';
+    btn.textContent = t;
+    styleTag(btn, t);
+    // mousedown fires BEFORE input blur — lets us add before the dropdown hides
+    btn.addEventListener('mousedown', (ev) => {
+      ev.preventDefault();
+      addTagToOpen(t);
+      chatTagsInput.value = '';
+      chatTagsInput.focus();
+      renderTagSuggestions();
+    });
+    chatTagsDropdown.appendChild(btn);
+  }
+  chatTagsDropdown.hidden = false;
+}
+
+function renderPanelTags(card) {
+  for (const p of chatTags.querySelectorAll('.chat-tag-pill')) p.remove();
+  for (const tag of (card.tags || [])) {
+    const pill = document.createElement('span');
+    pill.className = 'chat-tag-pill';
+    pill.innerHTML = `${escapeHtml(tag)}<button title="Remove">×</button>`;
+    styleTag(pill, tag);
+    pill.querySelector('button').addEventListener('click', () => removeTagFromOpen(tag));
+    chatTags.insertBefore(pill, chatTagsInput);
+  }
+  // If the dropdown is open, refresh it (the "used" set changed)
+  if (!chatTagsDropdown.hidden) renderTagSuggestions();
+}
+
+chatTagsInput.addEventListener('focus', renderTagSuggestions);
+chatTagsInput.addEventListener('input', renderTagSuggestions);
+chatTagsInput.addEventListener('blur', () => {
+  // delay so a tap on a suggestion (mousedown) can fire before we hide
+  setTimeout(() => { chatTagsDropdown.hidden = true; }, 120);
+});
+
+chatTagsInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    addTagToOpen(chatTagsInput.value);
+    chatTagsInput.value = '';
+    renderTagSuggestions();
+  } else if (e.key === 'Backspace' && !chatTagsInput.value && openCardId) {
+    const card = cards.get(openCardId);
+    const tags = (card && card.tags) || [];
+    if (tags.length) removeTagFromOpen(tags[tags.length - 1]);
+  } else if (e.key === ',' || e.key === ' ') {
+    e.preventDefault();
+    addTagToOpen(chatTagsInput.value);
+    chatTagsInput.value = '';
+    renderTagSuggestions();
+  } else if (e.key === 'Escape') {
+    chatTagsDropdown.hidden = true;
+  }
 });
 
 // + add step under current card
@@ -1315,9 +2031,13 @@ function connectWS() {
     const msg = JSON.parse(e.data);
     if (msg.type === 'card.added') {
       cards.set(msg.card.id, msg.card);
+      // Auto-expand the parent so the new step is actually visible.
+      if (msg.card.parent_id) expandedCardIds.add(msg.card.parent_id);
       renderAll();
       flash(msg.card.id);
       if (openCardId && msg.card.parent_id === openCardId) renderSteps();
+      refreshOutstanding();
+      if (billingPanel.classList.contains('open')) renderBillingPanel();
     } else if (msg.type === 'card.changed') {
       cards.set(msg.card.id, msg.card);
       const el = list.querySelector(`[data-card-id="${CSS.escape(msg.card.id)}"]`);
@@ -1332,10 +2052,14 @@ function connectWS() {
       if (openCardId === msg.card.id) applyPanel(msg.card);
       // If this card is a step of the open card, refresh the steps list
       if (openCardId && msg.card.parent_id === openCardId) renderSteps();
+      refreshOutstanding();
+      if (billingPanel.classList.contains('open')) renderBillingPanel();
     } else if (msg.type === 'card.removed') {
       cards.delete(msg.card.id);
       renderAll();
       if (openCardId) renderSteps();
+      refreshOutstanding();
+      if (billingPanel.classList.contains('open')) renderBillingPanel();
     } else if (msg.type === 'session.updated') {
       pulseSession(msg.session_id);
       // If the chat panel is open for a card with this session, refresh it.
@@ -1381,6 +2105,7 @@ if ('serviceWorker' in navigator) {
   document.title = 'Runn';
   for (const c of initial) cards.set(c.id, c);
   renderAll();
+  refreshOutstanding();
   connectWS();
 })().catch(err => {
   document.getElementById('boardName').textContent = 'failed to load';

@@ -1,0 +1,35 @@
+services:
+  runn:
+    build: .
+    image: runn:local
+    container_name: runn
+    restart: unless-stopped
+
+    # Run as the host user so files in the bind mounts stay owned by you,
+    # not root. Override via .env if your UID/GID differ.
+    user: "${RUNN_UID:-1000}:${RUNN_GID:-1000}"
+
+    # The home path inside the container MUST match the host so that
+    # Claude Code's project slug (~/.claude/projects/-home-waz-runn-data)
+    # is identical whether a session is spawned from inside Runn or from
+    # the host's `claude` CLI. Mismatch would break session dedup.
+    environment:
+      HOME: ${RUNN_HOME:-/home/waz}
+      PORT: 17777
+      HOST: 0.0.0.0
+
+    ports:
+      - "17777:17777"
+
+    volumes:
+      # Card store — plain JSON files, also readable/editable from the host
+      - ${RUNN_HOME:-/home/waz}/runn-data:${RUNN_HOME:-/home/waz}/runn-data
+      # Claude Code's home dir — projects, credentials, cache, backups
+      - ${RUNN_HOME:-/home/waz}/.claude:${RUNN_HOME:-/home/waz}/.claude
+      # Claude Code's main config file (separate from the .claude/ dir).
+      # Without this, the container's `claude` CLI throws "config not found".
+      - ${RUNN_HOME:-/home/waz}/.claude.json:${RUNN_HOME:-/home/waz}/.claude.json
+      # Live-mount the app source so host edits to frontend/worker propagate
+      # without a rebuild. Remove these two lines for a self-contained prod image.
+      - ./frontend:/app/frontend
+      - ./worker:/app/worker
