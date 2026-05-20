@@ -29,6 +29,9 @@ services:
       # Claude Code's main config file (separate from the .claude/ dir).
       # Without this, the container's `claude` CLI throws "config not found".
       - ${RUNN_HOME:-/home/waz}/.claude.json:${RUNN_HOME:-/home/waz}/.claude.json
+      # Externally-adopted sessions live in ~/projects/*; bridge needs that cwd
+      # to exist (claude --resume spawns there) or spawn fails with ENOENT.
+      - ${RUNN_HOME:-/home/waz}/projects:${RUNN_HOME:-/home/waz}/projects
       # Live-mount the app source so host edits to frontend/worker propagate
       # without a rebuild. Remove these two lines for a self-contained prod image.
       - ./frontend:/app/frontend
