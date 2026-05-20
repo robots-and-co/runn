@@ -686,19 +686,20 @@ const sessionsWatcher = chokidar.watch(CLAUDE_PROJECTS, {
   ignoreInitial: true, // skip the 266 existing files on boot
   awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
 });
-sessionsWatcher.on('add',    p => p.endsWith('.jsonl') && adoptSession(p));
+// Auto-discovery of external CC Desktop / terminal sessions is OFF — Runn is a
+// task/invoicing tool, not a session viewer. Only sessions Runn explicitly
+// spawned (origin='runn') exist as cards. Chokidar still runs so we can fire
+// live-transcript updates on sessions Runn already knows about.
+sessionsWatcher.on('add', () => {});
 sessionsWatcher.on('change', async (p) => {
   if (!p.endsWith('.jsonl')) return;
   const sessionId = sessionIdFromPath(p);
   if (!sessionId) return;
-  if (!sessionIndex.has(sessionId)) {
-    // First time we see this session (resumed historical) → adopt
-    await adoptSession(p);
-  } else {
-    // Known session: ALWAYS broadcast so open panels refresh, regardless of title sync.
-    broadcast({ type: 'session.updated', session_id: sessionId });
-    await syncSessionTitle(p);
-  }
+  // Only react if this is a known Runn-owned session. Unknown jsonls are
+  // someone else's business (CC Desktop, terminal claude, etc.) — ignored.
+  if (!sessionIndex.has(sessionId)) return;
+  broadcast({ type: 'session.updated', session_id: sessionId });
+  await syncSessionTitle(p);
 });
 
 // ── Boot ─────────────────────────────────────────────────────

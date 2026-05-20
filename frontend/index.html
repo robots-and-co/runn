@@ -1260,8 +1260,8 @@
     </div>
     <div class="chat-steps" id="chatSteps"></div>
     <div class="chat-aiify-zone" id="chatAiifyZone" hidden>
-      <button class="detail-btn primary chat-aiify-btn" id="chatAiifyBtn">✨ AI-ify this card</button>
-      <div class="chat-aiify-hint">Spawn a Claude session for this card.</div>
+      <button class="detail-btn primary chat-aiify-btn" id="chatAiifyBtn">✨ Runn with Claude</button>
+      <div class="chat-aiify-hint">Spawn a Claude session to work on this card.</div>
     </div>
     <div class="chat-transcript" id="chatTranscript" hidden></div>
     <div class="chat-empty" id="chatEmpty" hidden>No turns yet — session hasn't received a message.</div>
@@ -2353,9 +2353,9 @@ chatAiifyBtn.addEventListener('click', async () => {
     await aiifyCard(openCardId);
     // card.changed will reframe the panel into transcript+footer
   } catch (err) {
-    chatAiifyBtn.textContent = '✨ AI-ify this card';
+    chatAiifyBtn.textContent = '✨ Runn with Claude';
     chatAiifyBtn.disabled = false;
-    alert(`AI-ify failed: ${err.message}`);
+    alert(`Failed to spawn Claude: ${err.message}`);
   }
 });
 
