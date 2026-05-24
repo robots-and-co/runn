@@ -329,7 +329,6 @@ async function spawnSibling(sib, deps) {
       assignee: 'ai',
       session_id,
       session_path,
-      location: resolvedLoc,
       origin: 'runn',
       updated_at: nowIso(),
     };

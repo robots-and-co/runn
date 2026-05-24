@@ -865,7 +865,6 @@ const server = http.createServer(async (req, res) => {
           assignee: 'ai',
           session_id,
           session_path,
-          location: resolvedLoc,
           origin: 'runn',
           updated_at: nowIso(),
         };
@@ -1161,7 +1160,6 @@ const server = http.createServer(async (req, res) => {
           sort_order: body.sort_order ?? Date.now(),
           session_id,
           session_path,
-          location: resolvedLoc,
           origin: 'runn',
           notes_md: '',
           created_at: now,
@@ -1287,19 +1285,27 @@ const sessionIndex = new Map();
 
 async function rebuildSessionIndex() {
   sessionIndex.clear();
-  let backfilled = 0;
-  for (const c of await listCards()) {
-    if (c.session_id) sessionIndex.set(c.session_id, c.id);
-    // Backfill location for cards from before the field existed
-    if (!c.location && c.session_path) {
-      const loc = locationFromSessionPath(c.session_path);
-      if (loc) {
-        await atomicWriteJson(cardPath(c.id), { ...c, location: loc });
-        backfilled++;
+  let stripped = 0;
+  // Walk live + archive so legacy `location` fields don't linger as stale
+  // data. Cwd is derived at spawn time from client.workspace, not stored on
+  // cards — kept only on adopted external cards where session_path → cwd
+  // remains the source of truth.
+  for (const dir of [CARDS_DIR, ARCHIVE_DIR]) {
+    const files = await fsp.readdir(dir).catch(() => []);
+    for (const f of files) {
+      if (!f.endsWith('.json') || f.endsWith('.tmp')) continue;
+      const p = path.join(dir, f);
+      let c;
+      try { c = await readJson(p); } catch { continue; }
+      if (c.session_id && dir === CARDS_DIR) sessionIndex.set(c.session_id, c.id);
+      if (c.location && c.origin !== 'external') {
+        const { location, ...rest } = c;
+        await atomicWriteJson(p, rest);
+        stripped++;
       }
     }
   }
-  if (backfilled) console.log(`[runn] backfilled location on ${backfilled} card(s)`);
+  if (stripped) console.log(`[runn] stripped legacy location field from ${stripped} card(s)`);
 }
 
 async function adoptSession(jsonlPath) {
