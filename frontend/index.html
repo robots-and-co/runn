@@ -2895,11 +2895,6 @@
       <button type="button" class="chat-settings-edit-btn" id="chatClientEdit">Edit selected client</button>
       <span class="chat-settings-hint">Used for invoicing and the hours rollup. Pick "+ new client…" to add one.</span>
     </div>
-    <div class="chat-settings-field" id="chatProjectField" hidden>
-      <label class="chat-settings-label" for="chatProject">🗂 Billing project</label>
-      <select class="chat-client" id="chatProject"></select>
-      <span class="chat-settings-hint">Groups this work for per-project invoicing. Pick "+ new project…" to add one under this client.</span>
-    </div>
     <div class="chat-settings-field">
       <label class="chat-settings-label" for="chatCwd">📁 Working directory</label>
       <input type="text" class="chat-cwd" id="chatCwd" placeholder="e.g. /home/waz/projects/runn" autocomplete="off" spellcheck="false">
@@ -2953,7 +2948,6 @@
 // ── State ────────────────────────────────────────────────────
 const cards = new Map(); // id -> card json
 const clients = new Map(); // id -> client json
-const projects = new Map(); // id -> project json (billing grouping under a client)
 const pendingPerms = new Map(); // request_id -> { request_id, card_id, tool_name, input }
 const expandedCardIds = new Set(); // parents the user has explicitly expanded; everything else stays collapsed
 let mode = 'add';
@@ -3138,17 +3132,17 @@ function isBillableCard(card) {
   return !(cl && cl.non_billable);
 }
 function resolveProjectId(card) {
-  // Billing project is set on the root (project) card and inherited by tasks —
-  // same inheritance as client_id. Walk to root and read its project_id.
+  // The "project" is simply the top-level card a task lives under. Walk to the
+  // root and return its id; its title is the project name shown on invoices.
   let c = card;
   let guard = 0;
   while (c && c.parent_id && guard++ < 8) {
     c = cards.get(c.parent_id);
   }
-  return c ? (c.project_id || null) : null;
+  return c ? c.id : null;
 }
-// Bucket a list of billable cards by their (inherited) project id. Returns
-// Map(projectId|'' → { cards, hours }); '' is the unassigned bucket.
+// Bucket a list of billable cards by their project (top-level card). Returns
+// Map(projectCardId|'' → { cards, hours }).
 function groupByProject(list) {
   const m = new Map();
   for (const c of list) {
@@ -3162,8 +3156,8 @@ function groupByProject(list) {
 }
 function projectLabel(pid) {
   if (!pid) return '(no project)';
-  const p = projects.get(pid);
-  return p ? (p.name || pid) : `(missing project: ${pid})`;
+  const c = cards.get(pid);
+  return c ? (c.title || pid) : `(missing project: ${pid})`;
 }
 
 function billingGroups() {
@@ -6291,18 +6285,6 @@ function connectWS() {
         if (c && !c.parent_id) refreshClientSelector(c);
       }
       if (billingPanel.classList.contains('open')) renderBillingPanel();
-    } else if (msg.type === 'project.added' || msg.type === 'project.changed') {
-      projects.set(msg.project.id, msg.project);
-      if (openCardId) {
-        const c = cards.get(openCardId);
-        if (c && !c.parent_id) refreshProjectSelector(c);
-      }
-    } else if (msg.type === 'project.removed') {
-      projects.delete(msg.project.id);
-      if (openCardId) {
-        const c = cards.get(openCardId);
-        if (c && !c.parent_id) refreshProjectSelector(c);
-      }
     } else if (msg.type === 'permission.requested') {
       pendingPerms.set(msg.request_id, {
         request_id: msg.request_id,
@@ -6523,8 +6505,6 @@ document.getElementById('csDelete').addEventListener('click', async () => {
 // project-level (tasks inherit), so this isn't shown on task sidebars.
 const chatClient     = document.getElementById('chatClient');
 const chatClientEdit = document.getElementById('chatClientEdit');
-const chatProject     = document.getElementById('chatProject');
-const chatProjectField = document.getElementById('chatProjectField');
 function syncClientEditEnabled() {
   // Disabled when nothing real is selected (empty = "(none)", __new__ would be
   // transient anyway since picking it opens the editor immediately).
@@ -6542,49 +6522,7 @@ function refreshClientSelector(card) {
   chatClient.innerHTML = html;
   chatClient.value = card.client_id || '';
   syncClientEditEnabled();
-  refreshProjectSelector(card);
 }
-function refreshProjectSelector(card) {
-  if (!card || card.parent_id) return;
-  // The billing-project picker only makes sense once a client is chosen, since
-  // projects belong to a client. Hide it otherwise.
-  const clientId = card.client_id || '';
-  if (!clientId) {
-    chatProjectField.hidden = true;
-    chatProject.innerHTML = '';
-    return;
-  }
-  chatProjectField.hidden = false;
-  const mine = [...projects.values()]
-    .filter(p => p.client_id === clientId && p.status !== 'archived')
-    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-  let html = '<option value="">(unassigned)</option>';
-  for (const p of mine) {
-    html += `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name || p.id)}</option>`;
-  }
-  html += '<option value="__new__">+ new project…</option>';
-  chatProject.innerHTML = html;
-  chatProject.value = card.project_id || '';
-}
-chatProject.addEventListener('change', async () => {
-  if (!openCardId) return;
-  const card = cards.get(openCardId);
-  const val = chatProject.value;
-  if (val === '__new__') {
-    chatProject.value = card?.project_id || '';
-    const name = prompt('New billing project name:');
-    if (!name || !name.trim()) return;
-    try {
-      const proj = await api('POST', '/projects', { client_id: card.client_id, name: name.trim() });
-      projects.set(proj.id, proj);
-      refreshProjectSelector(cards.get(openCardId));
-      chatProject.value = proj.id;
-      await patchCard(openCardId, { project_id: proj.id });
-    } catch (err) { console.error(err); alert('Could not create project: ' + err.message); }
-    return;
-  }
-  patchCard(openCardId, { project_id: val || null }).catch(console.error);
-});
 chatClient.addEventListener('change', () => {
   if (!openCardId) return;
   const val = chatClient.value;
@@ -6922,16 +6860,14 @@ async function renderInvoicePage(id) {
 
 // ── Boot ─────────────────────────────────────────────────────
 (async function boot() {
-  const [initial, initialClients, initialProjects, initialPerms] = await Promise.all([
+  const [initial, initialClients, initialPerms] = await Promise.all([
     api('GET', '/cards'),
     api('GET', '/clients').catch(() => []),
-    api('GET', '/projects').catch(() => []),
     api('GET', '/permissions/pending').catch(() => []),
   ]);
   document.title = 'Runn';
   for (const c of initial) cards.set(c.id, c);
   for (const cl of initialClients) clients.set(cl.id, cl);
-  for (const pr of initialProjects) projects.set(pr.id, pr);
   for (const p of initialPerms) pendingPerms.set(p.request_id, p);
   // Load settings (includes default_rate_per_hour for billing labels).
   await reloadGlobalSettings();
