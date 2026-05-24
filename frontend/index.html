@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Runn</title>
 <link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#b85c1f">
+<meta name="theme-color" content="#2f4a6b">
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <link rel="apple-touch-icon" href="/icon.svg">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -19,15 +19,24 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --paper:   #f8f5ef;
-    --paper-2: #f1ece3;
-    --paper-3: #e7e0d2;
-    --ink:     #2a2620;
-    --ink-2:   #5a544a;
-    --ink-3:   #8c8578;
-    --line:    #d5cdbb;
-    --accent:  #b85c1f;
-    --accent-soft: #f4dfd0;
+    /* Palette 2C — soft bone paper, warm near-black ink, muted slate-blue
+       accent. The base tokens swing per palette; the semantic tokens below
+       stay warm/yellow because their meaning (urgent, review-required,
+       overdue) is independent of the chosen base theme. */
+    --paper:   #fbfaf7;
+    --paper-2: #f2f0eb;
+    --paper-3: #e6e3d9;
+    --ink:     #26241f;
+    --ink-2:   #57544c;
+    --ink-3:   #9d988b;
+    --line:    #dbd6c8;
+    --accent:  #2f4a6b;
+    --accent-soft: #dbe3ec;
+    /* Semantic — warm-family, intentionally hue-stable across palette swaps. */
+    --warn-bg:      #f6e6b8;  /* review badge bg, due-today urgency wash */
+    --warn-fg:      #6b4e15;  /* review badge text */
+    --overdue:      #8a3a2e;  /* overdue text, divider, blocked chip text */
+    --overdue-soft: #f0d8d2;  /* overdue card wash, blocked chip bg, due-chip overdue */
   }
 
   html, body {
@@ -173,21 +182,33 @@
   /* Match the gap between the "projects" counter and the first card with
      pane 2's gap (parent flex-gap 8px + header margin 6px = 14px). */
   .pane-1 .main > .chat-steps-header { margin-bottom: 14px; }
+  /* Pane-1 header is a 3-column grid: [logo | billing | actions]. The 1fr
+     side columns balance so the centre auto-column sits truly centred on the
+     pane — which matches the card $ chips below (.card-meta-center). Padding
+     matches .main (14px) so the logo's text edge aligns with the "projects"
+     label in the steps-header below it. */
   .pane-1-header {
-    flex-shrink: 0; display: flex; align-items: center; gap: 6px;
-    padding: 0 8px; height: 56px;
+    flex-shrink: 0;
+    display: grid; grid-template-columns: 1fr auto 1fr;
+    align-items: center; gap: 6px;
+    padding: 0 14px; height: 56px;
     background: var(--paper); border-bottom: 1px solid var(--line);
   }
+  .pane-1-header > :nth-child(1) { justify-self: start; }
+  .pane-1-header > :nth-child(2) { justify-self: center; }
+  .pane-1-header > :nth-child(3) { justify-self: end; }
+  .pane-1-header-right {
+    display: flex; align-items: center; gap: 6px;
+  }
   @media (max-width: 700px) {
-    /* Tight up button paddings + reduce gap so the row (logo + 2 toggles +
-       billing chip + add button) fits in a 375px viewport without scrolling. */
-    .pane-1-header { gap: 4px; padding: 0 6px; }
+    /* Mobile keeps the 14px edge padding (alignment with .main) but tightens
+       button paddings so the row stays roomy on a 375px viewport. */
+    .pane-1-header { gap: 4px; }
     .pane-1-header .header-toggle { padding: 0 6px; font-size: 12px; }
     .pane-1-header .pane-billing-btn { padding: 0 8px; font-size: 12px; }
     .pane-1-header .pane-add-project { padding: 0 10px; font-size: 12px; }
     .pane-1-header .header-logo { font-size: 14px; padding: 8px 6px; margin: -8px -6px; }
   }
-  .pane-1-header-spacer { flex: 1; }
   .pane-1-title {
     font-size: 13px; font-weight: 600; color: var(--ink-2);
     text-transform: uppercase; letter-spacing: .04em;
@@ -274,6 +295,25 @@
   /* ── Board ───────────────────────────────────────────────── */
   .board { width: 100%; max-width: 600px; margin: 0 auto; }
   .items { display: flex; flex-direction: column-reverse; gap: 6px; }
+  /* Labeled section dividers — one per due bucket (overdue / today / tomorrow
+     / this week / later / no due). Rendered as `── label ──`: a small muted
+     caption flanked by hairlines. Inserted in DOM by renderAll(); the loop
+     places each label AFTER its bucket's last card, and column-reverse flips
+     that into visually ABOVE the bucket. */
+  .board-divider {
+    display: flex; align-items: center; gap: 10px;
+    margin: 10px 12px 2px;
+    font-size: 10px; color: var(--ink-3);
+    text-transform: uppercase; letter-spacing: .08em;
+  }
+  .board-divider::before, .board-divider::after {
+    content: ''; flex: 1; height: 1px; background: var(--line); opacity: .55;
+  }
+  /* Overdue gets a quiet warm tint so the most urgent bucket reads at a glance
+     without being loud — same family as the urgency washes. */
+  .board-divider[data-bucket="overdue"] { color: var(--overdue); }
+  .board-divider[data-bucket="overdue"]::before,
+  .board-divider[data-bucket="overdue"]::after { background: #e7b9a3; opacity: .6; }
 
   /* ── Card ────────────────────────────────────────────────── */
   .card {
@@ -282,38 +322,20 @@
     background: var(--paper); border: 1px solid var(--line);
     border-radius: 8px; cursor: pointer; position: relative;
   }
-  /* Active project (pane 2 currently shows it) — louder treatment so the user
-     always knows which card is "live". 3px accent left bar + accent ring +
-     warm tint. Beats the urgency washes via the .card.active rules below. */
+  /* Active project (pane 2 currently shows it) — wash-only treatment. No ring,
+     no inset bar. The slate-blue gradient + slightly-darkened border carry
+     "selected"; the eye still finds it but the card stops shouting. The
+     border-color uses color-mix so it sits between --line and --accent
+     regardless of the active palette. */
   .card.active {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--accent), inset 4px 0 0 var(--accent);
-    background: linear-gradient(to right, var(--accent-soft) 0%, var(--paper) 28%);
+    background: linear-gradient(to right, var(--accent-soft) 0%, var(--paper) 48%);
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
   }
   .card.active .card-title { color: var(--ink); font-weight: 600; }
 
-  /* Gentle urgency washes — soft left-to-paper gradient + tinted lift */
-  .card.urgency-high {
-    background: linear-gradient(to right, var(--accent-soft) 0%, var(--paper) 32%);
-    box-shadow: 0 1px 4px rgba(184, 92, 31, 0.10);
-  }
-  .card.urgency-overdue {
-    background: linear-gradient(to right, #fde8de 0%, var(--paper) 32%);
-    box-shadow: 0 1px 4px rgba(184, 79, 31, 0.14);
-  }
-  /* When the active card is also urgent, the active ring wins (boost). */
-  .card.urgency-high.active, .card.urgency-overdue.active {
-    box-shadow: 0 0 0 2px var(--accent), inset 4px 0 0 var(--accent), 0 1px 4px rgba(184, 79, 31, 0.18);
-  }
-  /* Runn-on indicator — a persistent accent left stripe so the board shows at
-     a glance which projects are in autonomous mode. Layered with .active /
-     urgency: those use box-shadow insets, this uses border-left so they stack
-     without fighting. */
-  .card.runn-on {
-    border-left: 3px solid var(--accent);
-    padding-left: 9px; /* preserve the 12px content offset against the thicker border */
-  }
-  .card.runn-on .tasks-summary { color: var(--accent); font-weight: 600; }
+  /* No per-card urgency wash — the active state is the only wash on a card.
+     Due-today / overdue are signalled by the labeled board section dividers
+     (TODAY / OVERDUE) above their group of cards, not by tinting each card. */
 
   .card.drop-before::before, .card.drop-after::after {
     content: ''; position: absolute;
@@ -364,14 +386,60 @@
 
   .card-body { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   .card-row1 { display: flex; align-items: center; gap: 8px; }
-  .card-row2 { display: flex; align-items: center; gap: 6px; }
-  /* Chip order on project cards: client → hours → tasks summary → due → tags → ext */
-  .card-row2 > .tag-chip.client-chip { order: 1; }
-  .card-row2 > .hours-chip            { order: 2; }
-  .card-row2 > .tasks-summary         { order: 3; }
-  .card-row2 > .due-chip              { order: 4; }
-  .card-row2 > .tag-chip              { order: 5; }
-  .card-row2 > .badge-ext             { order: 6; }
+  /* Row2 has three dedicated regions (grid, not flex-with-order:) so each chip
+     type always lands in the same spot — eye learns the layout.
+       left   = identity (client + tags)
+       center = rolled-up $ value (billable projects only)
+       right  = task progress (N/M tasks · running · blocked) + ext badge
+     `1fr auto 1fr` keeps the centre slot truly centred regardless of how much
+     content the side slots carry. Side cells get min-width:0 + overflow:hidden
+     so a tag-heavy left slot never bleeds into the centre $. */
+  .card-row2 {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 6px; align-items: center; min-width: 0;
+  }
+  .card-meta-left {
+    justify-self: start;
+    display: flex; align-items: center; gap: 6px;
+    min-width: 0; overflow: hidden; flex-wrap: nowrap;
+  }
+  .card-meta-center {
+    justify-self: center;
+    display: flex; align-items: center; gap: 6px;
+    min-width: 0;
+  }
+  .card-meta-right {
+    justify-self: end;
+    display: flex; align-items: center; gap: 6px;
+    min-width: 0; overflow: hidden;
+  }
+  /* Rolled-up $ value, centre slot of row2. Replaces the old hours chip — the
+     dollar figure is what the user actually reads at a glance ("how much can
+     I bill on this?"). Same monospace numeric vibe and the accent colour pair
+     the chip used in its `outstanding` state; non-billable projects (no
+     client / non_billable / nothing to bill) get nothing in this slot. */
+  .dollar-chip {
+    font-size: 11px; font-weight: 600;
+    padding: 1px 7px; border-radius: 3px;
+    background: var(--paper); color: var(--accent);
+    border: 1px solid var(--accent-soft);
+    white-space: nowrap; flex-shrink: 0;
+    font-family: ui-monospace, monospace;
+  }
+  .dollar-chip[hidden] { display: none; }
+  /* Top-right attention badge — surfaces when a project has tasks in `review`
+     (AI says done, awaiting human gate). The one bit you don't want to scroll
+     for. Uses the same amber as the .chip-review status pill so the colour
+     reads "review" everywhere it appears. */
+  .review-badge {
+    font-size: 11px; font-weight: 600;
+    padding: 2px 7px; border-radius: 3px;
+    background: var(--warn-bg); color: var(--warn-fg);
+    white-space: nowrap; flex-shrink: 0;
+    margin-left: auto;
+  }
+  .review-badge[hidden] { display: none; }
 
   .card-title {
     flex: 1; font-size: 15px; color: var(--ink); line-height: 1.35;
@@ -380,34 +448,6 @@
   .card.done .card-title { text-decoration: line-through; color: var(--ink-3); }
   .card.archived { opacity: .55; }
   .card.archived .card-title { font-style: italic; }
-
-  .chevron {
-    width: 36px; height: 36px;
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer; user-select: none; flex-shrink: 0;
-    transition: transform .18s;
-  }
-  .chevron::before {
-    content: ''; display: block; width: 11px; height: 11px;
-    border-top: 2.5px solid var(--line); border-left: 2.5px solid var(--line);
-    transform: rotate(45deg) translate(2px, 2px);
-    transition: border-color .12s;
-  }
-  .chevron:hover::before { border-color: var(--ink-3); }
-  .card.collapsed .chevron { transform: rotate(90deg); }
-  .card:not([data-has-children]) .chevron { visibility: hidden; pointer-events: none; }
-
-  .card-controls {
-    display: flex; flex-direction: row; align-items: center;
-    align-self: stretch; gap: 2px;
-  }
-  .handle {
-    color: var(--line); cursor: grab; font-size: 18px;
-    user-select: none; flex-shrink: 0;
-    padding: 4px 8px;          /* larger tap target on mobile */
-    touch-action: none;        /* let the polyfill own the touch gesture */
-  }
-  .handle:active { cursor: grabbing; }
 
   .chip {
     font-size: 11px; font-weight: 600; padding: 2px 8px;
@@ -425,7 +465,7 @@
      family as doing (it's about to run) but dashed + muted to read "not yet". */
   .chip-waiting             { background: var(--accent-soft); color: var(--accent);
                               border: 1px dashed var(--accent); }
-  .chip-review              { background: #fff3cc;            color: #8a6500; }
+  .chip-review              { background: var(--warn-bg);            color: var(--warn-fg); }
   .chip-done                { background: #dff0e2;            color: #3a7d44; }
   /* Invoicing tail of the conveyor. invoice = done + billable, ready to go on
      an invoice (distinct blue so it stands out at the bottom of the list).
@@ -433,7 +473,7 @@
   .chip-invoice             { background: #e3ecfb;            color: #2f5fc0; }
   .chip-invoiced            { background: #f4dfd0;            color: #b85c1f; }
   .chip-paid                { background: #dff0e2;            color: #3a7d44; }
-  .chip-blocked             { background: #fde8de;            color: #b84f1f; }
+  .chip-blocked             { background: var(--overdue-soft);            color: var(--overdue); }
   .chip-hold                { background: #ebe6dc;            color: var(--ink-3);
                               border: 1px dashed var(--ink-3); }
 
@@ -483,8 +523,8 @@
     text-transform: uppercase; letter-spacing: .03em;
   }
   .due-chip.future  { background: var(--paper-3); color: var(--ink-3); }
-  .due-chip.today   { background: var(--accent-soft); color: var(--accent); }
-  .due-chip.overdue { background: #fde8de; color: #b84f1f; }
+  .due-chip.today   { background: var(--warn-bg); color: var(--warn-fg); }
+  .due-chip.overdue { background: var(--overdue-soft); color: var(--overdue); }
 
   /* Tag chips on board cards — bg/color set inline per-tag (hash → hue) */
   .tag-chip {
@@ -494,26 +534,27 @@
     transition: filter .12s, box-shadow .12s;
   }
   .tag-chip::before { content: '#'; opacity: .55; }
+  /* Client chip — text-only treatment. No background, no hue. `@name` in
+     muted ink-2 so the chip recedes against the card title and only the name
+     does the work. Hover/active reveal a paper-3 patch so it still reads as
+     a tappable filter affordance. Hue was distracting; the name is enough. */
   .tag-chip.client-chip {
-    font-weight: 500; letter-spacing: .01em;
-    box-shadow: inset 0 -1px 0 rgba(0,0,0,.12), 0 1px 0 rgba(255,255,255,.35);
+    background: none; color: var(--ink-2);
+    padding: 2px 4px; font-weight: 500;
+    box-shadow: none;
   }
-  .tag-chip.client-chip::before { content: '@'; opacity: .7; margin-right: 1px; }
+  .tag-chip.client-chip::before { content: '@'; opacity: .5; margin-right: 1px; }
+  .tag-chip.client-chip:hover { background: var(--paper-3); filter: none; }
   .tag-chip.client-chip.active {
-    box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.85), inset 0 -1px 0 rgba(0,0,0,.18);
+    background: var(--paper-3); font-weight: 600; box-shadow: none;
   }
-  /* Personal (no-client) chip: neutral, recedes vs. coloured client chips */
+  /* Personal (no-client) chip: same C2 treatment in a paler ink + dot prefix */
   .tag-chip.client-chip.personal-chip {
-    background: transparent;
-    color: var(--ink-3);
-    font-weight: 400;
-    box-shadow: inset 0 0 0 1px var(--line);
+    color: var(--ink-3); font-weight: 500;
   }
-  .tag-chip.client-chip.personal-chip::before { content: '·'; opacity: .55; margin-right: 1px; }
-  .tag-chip.client-chip.personal-chip:hover { background: var(--paper-3); filter: none; }
+  .tag-chip.client-chip.personal-chip::before { content: '·'; opacity: .5; margin-right: 1px; }
   .tag-chip.client-chip.personal-chip.active {
     background: var(--paper-3);
-    box-shadow: inset 0 0 0 1.5px var(--ink-3);
   }
   .filter-tag.filter-personal {
     background: var(--paper-3); color: var(--ink-3);
@@ -544,6 +585,10 @@
     font-weight: 600;
   }
   .filter-tag::before { content: '#'; opacity: .55; }
+  .filter-tag.filter-client {
+    background: var(--paper-3); color: var(--ink-2);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
   .filter-tag.filter-client::before { content: '@'; opacity: .55; }
   .filter-tag button {
     background: none; border: none; color: inherit;
@@ -733,7 +778,10 @@
     max-width: 60%; overflow: hidden; text-overflow: ellipsis;
     flex-shrink: 1; min-width: 0;
   }
-  .bc-chip.bc-client::before { content: '@'; opacity: .7; margin-right: 1px; }
+  .bc-chip.bc-client {
+    background: var(--paper-3); color: var(--ink-2);
+  }
+  .bc-chip.bc-client::before { content: '@'; opacity: .55; margin-right: 1px; }
   .bc-chip.bc-personal {
     background: var(--paper-3); color: var(--ink-3);
   }
@@ -757,8 +805,9 @@
     font-size: 12px; font-weight: 600; padding: 4px 9px;
     border-radius: 6px; white-space: nowrap;
     border: none; cursor: pointer; font-family: inherit;
+    background: var(--paper-3); color: var(--ink-2);
   }
-  .chat-header-client-chip::before { content: '@'; opacity: .7; margin-right: 1px; }
+  .chat-header-client-chip::before { content: '@'; opacity: .55; margin-right: 1px; }
   .chat-header-client-chip.personal-chip {
     background: var(--paper-3); color: var(--ink-3);
   }
@@ -823,12 +872,12 @@
   }
   /* Overdue: hot. */
   .chat-header-due-slot .chat-due-wrap.has-due[data-due-status="overdue"] {
-    background: #fde8de;
+    background: var(--overdue-soft);
     border-color: #f5c6b0;
   }
   .chat-header-due-slot .chat-due-wrap.has-due[data-due-status="overdue"] .chat-due,
   .chat-header-due-slot .chat-due-wrap.has-due[data-due-status="overdue"] .chat-due-time {
-    color: #b84f1f;
+    color: var(--overdue);
   }
   .chat-header-due-slot .chat-due-clear {
     background: none; border: none; cursor: pointer;
@@ -982,7 +1031,7 @@
     background: #3a7d44; color: #fff;
   }
   .chat-header-chip-slot .chip-blocked {
-    background: #b84f1f; color: #fff;
+    background: var(--overdue); color: #fff;
   }
   .chat-header-chip-slot .chip-review {
     background: #c08a00; color: #fff;
@@ -1065,29 +1114,6 @@
   .chat-fab[hidden] { display: none; }
   .chat-fab:hover { filter: brightness(.96); box-shadow: 0 8px 24px rgba(0,0,0,.24), 0 4px 8px rgba(0,0,0,.12); }
   .chat-fab:active { transform: translateY(1px); box-shadow: 0 3px 8px rgba(0,0,0,.18); }
-
-  /* Hours chip on board cards */
-  .hours-chip {
-    font-size: 10px; font-weight: 600; padding: 1px 6px;
-    border-radius: 3px; white-space: nowrap; flex-shrink: 0;
-    background: var(--paper-3); color: var(--ink-3);
-    border: 1px solid transparent;
-    font-family: ui-monospace, monospace;
-  }
-  .hours-chip.outstanding {
-    background: var(--paper);
-    color: var(--accent);
-    border-color: var(--accent-soft);
-  }
-  .hours-chip.invoiced {
-    background: #f4dfd0; color: #b85c1f;
-  }
-  .hours-chip.paid {
-    background: #dff0e2; color: #3a7d44;
-  }
-  .hours-chip.rollup::before {
-    content: 'Σ '; opacity: .6;
-  }
 
   /* Header outstanding total */
   .header-outstanding {
@@ -1423,7 +1449,7 @@
   .invoice-doc-totals-row .val {
     font-family: ui-monospace, monospace; min-width: 70px; text-align: right;
   }
-  .invoice-doc-totals-row.balance .val.outstanding { color: #b84f1f; font-weight: 700; }
+  .invoice-doc-totals-row.balance .val.outstanding { color: var(--overdue); font-weight: 700; }
 
   @page { size: A4; margin: 0; }
   @media print {
@@ -1513,10 +1539,37 @@
     position: relative;
   }
   .project-pane[hidden] { display: none; }
+  /* Project pane header — same 3-column grid trick as .pane-1-header so the
+     billing button sits truly centred on the pane (matching the .card-meta-
+     center $ chips on the cards below, and the all-billing chip in pane 1).
+     Explicit grid-column on each visible child so the layout survives any
+     of them being hidden — bill-btn hides when $ = 0, runn-switch hides on
+     non-project chats, etc. Mobile reverts to flex because the header swaps
+     title for a breadcrumb; the row composition is too different for the
+     same grid to apply cleanly. */
   .project-pane-header {
-    flex-shrink: 0; display: flex; align-items: center; gap: 8px;
-    padding: 0 8px 0 4px; height: 56px;
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center; gap: 8px;
+    padding: 0 14px; height: 56px;
     background: var(--paper); border-bottom: 1px solid var(--line);
+  }
+  .project-pane-header > .chat-title-input        { grid-column: 1; justify-self: stretch; }
+  .project-pane-header > .chat-header-bill-btn    { grid-column: 2; justify-self: center; }
+  .project-pane-header > .project-pane-header-right { grid-column: 3; justify-self: end; }
+  .project-pane-header-right {
+    display: flex; align-items: center; gap: 8px;
+  }
+  @media (max-width: 700px) {
+    .project-pane-header {
+      display: flex; gap: 6px; padding: 0 8px 0 4px;
+    }
+    .project-pane-header > .chat-title-input,
+    .project-pane-header > .chat-header-bill-btn,
+    .project-pane-header > .project-pane-header-right {
+      grid-column: auto; justify-self: auto;
+    }
   }
   .project-pane-body {
     flex: 1; min-height: 0; overflow-y: auto;
@@ -2000,32 +2053,22 @@
     border-radius: 8px; cursor: pointer;
     transition: background .12s, border-color .12s;
   }
-  .chat-step:hover { background: var(--paper-3); border-color: var(--ink-3); }
-  /* Selected task — mirrors .card.active (selected project) so both feel the
-     same: accent border + ring, inset accent left bar, soft left-to-paper
-     wash. */
+  /* Subtle hover — border-only darken, no bg shift (so it doesn't fight the
+     active card's wash). Same treatment shared with project cards via .card
+     so both pane 1 and pane 2 feel identical on hover. */
+  .card:not(.active):hover,
+  .chat-step:not(.active):hover {
+    border-color: color-mix(in srgb, var(--ink-3) 50%, var(--line));
+  }
+  /* Selected task — mirrors .card.active. Wash-only language. */
   .chat-step.active {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--accent), inset 4px 0 0 var(--accent);
-    background: linear-gradient(to right, var(--accent-soft) 0%, var(--paper) 28%);
+    background: linear-gradient(to right, var(--accent-soft) 0%, var(--paper) 48%);
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
   }
   .chat-step.active .chat-step-title { color: var(--ink); font-weight: 600; }
-  /* Urgency tint — mirrors .card.urgency-* so a task due today looks the same
-     as a project due today. Source-ordered after .active so combined
-     .active+.urgency-* gets the matching boosted shadow (same recipe as
-     .card.urgency-*.active). */
-  .chat-step.urgency-high {
-    background: linear-gradient(to right, var(--accent-soft) 0%, var(--paper) 32%);
-    box-shadow: 0 1px 4px rgba(184, 92, 31, 0.10);
-  }
-  .chat-step.urgency-overdue {
-    background: linear-gradient(to right, #fde8de 0%, var(--paper) 32%);
-    box-shadow: 0 1px 4px rgba(184, 79, 31, 0.14);
-  }
-  .chat-step.urgency-high.active,
-  .chat-step.urgency-overdue.active {
-    box-shadow: 0 0 0 2px var(--accent), inset 4px 0 0 var(--accent), 0 1px 4px rgba(184, 79, 31, 0.18);
-  }
+  /* No per-task urgency wash. The active state is the only wash on a task
+     card. The status chip (doing/review/blocked) and the due-chip carry
+     urgency information without tinting the whole card body. */
   .step-body { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   .step-row1 { display: flex; align-items: center; gap: 8px; }
   /* No flex-wrap — matches .card-row2 so the row stays one line and the task
@@ -2064,14 +2107,13 @@
   .chat-step .step-assignee:hover { background: var(--paper-3); }
   .chat-step[data-assignee="ai"] { border-left: 2px solid #7a86a8; }
   .chat-step[data-assignee="human"] { border-left: 2px solid #c8b88a; }
-  /* When active, the accent border wins over the assignee tint so the card
-     reads as a single solid selection (mirrors .card.active). Width is reset
-     to 1px so the left edge matches the other three sides — assignee rules
-     bump it to 2px, which made the selected task look "fatter" on the left. */
-  .chat-step.active[data-assignee="ai"],
-  .chat-step.active[data-assignee="human"] {
-    border-left: 1px solid var(--accent);
-  }
+  /* Preserve the assignee tint on the left edge even when active — the H2
+     active treatment is wash-only (no ring/bar), so there's no accent border
+     fighting the assignee strip. The active rule's `border-color` would
+     otherwise wash all four sides slate; we override the left back to its
+     assignee colour so AI vs human stays scannable. */
+  .chat-step.active[data-assignee="ai"]    { border-left-color: #7a86a8; }
+  .chat-step.active[data-assignee="human"] { border-left-color: #c8b88a; }
   .chat-step.dragging { opacity: 0.4; }
   /* Drop targets: a prominent bar in the GAP between cards (not on the card
      itself) so the user can aim precisely. Same treatment as the old board
@@ -2089,7 +2131,6 @@
   .chat-step.drop-after::after   { bottom: -5px; }
   .tasks-summary {
     font-size: 11px; color: var(--ink-3);
-    margin-left: 6px;
   }
   .chat-client {
     font-size: 13px; color: var(--ink);
@@ -2110,7 +2151,18 @@
   .chat-settings-edit-btn:disabled { opacity: .4; cursor: default; }
   .chat-settings-desc-slot { display: flex; flex-direction: column; }
   .chat-settings-desc-slot .chat-notes-wrap { flex: 0 0 auto; }
-  .chat-settings-desc-slot .chat-notes { min-height: 96px; }
+  /* Description textarea auto-grows with its content. field-sizing handles
+     this natively in modern Chromium/Safari (no JS or event handlers); legacy
+     browsers fall through to autoGrowNotes() driving inline height. min-height
+     keeps the empty state visible, max-height stops a runaway description
+     pushing other settings fields off the screen — internal scroll kicks in
+     past that point. */
+  .chat-settings-desc-slot .chat-notes {
+    min-height: 96px;
+    max-height: 60vh;
+    field-sizing: content;
+    overflow-y: auto;
+  }
   .chat-settings-danger {
     margin-top: 8px;
     padding-top: 18px;
@@ -2355,18 +2407,8 @@
     border: 1px solid var(--line); padding: 4px 8px; text-align: left;
   }
 
-  .group {
-    border: 1.5px solid var(--line); border-radius: 10px;
-    padding: 5px; display: flex; flex-direction: column-reverse;
-    gap: 4px; background: var(--paper-3);
-  }
-  [data-indent="1"] { margin-left: 36px; }
-  [data-indent="2"] { margin-left: 72px; }
-  [data-indent="3"] { margin-left: 108px; }
-  [data-indent="4"] { margin-left: 144px; }
-
-  /* Standalone cards (no .group wrapper) get the same horizontal inset
-     as cards inside a group, so chevron/handle align in a column. */
+  /* Small horizontal inset on board cards — keeps them off the items-list
+     edge so the active card's accent ring isn't clipped against the column. */
   .items > .card { margin-left: 6px; margin-right: 6px; }
 
   /* ── Footer ──────────────────────────────────────────────── */
@@ -2441,11 +2483,12 @@
     <div class="ws-dot" id="wsDot" title="WS status"></div>
     Runn
   </div>
-  <span class="pane-1-header-spacer"></span>
   <button class="pane-billing-btn" id="paneAllBilling" type="button" title="All outstanding billing" hidden>0.00</button>
-  <button class="chat-settings-btn" id="paneAppSettings" type="button" title="App settings">⚙</button>
-  <!-- headerOutstanding stub kept (hidden) so legacy JS refs don't crash. -->
-  <button class="header-outstanding" id="headerOutstanding" hidden style="display:none!important;">0h</button>
+  <div class="pane-1-header-right">
+    <button class="chat-settings-btn" id="paneAppSettings" type="button" title="App settings">⚙</button>
+    <!-- headerOutstanding stub kept (hidden) so legacy JS refs don't crash. -->
+    <button class="header-outstanding" id="headerOutstanding" hidden style="display:none!important;">0h</button>
+  </div>
 </header>
 <!-- + Project FAB lives at the bottom-right of pane 1 — header stays clean
      and the button is thumb-reachable on mobile. -->
@@ -2488,11 +2531,13 @@
       <input class="chat-title-input" id="projectTitle" type="text" placeholder="Title" autocomplete="off">
       <span class="chat-header-client-slot" id="projectClientSlot"></span>
       <button class="chat-header-bill-btn" id="projectBillBtn" type="button" title="Project billing" hidden>$0.00</button>
-      <button class="runn-switch" id="projectRunn" type="button" role="switch" aria-checked="false" hidden>
-        <span class="runn-switch-label">Runn</span>
-        <span class="runn-switch-track" aria-hidden="true"><span class="runn-switch-thumb"></span></span>
-      </button>
-      <button class="chat-settings-btn" id="projectSettingsBtn" type="button" title="Project settings">⚙</button>
+      <div class="project-pane-header-right">
+        <button class="runn-switch" id="projectRunn" type="button" role="switch" aria-checked="false" hidden>
+          <span class="runn-switch-label">Runn</span>
+          <span class="runn-switch-track" aria-hidden="true"><span class="runn-switch-thumb"></span></span>
+        </button>
+        <button class="chat-settings-btn" id="projectSettingsBtn" type="button" title="Project settings">⚙</button>
+      </div>
     </header>
     <div class="project-pane-body">
       <div class="chat-steps-header" id="projectStepsHeader" hidden>
@@ -2691,7 +2736,7 @@
     </div>
   </div>
   <div class="modal-footer">
-    <button class="detail-btn" id="csDelete" style="margin-right:auto;color:#b84f1f;" hidden>delete</button>
+    <button class="detail-btn" id="csDelete" style="margin-right:auto;color:var(--overdue);" hidden>delete</button>
     <button class="detail-btn" onclick="closeAllModals()">cancel</button>
     <button class="detail-btn primary" id="csSave">save</button>
   </div>
@@ -2944,7 +2989,6 @@
 const cards = new Map(); // id -> card json
 const clients = new Map(); // id -> client json
 const pendingPerms = new Map(); // request_id -> { request_id, card_id, tool_name, input }
-const expandedCardIds = new Set(); // parents the user has explicitly expanded; everything else stays collapsed
 let mode = 'add';
 // Show archived projects on the board. Off by default so archive feels "out of sight".
 let showArchived = localStorage.getItem('runn:showArchived') === '1';
@@ -2964,38 +3008,12 @@ function tagColor(tag) {
   const hue = Math.abs(h) % 360;
   return { bg: `hsl(${hue} 38% 88%)`, fg: `hsl(${hue} 50% 26%)` };
 }
-// Client chip colours. OKLCH for perceptually uniform brightness across hues —
-// raw HSL/RGB lets some hues read "loud" and others "muddy" at the same L%.
-// Chroma is per-hue (yellow/cyan can't sustain as much chroma as red/violet
-// without leaving sRGB) and pitched ~20% below vivid Tailwind-600 equivalents
-// for a calmer professional feel. djb2 picks hue family; FNV-1a picks tier
-// (base vs. deep) so close-hashed clients still separate visually.
-const CLIENT_HUES   = [25, 55, 85, 130, 155, 195, 235, 270, 295, 345];
-const CLIENT_CHROMA = [0.14, 0.14, 0.10, 0.13, 0.13, 0.09, 0.12, 0.15, 0.17, 0.15];
-const CLIENT_LIGHT  = [0.62, 0.42]; // base, deep
-function clientColor(id) {
-  const s = `client:${id}`;
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  let h2 = 2166136261;
-  for (let i = 0; i < s.length; i++) h2 = Math.imul(h2 ^ s.charCodeAt(i), 16777619);
-  const idx = Math.abs(h) % CLIENT_HUES.length;
-  const tier = Math.abs(h2) % CLIENT_LIGHT.length;
-  const hue = CLIENT_HUES[idx];
-  // Deep tier drops chroma a touch more — too-saturated darks read heavy.
-  const chroma = CLIENT_CHROMA[idx] * (tier === 0 ? 1 : 0.85);
-  return {
-    bg: `oklch(${CLIENT_LIGHT[tier]} ${chroma.toFixed(3)} ${hue})`,
-    fg: `oklch(0.97 0.02 ${hue})`,
-  };
-}
+// Client chips are now text-only (the C2 treatment in .tag-chip.client-chip
+// CSS) — no per-client hue, no inline colour. The previous clientColor() /
+// styleClient() pair, plus the CLIENT_HUES palette they drove, were removed
+// because the chip body no longer paints from any of it.
 function styleTag(el, tag) {
   const { bg, fg } = tagColor(tag);
-  el.style.background = bg;
-  el.style.color = fg;
-}
-function styleClient(el, id) {
-  const { bg, fg } = clientColor(id);
   el.style.background = bg;
   el.style.color = fg;
 }
@@ -3215,15 +3233,21 @@ function renderCard(card) {
   el.dataset.cardId = card.id;
   el.innerHTML = `
     <div class="card-body">
-      <div class="card-row1"><div class="card-title"></div><span class="runn-spinner card-spinner" hidden></span><span class="pulse"></span></div>
-      <div class="card-row2">
-        <span class="badge-ext" hidden>ext</span>
-        <span class="due-chip" hidden></span>
-        <span class="hours-chip" hidden></span>
+      <div class="card-row1">
+        <div class="card-title"></div>
+        <span class="runn-spinner card-spinner" hidden></span>
+        <span class="pulse"></span>
+        <span class="review-badge" hidden></span>
       </div>
-    </div>
-    <div class="card-controls">
-      <span class="chevron" onclick="toggleCollapse(event,this)"></span>
+      <div class="card-row2">
+        <span class="card-meta-left"></span>
+        <span class="card-meta-center">
+          <span class="dollar-chip" hidden></span>
+        </span>
+        <span class="card-meta-right">
+          <span class="badge-ext" hidden>ext</span>
+        </span>
+      </div>
     </div>`;
   applyCard(el, card);
   return el;
@@ -3234,56 +3258,39 @@ function renderCard(card) {
 function applyCard(el, card) {
   el.querySelector('.card-title').textContent = card.title;
   el.classList.toggle('archived', !!card._archived);
-  // Persistent indicator that this project is in autonomous (Runn) mode —
-  // accent left stripe + accent-tinted summary. Stacks cleanly with .active
-  // and urgency washes (they use box-shadow / background, this uses border).
-  el.classList.toggle('runn-on', !!card.runn_mode);
+  // Runn-mode indicator removed from the card surface — the project pane's
+  // header switch is the canonical place to read/set autonomous mode. Cards
+  // stay quiet; activity (the live spinner + flash) is the only board-level
+  // liveness signal now.
   el.querySelector('.badge-ext').hidden = card.origin !== 'external';
-  // Due chip — rolls up to the earliest open task due across the project's
-  // children. Projects themselves no longer carry a due date.
-  const due = el.querySelector('.due-chip');
-  const effectiveDue = projectEffectiveDue(card.id);
-  if (effectiveDue) {
-    const dStatus = dueStatus(effectiveDue);
-    due.className = `due-chip ${dStatus}`;
-    due.textContent = formatDue(effectiveDue);
-    due.hidden = false;
-  } else {
-    due.hidden = true;
-  }
+  // Due is now communicated by the labeled board dividers (today / tomorrow /
+  // overdue / …) — per-card due chips were removed because they duplicated
+  // what the section the card sits in already conveys.
   // Pane 2 is the canonical "what's open right now" — highlight the
   // matching project tile regardless of whether a task is open in pane 3.
   el.classList.toggle('active', card.id === openProjectId);
-  // Gentle urgency treatment
-  el.classList.remove('urgency-high', 'urgency-overdue');
-  const u = urgencyOf(card);
-  if (u) el.classList.add(`urgency-${u}`);
-  // Hours chip — own or rolled-up (for parents)
-  const hoursEl = el.querySelector('.hours-chip');
-  let hasChildHours = false;
-  for (const c of cards.values()) {
-    if (c.parent_id === card.id && typeof c.hours === 'number' && c.hours > 0) { hasChildHours = true; break; }
+  // Per-card urgency wash removed — section dividers (TODAY / OVERDUE) above
+  // each bucket carry urgency at the board level instead.
+  // Rolled-up $ chip in the centre slot. Replaces the per-card hours chip —
+  // the dollar figure (outstanding work × the client's rate) is the actionable
+  // number to glance at. Hidden when there's nothing to bill (no client, a
+  // non-billable client, or no done-unbilled hours).
+  const dollarEl = el.querySelector('.dollar-chip');
+  if (dollarEl) {
+    const owed = projectOutstandingDollars(card.id);
+    if (owed && owed.amount > 0) {
+      dollarEl.hidden = false;
+      dollarEl.textContent = formatCurrency(owed.amount, owed.symbol);
+      dollarEl.title = 'Outstanding — done work, ready to bill';
+    } else {
+      dollarEl.hidden = true;
+    }
   }
-  const ownHours = (typeof card.hours === 'number') ? card.hours : 0;
-  const displayHours = hasChildHours ? rolledUpHours(card.id) : ownHours;
-  if (displayHours > 0) {
-    hoursEl.hidden = false;
-    hoursEl.textContent = fmtHours(displayHours);
-    hoursEl.className = 'hours-chip';
-    if (hasChildHours) hoursEl.classList.add('rollup');
-    // "Outstanding" on a project = it has rolled-up hours sitting in 'invoice'
-    // (done + billable, not yet invoiced) worth billing.
-    const roll = projectBillingRollup(card.id);
-    if (roll.doneUnbilled > 0)    hoursEl.classList.add('outstanding');
-    else if (roll.invoiced > 0)   hoursEl.classList.add('invoiced');
-    else if (roll.paid > 0)       hoursEl.classList.add('paid');
-  } else {
-    hoursEl.hidden = true;
-  }
-  // Tag chips on the card. The client (if any) renders first as a pseudo-tag —
-  // visually identical to a tag chip but clicking it toggles a client filter.
-  const row2 = el.querySelector('.card-row2');
-  for (const old of row2.querySelectorAll('.tag-chip')) old.remove();
+  // Identity chips — client (or "Personal") + tags — go in the LEFT meta
+  // group. The client renders first as a pseudo-tag chip; clicking it toggles
+  // the client filter rather than opening the project.
+  const leftMeta = el.querySelector('.card-meta-left');
+  for (const old of leftMeta.querySelectorAll('.tag-chip')) old.remove();
   if (card.client_id) {
     const client = clients.get(card.client_id);
     const label = client?.name || card.client_id;
@@ -3291,12 +3298,11 @@ function applyCard(el, card) {
     btn.className = 'tag-chip client-chip' + (activeClientIds.has(card.client_id) ? ' active' : '');
     btn.textContent = label;
     btn.title = `Client: ${label}`;
-    styleClient(btn, card.client_id);
     btn.addEventListener('click', (ev) => {
       ev.stopPropagation();
       toggleClientFilter(card.client_id);
     });
-    row2.appendChild(btn);
+    leftMeta.appendChild(btn);
   } else {
     // No client → show a neutral "Personal" chip. Empty string is the sentinel
     // for "no client" in activeClientIds, so it filters symmetrically.
@@ -3308,7 +3314,7 @@ function applyCard(el, card) {
       ev.stopPropagation();
       toggleClientFilter('');
     });
-    row2.appendChild(btn);
+    leftMeta.appendChild(btn);
   }
   for (const tag of (card.tags || [])) {
     const btn = document.createElement('button');
@@ -3319,21 +3325,39 @@ function applyCard(el, card) {
       ev.stopPropagation();
       toggleTagFilter(tag);
     });
-    row2.appendChild(btn);
+    leftMeta.appendChild(btn);
   }
-  delete el.dataset.indent;
-  // Show a small task summary chip on project cards: e.g. "3/5 tasks · 1 running"
+  // Task summary (e.g. "3/5 tasks · 1 running") goes in the RIGHT meta group
+  // and is anchored as the rightmost child so the bottom-right corner always
+  // reads as task progress. Review count is no longer in here — it's promoted
+  // to the top-right .review-badge below. The X/Y bit hides itself when the
+  // project is fully complete (8/8 doesn't need to repeat "all done").
+  const rightMeta = el.querySelector('.card-meta-right');
   let summaryEl = el.querySelector('.tasks-summary');
   const summary = projectTaskSummary(card.id);
   if (summary) {
     if (!summaryEl) {
       summaryEl = document.createElement('span');
       summaryEl.className = 'tasks-summary';
-      el.querySelector('.card-row2').appendChild(summaryEl);
     }
     summaryEl.textContent = summary;
+    rightMeta.appendChild(summaryEl); // ensure summary is last (rightmost)
   } else if (summaryEl) {
     summaryEl.remove();
+  }
+  // Top-right review badge — surfaces only when a project has tasks in
+  // `review` (AI says done, awaiting human gate). Counted independently of
+  // the summary so the number shows up even when the summary is empty.
+  const reviewBadge = el.querySelector('.review-badge');
+  if (reviewBadge) {
+    const reviewCount = countProjectReviews(card.id);
+    if (reviewCount > 0) {
+      reviewBadge.hidden = false;
+      reviewBadge.textContent = `${reviewCount} review`;
+      reviewBadge.title = `${reviewCount} task${reviewCount === 1 ? '' : 's'} awaiting review`;
+    } else {
+      reviewBadge.hidden = true;
+    }
   }
   // Row1 liveness indicator: a steady spinner when a task is actively running,
   // or a pause glyph when the project's only in-flight tasks are queued
@@ -3425,7 +3449,7 @@ function projectBillingRollup(projectId) {
 
 
 function projectTaskSummary(projectId) {
-  let total = 0, done = 0, doing = 0, review = 0, blocked = 0;
+  let total = 0, done = 0, doing = 0, blocked = 0;
   for (const c of cards.values()) {
     if (c.parent_id !== projectId) continue;
     if (c._archived) continue; // archived tasks shouldn't count toward live state
@@ -3434,21 +3458,33 @@ function projectTaskSummary(projectId) {
     // fully-invoiced project still reads as N/N done on its tile.
     if (statusRank(c.status) > 0) done++;
     else if (c.status === 'doing') doing++;
-    else if (c.status === 'review') review++;
     else if (c.status === 'blocked') blocked++;
   }
-  const project = cards.get(projectId);
-  const runnOn = !!(project && project.runn_mode);
-  // Always show the summary when Runn is on (even with zero tasks) — the
-  // chip itself is the autonomous-mode signal. Otherwise hide when empty.
-  if (!total && !runnOn) return '';
+  // Empty projects show nothing. The earlier "▶ Runn" autonomous-mode token
+  // was removed — Runn mode is set/read in the project pane header, the card
+  // surface stays quiet. Review count was also lifted out and now drives the
+  // top-right .review-badge instead of sitting in this line.
+  if (!total) return '';
   const bits = [];
-  if (runnOn) bits.push('▶ Runn');
-  if (total) bits.push(`${done}/${total} tasks`);
+  // Hide X/Y when fully complete — a card reading "8/8 tasks" is just visual
+  // noise. Once there's outstanding work, the ratio comes back.
+  if (done < total) bits.push(`${done}/${total} tasks`);
   if (doing) bits.push(`${doing} running`);
-  if (review) bits.push(`${review} review`);
   if (blocked) bits.push(`${blocked} blocked`);
   return bits.join(' · ');
+}
+
+// Count of `review`-status tasks under a project (direct children only — same
+// scope as projectTaskSummary). Drives the top-right .review-badge on the
+// project card.
+function countProjectReviews(projectId) {
+  let n = 0;
+  for (const c of cards.values()) {
+    if (c.parent_id !== projectId) continue;
+    if (c._archived) continue;
+    if (c.status === 'review') n++;
+  }
+  return n;
 }
 
 // A task is "thinking" (shows a spinner) when it's an AI task with a live turn
@@ -3506,38 +3542,10 @@ function formatDue(value) {
                     .toLowerCase().replace(/\s+/g, '');
   return `${dateStr} ${timeStr}`;
 }
-// Urgency styling for a card. Project cards (no status of their own) derive
-// from due date plus rolled-up task state; task cards use their own status.
-// Projects are never auto-"done" — archive removes them entirely.
-function urgencyOf(card) {
-  const isProject = !card.parent_id;
-  if (isProject) {
-    // Use the rolled-up effective due so urgency tracks the chip + board sort.
-    const eff = projectEffectiveDue(card.id);
-    if (eff) {
-      const s = dueStatus(eff);
-      if (s === 'overdue') return 'overdue';
-      if (s === 'today')   return 'high';
-    }
-    // Any blocked/doing child bumps the project to high urgency.
-    for (const c of cards.values()) {
-      if (c.parent_id !== card.id) continue;
-      if (c.status === 'blocked') return 'overdue';
-      if (c.status === 'doing')   return 'high';
-      if (c.status === 'review')  return 'high';
-    }
-    return null;
-  }
-  if (card.status === 'done')    return null;
-  if (card.status === 'blocked') return 'overdue';
-  if (card.due) {
-    const s = dueStatus(card.due);
-    if (s === 'overdue') return 'overdue';
-    if (s === 'today')   return 'high';
-  }
-  if (card.status === 'doing')   return 'high';
-  return null;
-}
+// urgencyOf() was deleted along with the .card.urgency-* / .chat-step.urgency-*
+// washes — there is no per-card urgency styling anymore, so nothing was reading
+// the classes it returned. Urgency lives at the board level via the labeled
+// section dividers (TODAY / OVERDUE), driven by dueBucketOf().
 
 function dueStatus(value) {
   if (!value) return 'none';
@@ -3558,16 +3566,15 @@ function dueStatus(value) {
 
 // Main-board ordering. .items is flex column-reverse, so this returns DOM
 // order which is the reverse of visual — return > 0 to put `a` HIGHER
-// visually. Projects no longer have a manual sort: order is derived from
-// the tasks inside them so the project with the most urgent open work
-// floats to the top.
+// visually. Projects have no manual sort: order is derived from the tasks
+// inside them so the most urgent open work floats up.
 //
-// Tier order (most urgent first):
-//   1. Any direct child task with status 'doing'    — actively running
-//   2. Any direct child task with status 'review'   — awaiting human gate
-//   3. Earliest task due among incomplete children  — what's next
-//   4. Project's own due date                       — fallback
-//   5. Project title alphabetical                   — tiebreaker
+// Sort keys, in order of precedence (each used by compareProjectsAuto):
+//   1. Due bucket           — overdue, today, tomorrow, this week, later, no due
+//                              (also drives the labeled section dividers)
+//   2. Activity tier        — doing > review > rest (live work rises in its bucket)
+//   3. Earliest effective due within the bucket
+//   4. Project title        — tiebreaker
 function projectActivityTier(projectId) {
   let hasDoing = false, hasReview = false;
   for (const c of cards.values()) {
@@ -3589,12 +3596,72 @@ function projectEffectiveDue(projectId) {
   }
   return best;
 }
+// Due bucket for a project — drives both the board sort and the section
+// dividers. Higher rank = more urgent = visually higher (column-reverse
+// turns DOM-later into top). Buckets are coarse on purpose: the per-card due
+// chip was removed in favour of these labels, so we want the same handful of
+// names that show up on the dividers.
+// Core bucket logic, callable on any due string. Projects roll up their
+// effective due via dueBucketOf below; tasks call this directly with card.due.
+function dueBucketFromDate(due) {
+  if (!due) return { rank: 0, key: 'none', label: 'no due' };
+  const { date, time } = splitDue(due);
+  const day = new Date(date + 'T00:00:00');
+  if (isNaN(day)) return { rank: 0, key: 'none', label: 'no due' };
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  // Time-aware overdue: same-day past time still counts as overdue (matches
+  // dueStatus()).
+  if (time) {
+    const target = new Date(`${date}T${time}`);
+    if (target < new Date()) return { rank: 5, key: 'overdue', label: 'overdue' };
+  }
+  const diff = Math.round((day - todayStart) / 86400000);
+  if (diff < 0)   return { rank: 5, key: 'overdue',  label: 'overdue' };
+  if (diff === 0) return { rank: 4, key: 'today',    label: 'today' };
+  if (diff === 1) return { rank: 3, key: 'tomorrow', label: 'tomorrow' };
+  if (diff <= 7)  return { rank: 2, key: 'thisweek', label: 'this week' };
+  return { rank: 1, key: 'later', label: 'later' };
+}
+function dueBucketOf(card) {
+  return dueBucketFromDate(projectEffectiveDue(card.id));
+}
+// Today as a `YYYY-MM-DD` string, used when the drag-into-today bump patches
+// a task's due field.
+function todayDateString() {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+}
+// True when the project has at least one direct child task in an active
+// status (queued / doing / review / blocked / waiting). All-done projects
+// (and empty projects) return false. Used as a sort tier so the no-due
+// bucket separates "still has work" from "everything wrapped up".
+function projectHasIncompleteTasks(projectId) {
+  for (const c of cards.values()) {
+    if (c.parent_id !== projectId || c._archived) continue;
+    if (statusRank(c.status) === 0) return true;
+  }
+  return false;
+}
 function compareProjectsAuto(a, b) {
-  // Tier (doing > review > rest) — higher tier visually above.
+  // Primary: due bucket. Higher rank → DOM-later → visually higher, so the
+  // most urgent bucket sits at the top of the board.
+  const ba = dueBucketOf(a).rank;
+  const bb = dueBucketOf(b).rank;
+  if (ba !== bb) return ba - bb;
+  // Secondary: activity tier (doing > review > rest) — within a bucket, live
+  // work rises so a running project doesn't hide behind a queued one.
   const ta = projectActivityTier(a.id);
   const tb = projectActivityTier(b.id);
-  if (ta !== tb) return ta - tb;       // bigger tier → DOM-later → visually higher
-  // Earliest effective due — earlier date floats up.
+  if (ta !== tb) return ta - tb;
+  // Tertiary: has incomplete tasks. Mostly matters in the no-due bucket,
+  // where all-done / empty projects should sink below ones that still have
+  // outstanding work. Other buckets contain projects with incomplete tasks
+  // by definition (the bucket is derived from a child task's due) so this
+  // tier is a no-op there.
+  const ia = projectHasIncompleteTasks(a.id) ? 1 : 0;
+  const ib = projectHasIncompleteTasks(b.id) ? 1 : 0;
+  if (ia !== ib) return ia - ib;
+  // Quaternary: earliest effective due within the bucket — close-to-now floats up.
   const ad = projectEffectiveDue(a.id);
   const bd = projectEffectiveDue(b.id);
   if (ad && bd) { if (ad !== bd) return ad < bd ? 1 : -1; }
@@ -3632,7 +3699,32 @@ function renderAll() {
     projects.push(c);
   }
   projects.sort(compareProjectsAuto);
-  for (const c of projects) list.appendChild(renderCard(c));
+  // Labeled section dividers — one per due bucket. The sort is ascending
+  // urgency, so iteration goes least-urgent → most-urgent (DOM-bottom →
+  // DOM-top). Appending a divider AFTER a bucket's cards and labeling it with
+  // THAT bucket's name puts the label visually ABOVE its bucket once
+  // column-reverse flips DOM order. The final bucket gets its divider after
+  // the loop ends. Single-bucket boards get no dividers at all — a lone label
+  // floating above a homogeneous list adds noise without information.
+  let bucketCount = 0;
+  let prevKey = null;
+  let prevLabel = null;
+  const flushDivider = () => {
+    const sep = document.createElement('div');
+    sep.className = 'board-divider';
+    sep.dataset.bucket = prevKey;
+    sep.textContent = prevLabel;
+    list.appendChild(sep);
+  };
+  for (const c of projects) {
+    const { key, label } = dueBucketOf(c);
+    if (prevKey === null || prevKey !== key) bucketCount++;
+    if (prevKey !== null && prevKey !== key) flushDivider();
+    list.appendChild(renderCard(c));
+    prevKey = key;
+    prevLabel = label;
+  }
+  if (prevKey !== null && bucketCount > 1) flushDivider();
   emptyState.hidden = projects.length > 0;
   if (boardStepsHeader) {
     boardStepsHeader.hidden = totalCount === 0;
@@ -3877,7 +3969,6 @@ function renderFilterStrip() {
     const el = document.createElement('span');
     el.className = 'filter-tag filter-client' + (isPersonal ? ' filter-personal' : '');
     el.innerHTML = `${escapeHtml(name)} <button title="Remove">×</button>`;
-    if (!isPersonal) styleClient(el, clientId);
     el.querySelector('button').addEventListener('click', () => toggleClientFilter(clientId));
     filterStrip.appendChild(el);
   }
@@ -3918,78 +4009,14 @@ async function removeTagFromOpen(tag) {
   catch (err) { console.error('remove tag failed', err); }
 }
 
-function applyCollapsedDefaults() {
-  for (const el of list.querySelectorAll('.card[data-has-children]')) {
-    const id = el.dataset.cardId;
-    const collapsed = !expandedCardIds.has(id);
-    el.classList.toggle('collapsed', collapsed);
-    for (const d of descendants(el)) d.style.display = collapsed ? 'none' : '';
-  }
-}
-
-// ── Group / chevron / collapse (lifted from scaffold) ────────
-const allCardEls = () => [...document.querySelectorAll('.card')];
-const getIndent = c => parseInt(c.dataset.indent || 0);
-const setIndent = (c, n) => {
-  n = Math.max(0, n);
-  if (n === 0) delete c.dataset.indent; else c.dataset.indent = String(n);
-};
-
-function descendants(card) {
-  const els = allCardEls();
-  const base = getIndent(card);
-  const idx  = els.indexOf(card);
-  const out  = [];
-  for (let i = idx + 1; i < els.length; i++) {
-    if (getIndent(els[i]) > base) out.push(els[i]); else break;
-  }
-  return out;
-}
-
-function rebuildGroups() {
-  document.querySelectorAll('.group').forEach(g => {
-    [...g.children].forEach(c => list.insertBefore(c, g));
-    g.remove();
-  });
-  const els = [...list.children].filter(el => el.classList.contains('card'));
-  els.forEach(card => {
-    if (getIndent(card) !== 0) return;
-    const desc = descendants(card);
-    if (!desc.length) return;
-    const g = document.createElement('div');
-    g.className = 'group';
-    list.insertBefore(g, card);
-    g.appendChild(card);
-    desc.forEach(c => g.appendChild(c));
-  });
-  markParents();
-}
-
-function markParents() {
-  const els = allCardEls();
-  els.forEach((c, i) => {
-    const next = els[i + 1];
-    if (next && getIndent(next) > getIndent(c)) c.dataset.hasChildren = '1';
-    else delete c.dataset.hasChildren;
-  });
-}
-
 list.addEventListener('click', e => {
-  if (e.target.closest('.card-controls') || e.target.closest('.chip')) return;
+  // Full card surface opens the project. Chip clicks (client/tag filter
+  // toggles) stop propagation themselves and are excluded here defensively.
+  if (e.target.closest('.chip')) return;
   const cardEl = e.target.closest('.card');
   if (!cardEl) return;
   openChat(cardEl.dataset.cardId);
 });
-
-function toggleCollapse(e, chevron) {
-  e.stopPropagation();
-  const card = chevron.closest('.card');
-  const id = card.dataset.cardId;
-  const collapsed = card.classList.toggle('collapsed');
-  if (collapsed) expandedCardIds.delete(id);
-  else expandedCardIds.add(id);
-  descendants(card).forEach(c => c.style.display = collapsed ? 'none' : '');
-}
 
 // ── Drag-to-reorder (manual sort mode only) ──────────────────
 // Drop targeting is snap-to-gap: we resolve the cursor's Y to the nearest
@@ -4319,9 +4346,10 @@ function renderProjectSteps() {
   }
   const totalCount = children.length;
   const doneCount = children.filter(c => statusRank(c.status) > 0).length;
-  // Sort: active work first by sort_order; 'invoice' (ready to bill) sinks
-  // below it; completed/hidden states sink furthest. Within the sunk groups,
-  // newest-completed first (done_at desc, fallback updated_at).
+  // Sort: active group at the top (subdivided by due bucket, highest rank
+  // first), then 'invoice' (ready to bill) sinks, then completed/hidden
+  // states sink furthest. Within the active bucket the user's manual
+  // sort_order still applies; within sunk groups, newest-completed first.
   children.sort((a, b) => {
     const ra = statusRank(a.status), rb = statusRank(b.status);
     if (ra !== rb) return ra - rb;
@@ -4329,11 +4357,40 @@ function renderProjectSteps() {
       const ka = a.done_at || a.updated_at || '';
       const kb = b.done_at || b.updated_at || '';
       if (ka !== kb) return ka < kb ? 1 : -1;
+      return 0;
     }
+    // Active group: bucket-rank descending (overdue > today > … > no due),
+    // then sort_order ascending within each bucket.
+    const ba = dueBucketFromDate(a.due).rank;
+    const bb = dueBucketFromDate(b.due).rank;
+    if (ba !== bb) return bb - ba;
     return a.sort_order - b.sort_order;
   });
+  // Count distinct buckets among visible active tasks. We only render dividers
+  // when there's more than one — a lone "today" label above a homogeneous
+  // list adds noise without information (same rule as the board in pane 1).
+  const visibleActiveBuckets = new Set();
+  for (const c of children) {
+    if (statusRank(c.status) !== 0) continue;
+    if (!showDoneTasks && HIDDEN_STATUSES.has(c.status)) continue;
+    visibleActiveBuckets.add(dueBucketFromDate(c.due).key);
+  }
+  const showActiveDividers = visibleActiveBuckets.size > 1;
+  let prevActiveBucket = null;
   for (const step of children) {
     if (!showDoneTasks && HIDDEN_STATUSES.has(step.status)) continue;
+    // Active group only — emit a divider when the bucket changes.
+    if (showActiveDividers && statusRank(step.status) === 0) {
+      const b = dueBucketFromDate(step.due);
+      if (b.key !== prevActiveBucket) {
+        const sep = document.createElement('div');
+        sep.className = 'board-divider';
+        sep.dataset.bucket = b.key;
+        sep.textContent = b.label;
+        projectSteps.appendChild(sep);
+        prevActiveBucket = b.key;
+      }
+    }
     const el = buildStepEl(step, 0);
     if (openCardId && step.id === openCardId && pane3Mode === 'task') {
       el.classList.add('active');
@@ -4374,6 +4431,18 @@ function computeStepDropSlot(clientY) {
   const idx = vis.findIndex(v => clientY < v.rect.top + v.rect.height / 2);
   if (idx === -1) return { anchor: vis[vis.length - 1].el, position: 'after' };
   return { anchor: vis[idx].el, position: 'before' };
+}
+// Returns the bucket key of the section a just-dropped task element landed in,
+// by walking backwards to the nearest preceding .board-divider. Returns null
+// when there's no preceding divider (single-bucket render → all tasks already
+// share a bucket, nothing to bump).
+function bucketLandedAt(taskEl) {
+  let n = taskEl.previousElementSibling;
+  while (n) {
+    if (n.classList.contains('board-divider')) return n.dataset.bucket;
+    n = n.previousElementSibling;
+  }
+  return null;
 }
 
 function attachProjectStepDnd() {
@@ -4426,7 +4495,19 @@ function attachProjectStepDnd() {
     else if (prev)    newSort = prev.sort_order + 1024;
     else if (next)    newSort = next.sort_order - 1024;
     else              newSort = Date.now();
-    try { await patchCard(moved.dataset.cardId, { sort_order: newSort }); }
+    const patch = { sort_order: newSort };
+    // Quick "bump to today" — dropping into the today section auto-sets the
+    // task's due to today. Cross-bucket drags into any other bucket leave
+    // due alone (the next render snaps the card back to its real bucket;
+    // sort_order persists within whatever bucket the task actually belongs
+    // to). The task's bucket is inferred from the nearest preceding divider.
+    if (bucketLandedAt(moved) === 'today') {
+      const movedCard = cards.get(moved.dataset.cardId);
+      if (movedCard && dueBucketFromDate(movedCard.due).key !== 'today') {
+        patch.due = todayDateString();
+      }
+    }
+    try { await patchCard(moved.dataset.cardId, patch); }
     catch (err) { console.error('project step reorder persist failed', err); }
   });
 }
@@ -4467,7 +4548,6 @@ function renderBreadcrumb(slot, card) {
     const client = clients.get(clientId);
     clientChip.className = 'bc-chip bc-client';
     clientChip.textContent = client?.name || clientId;
-    styleClient(clientChip, clientId);
   } else {
     clientChip.className = 'bc-chip bc-personal';
     clientChip.textContent = 'Personal';
@@ -4519,7 +4599,6 @@ function renderHeaderClientChip(card, slot) {
     btn.className = 'chat-header-client-chip';
     btn.textContent = label;
     btn.title = `Client: ${label}`;
-    styleClient(btn, clientId);
     btn.addEventListener('click', (ev) => { ev.stopPropagation(); toggleClientFilter(clientId); });
   } else {
     btn.className = 'chat-header-client-chip personal-chip';
@@ -5056,10 +5135,6 @@ function buildStepEl(step, depth) {
   const chipBody = isThinking
     ? `<span class="runn-spinner"></span>${step.status}`
     : step.status;
-  // Mirror project-card urgency tint so a task due today reads the same as a
-  // project due today.
-  const u = urgencyOf(step);
-  if (u) el.classList.add(`urgency-${u}`);
   const dStatus = step.due ? dueStatus(step.due) : '';
   // Manual ▶ play: only shown when the parent project's Runn switch is OFF
   // (manual mode). With Runn ON the walker spawns tasks sequentially as their
@@ -5079,7 +5154,7 @@ function buildStepEl(step, depth) {
         <button class="chip chip-${step.status}">${chipBody}</button>
         <span class="step-hours" hidden></span>
         <span class="step-assignee" title="Toggle assignee">${isAi ? '🤖' : '👤'}</span>
-        ${step.due ? `<span class="due-chip ${dStatus}">${formatDue(step.due)}</span>` : ''}
+        ${step.due && dStatus !== 'today' ? `<span class="due-chip ${dStatus}">${formatDue(step.due)}</span>` : ''}
         ${step.blocking ? '<span class="step-blocking" title="Blocking — no later sibling starts until this is marked done">blocking</span>' : ''}
         <span class="badge-ext" hidden>ext</span>
       </div>
@@ -6735,7 +6810,7 @@ async function renderInvoicePage(id) {
   let inv;
   try { inv = await api('GET', `/invoices/${encodeURIComponent(id)}`); }
   catch (err) {
-    invoiceDoc.innerHTML = `<div style="text-align:center;padding:40px;color:#b84f1f;">Invoice not found: ${escapeHtml(err.message)}</div>`;
+    invoiceDoc.innerHTML = `<div style="text-align:center;padding:40px;color:var(--overdue);">Invoice not found: ${escapeHtml(err.message)}</div>`;
     return;
   }
   document.title = `Tax Invoice ${inv.id} — Runn`;
