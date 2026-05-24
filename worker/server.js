@@ -13,6 +13,7 @@ const bridge = require('./bridge');
 const queue = require('./queue');
 const migrateClients = require('./migrate-clients');
 const migratePaths = require('./migrate-paths');
+const migrateCwdCollapse = require('./migrate-cwd-collapse');
 const { applyTimerTransition } = require('./timer');
 
 // ── Config ───────────────────────────────────────────────────
@@ -70,6 +71,9 @@ const DEFAULT_SETTINGS = {
   default_rate_per_hour: null,
   date_format: 'DD/MM/YYYY',
   bank: { bank: '', name: '', bsb: '', acc: '' },
+  // Default workspace slug for cards with no client (personal projects).
+  // Cards spawn into ~/projects/<personal_workspace>/.
+  personal_workspace: 'waz',
 };
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
@@ -167,14 +171,28 @@ async function listCards() {
 // Projects own the working dir; tasks inherit it. Stops at the first hit and
 // falls back to bridge.DEFAULT_LOCATION at the top if nothing's set.
 async function resolveCardLocation(card) {
-  let c = card;
-  // Safety cap to prevent infinite loops on malformed parent_id cycles.
-  for (let i = 0; i < 8 && c; i++) {
-    if (c.location && c.location.cwd) return c.location;
-    if (!c.parent_id) break;
-    try { c = await readJson(cardPath(c.parent_id)); } catch { break; }
+  // Externally-adopted sessions stay anchored to wherever they were spawned —
+  // their cwd is encoded in session_path, not derived from Runn's domain model.
+  if (card && card.origin === 'external') {
+    const loc = locationFromSessionPath(card.session_path);
+    if (loc) return loc;
   }
-  return bridge.DEFAULT_LOCATION;
+  // Walk to the root (project card) to find the client_id — tasks inherit.
+  let c = card, n = 0;
+  while (c && c.parent_id && n++ < 16) {
+    try { c = await readJson(cardPath(c.parent_id)); } catch { c = null; break; }
+  }
+  // Client-bound project → ~/projects/<client.workspace>
+  if (c && c.client_id) {
+    try {
+      const client = await readJson(clientPath(c.client_id));
+      if (client.workspace) return { type: 'local', cwd: path.join(WORKSPACES_ROOT, client.workspace) };
+    } catch {}
+  }
+  // Personal project (no client) → ~/projects/<settings.personal_workspace>
+  const settings = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
+  const slug = settings.personal_workspace || DEFAULT_SETTINGS.personal_workspace;
+  return { type: 'local', cwd: path.join(WORKSPACES_ROOT, slug) };
 }
 
 // Same shape as resolveCardLocation but for the permission mode. Returns one
@@ -272,20 +290,6 @@ async function ensureWorkspace(name, fallbackId) {
     );
   }
   return slug;
-}
-
-async function listWorkspaces() {
-  // Immediate subdirs of ~/projects. Skip dotfiles + node_modules.
-  const entries = await fsp.readdir(WORKSPACES_ROOT, { withFileTypes: true }).catch(() => []);
-  const out = [];
-  for (const e of entries) {
-    if (!e.isDirectory()) continue;
-    if (e.name.startsWith('.')) continue;
-    if (e.name === 'node_modules') continue;
-    out.push({ slug: e.name, path: path.join(WORKSPACES_ROOT, e.name) });
-  }
-  out.sort((a, b) => a.slug.localeCompare(b.slug));
-  return out;
 }
 
 // ── Claude session helpers ───────────────────────────────────
@@ -592,7 +596,7 @@ const server = http.createServer(async (req, res) => {
       if (!card.session_id) return sendJson(res, 400, { error: 'card has no session_id' });
       const body = await readBody(req);
       if (!body.text || !body.text.trim()) return sendJson(res, 400, { error: 'text required' });
-      const location = card.location || locationFromSessionPath(card.session_path);
+      const location = await resolveCardLocation(card);
       if (!location) return sendJson(res, 400, { error: 'card has no resolvable location' });
       const prevStatus = card.status;
       const text = body.text.trim();
@@ -1001,14 +1005,6 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, merged);
     }
 
-    // ── Workspaces (immediate subdirs of ~/projects) ──────
-    // Feeds the cwd picker in the project/task settings. Returns
-    // [{ slug, path }] — path is absolute (relative-path migration is
-    // deferred to ANCHOR CUTOVER step 2).
-    if (m === 'GET' && url.pathname === '/workspaces') {
-      return sendJson(res, 200, await listWorkspaces());
-    }
-
     // ── Clients (first-class invoice recipients) ───────────
     if (m === 'GET' && url.pathname === '/clients') {
       const files = await fsp.readdir(CLIENTS_DIR).catch(() => []);
@@ -1046,9 +1042,9 @@ const server = http.createServer(async (req, res) => {
         wg_conf: body.wg_conf || '',
         wg_ip: body.wg_ip || '',
         ssh_user: body.ssh_user || '',
-        // Default workspace dir for this client — a slug under $HOME/projects.
-        // Tasks may override per-task. Picker is constrained to existing
-        // workspace dirs (GET /workspaces).
+        // Workspace dir for this client — a slug under $HOME/projects.
+        // Auto-mkdir'd at client creation. The spawn flow derives cwd from
+        // this field; there is no per-project override.
         workspace,
         // Freeform AI context appended to the system prompt on every spawn for
         // tasks under a project linked to this client. People, IPs, platforms,
@@ -1270,6 +1266,7 @@ const queueDeps = {
   readJson, atomicWriteJson, cardPath, bridge, broadcast,
   listCards, nowIso,
   interruptedCards,
+  resolveCardLocation,
   resolveCardPermissionMode,
   resolveCardSystemContext,
   // Mint and register a permission token so MCP requests from this spawn
@@ -1437,6 +1434,12 @@ sessionsWatcher.on('change', (p) => {
     readJson, readJsonOr, atomicWriteJson,
     ensureWorkspace, DEFAULT_SETTINGS, nowIso,
   }).catch(err => console.error('[runn] migration v4_paths failed', err));
+
+  await migrateCwdCollapse.run({
+    HOME, CARDS_DIR, ARCHIVE_DIR, CLIENTS_DIR, WORKSPACES_ROOT, SETTINGS_PATH,
+    readJson, readJsonOr, atomicWriteJson,
+    ensureWorkspace, DEFAULT_SETTINGS, nowIso,
+  }).catch(err => console.error('[runn] migration v5_cwd_collapse failed', err));
 
   // One-time: fold the retired `billing` field into the status conveyor.
   //   billing 'paid'                              → status 'paid'
