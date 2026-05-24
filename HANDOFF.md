@@ -53,30 +53,39 @@ live); `./worker` requires `docker restart runn` to pick up.
 
 ## Billing model (READ THIS FOR THE NEXT SESSION)
 
+Domain shape is **Client → Project → Task**, where "Project" is just a
+top-level card (a card with no `parent_id`). There is no separate
+`proj_*.json` layer anymore (removed in the cleanup after WORKSPACE PICKER
+landed) — a project's id is its card id, its name is its card title.
+
 Domain objects:
-- **Client** (`~/runn-data/clients/cl_*.json`). Fields used by billing:
+- **Client** (`~/runn-data/clients/cl_*.json`). Billing fields:
   `rate_per_hour` (per-client; null falls back to settings default),
   `gst_rate`, `currency`, `non_billable` (bool — track hours but exclude
   from outstanding totals + billing panel; used for the user's own org
-  "RC"), `invoice_prefix`, `invoice_seq`.
+  "RC"), `invoice_prefix`, `invoice_seq`. Workspace field: `workspace`
+  (slug under `~/projects/`; auto-mkdir on POST or first PATCH).
 - **Settings** (`~/runn-data/settings.json`). `default_rate_per_hour`
   (fallback when client has none), `currency_symbol`, `default_gst_rate`,
   `default_due_days`, `business_*`, `bank`. Cached client-side as
   `globalSettings`; reload via `reloadGlobalSettings()` after PUT.
-- **Card hours / billing**: each task may have `hours` (number) and
-  `billing ∈ {unbilled, invoiced, paid}` (cycle on chip click).
+- **Card hours / billing**: each task may have `hours` (number). Billing
+  state lives on `status` (`queued | doing | review | done | invoice |
+  invoiced | paid | blocked | hold`) — see Status / lifecycle section.
 - **Invoice** (`~/runn-data/invoices/*.json`): `id`, `client_id`, `items[]`,
   `snapshot` (frozen from/to/bank/currency at issue time), `status`,
   `subtotal_ex_gst`, `gst`, `total_inc_gst`, `paid`, `balance`.
 
 Key frontend functions (in `frontend/index.html`):
-- `projectBillingRollup(projectId)` → `{ total, unbilled, invoiced, paid,
-  doneUnbilled }` hours.
-- `projectOutstandingDollars(projectId)` → `{ amount, symbol }` or `null`.
-  Uses `doneUnbilled × rate`. Returns `null` for personal projects (no
-  client) AND non-billable clients.
+- `projectBillingRollup(projectCardId)` → `{ total, unbilled, invoiced,
+  paid, doneUnbilled }` hours across the project's tasks.
+- `projectOutstandingDollars(projectCardId)` → `{ amount, symbol }` or
+  `null`. Uses `doneUnbilled × rate`. Returns `null` for personal projects
+  (no client) AND non-billable clients.
 - `globalOutstandingDollars()` → sum across all projects. Drives the pane 1
   `$X.XX` chip via `refreshOutstanding()`.
+- `resolveProjectId(card)` → root card id (walks `parent_id`). A task's
+  "project" is its top-level card.
 - `billingGroups()` — groups done+(unbilled|invoiced) cards by client.
   Honours `billingScopeProjectId` (pane 2 bill button → that project's
   subtree only) AND skips non-billable clients.
@@ -88,10 +97,14 @@ Key frontend functions (in `frontend/index.html`):
 
 Backend endpoints:
 - `GET/PUT /settings` — global settings (spread-merge body).
-- `GET/POST/PATCH/DELETE /clients[/:id]`.
+- `GET/POST/PATCH/DELETE /clients[/:id]`. POST + first PATCH-after-upgrade
+  auto-provision the workspace dir + stub CLAUDE.md.
+- `GET /workspaces` → `[{slug, path}]` for immediate subdirs of
+  `$HOME/projects` (dotfiles + node_modules skipped). Feeds the cwd picker.
 - `POST /invoices` — issues; bumps client.invoice_seq, mints id from
   `{prefix}{seq}`, snapshots from/to/bank/currency.
 - `GET /invoices`, `GET /invoices/:id`, `PATCH /invoices/:id` (status, paid).
+- (No `/projects` routes — the billing-project layer was retired.)
 
 ## Where billing UX is weak right now (probable next-session targets)
 
@@ -118,15 +131,23 @@ Backend endpoints:
 ## Key file paths
 
 - `frontend/index.html` — entire frontend (style + HTML + script).
-- `worker/server.js` — all HTTP routes incl. /settings, /clients, /invoices.
+- `worker/server.js` — all HTTP routes incl. /settings, /clients, /invoices,
+  /workspaces. Boot runs migrations sequentially before `server.listen()`.
 - `worker/queue.js` — AI queue walker; respects `hold` (skip), `done` (skip),
   `blocking` flag.
 - `worker/bridge.js` — Claude subprocess spawning; concatenates
   `title + "\n\n" + notes_md` as the first prompt (this is how multi-turn
   human chat reaches Claude).
+- `worker/migrate-{clients,paths}.js` — one-shot, idempotent migrations
+  gated by `settings.migrations.{v1_clients,v4_paths}`. (v2_projects /
+  v3_status_billing gates persist on disk but their scripts are gone.)
+- `~/projects/<slug>/` — workspace dirs (one per client + freeform).
+  Bind-mounted into the container. Picked from the cwd dropdown.
 - `~/runn-data/cards/` — card JSON. Archived ones move to `cards/archive/`.
 - `~/runn-data/clients/` — client JSON.
 - `~/runn-data/invoices/` — invoice JSON.
+- `~/runn-data/projects/` — legacy proj_*.json files from the retired
+  billing-project layer; kept on disk for rollback, not read by anything.
 - `~/runn-data/settings.json` — global settings.
 - `~/runn-data/CLAUDE.md` — schema docs.
 
@@ -200,25 +221,25 @@ docker logs --tail=50 runn          # confirm clean boot, no stack traces
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:17777/   # expect 200
 ```
 
-## Step 2 — Normalise card paths (migration)
-Goal: stop baking absolute paths into cards. Write `worker/migrate-paths.js`
-following the existing `worker/migrate-clients.js` / `migrate-projects.js`
-pattern. It should, over every `runn-data/cards/*.json`:
-- repoint client work off `/home/waz/runn-data` onto its client workspace
-  (`/home/waz/projects/{lthcs,ngs,rc,zis}`) per the card's `client_id`;
-- fix the stray `/home/waz/runn-data/lthcs/` cwd (→ `/home/waz/projects/lthcs`);
-- store `location.cwd` **relative to `$HOME`** and drop the stored absolute
-  `session_path` (the worker can derive it at read-time via `sessionPathFor`).
-**Run it while `runn` is stopped** so the chokidar watcher isn't firing on 119
-rewrites and the queue isn't acting on half-changed cwds:
-```bash
-docker stop runn
-docker run --rm -u 1000:1000 -e HOME=/home/waz \
-  -v /home/waz:/home/waz runn:local node /app/worker/migrate-paths.js --dry-run
-# review output, then drop --dry-run to apply
-docker start runn
-```
-(`cards.bak.*` from pre-flight is the rollback.)
+## Step 2 — Normalise card paths (migration) — PARTIALLY DONE
+
+`worker/migrate-paths.js` exists and runs at boot (gated by
+`settings.migrations.v4_paths`). It repoints stale cwds onto each card's
+client workspace under `~/projects/<slug>/` and hyphenates the old
+slash-separated `easy/fleet/*` archive paths. Backfills `client.workspace`
+on any client created before WORKSPACE PICKER.
+
+**Deferred:** storing `location.cwd` **relative to `$HOME`** and dropping
+the stored absolute `session_path` field. Both would require resolving
+cwds at every read site (bridge.js, queue.js, the frontend picker), so
+they were scoped out of this round. Paths stay absolute end-to-end for
+now; the picker's options carry the absolute path, and the migration
+aligns existing data with that convention.
+
+The boot-time placement (before `server.listen()`) means chokidar fires
+events into zero connected WebSockets — no client storm. So the runbook
+no longer needs `docker stop`; just `docker restart runn` once and the
+gate runs on next boot.
 
 ## Step 3 — Containerise Claude's state (`~/.claude` → named volume)
 Makes the stack portable: login + history + config travel with a Docker volume
@@ -267,12 +288,11 @@ the bind mount and skip Step 3 (portability via convention only).
 
 ---
 
-# 🧩 TRACK B CARD — "WORKSPACE PICKER" (app code; deploys at ANCHOR CUTOVER step 1)
+# 🧩 TRACK B CARD — "WORKSPACE PICKER" — SHIPPED
 
-App-code change, so it lands as a child card under the **Runn Builder** project,
-gets reviewed, and goes live on the next `docker restart runn` (frontend edits
-are live; `worker/` needs the restart). Pairs with the path-normalisation in
-ANCHOR CUTOVER step 2 — store the chosen cwd **relative to `$HOME`**.
+Landed in commit 57fb200. The spec below is preserved for reference; the
+shipped version differs only in storing paths absolutely (relative-to-$HOME
+storage was deferred — see ANCHOR CUTOVER step 2).
 
 **Goal.** Stop free-typing a cwd in project/task settings. The directory becomes
 a pick from a known set, defaulted from the client, and every client gets a
