@@ -2896,11 +2896,6 @@
       <span class="chat-settings-hint">Used for invoicing and the hours rollup. Pick "+ new client…" to add one.</span>
     </div>
     <div class="chat-settings-field">
-      <label class="chat-settings-label" for="chatCwd">📁 Working directory</label>
-      <select class="chat-cwd" id="chatCwd"></select>
-      <span class="chat-settings-hint">Where AI tasks under this project run. Pick a workspace under ~/projects (one is auto-created per client).</span>
-    </div>
-    <div class="chat-settings-field">
       <label class="chat-settings-label" for="chatPermMode">🔐 Permission mode</label>
       <select class="chat-permmode" id="chatPermMode">
         <option value="default">Ask each time</option>
@@ -2949,7 +2944,6 @@
 const cards = new Map(); // id -> card json
 const clients = new Map(); // id -> client json
 const pendingPerms = new Map(); // request_id -> { request_id, card_id, tool_name, input }
-let workspaces = []; // [{slug, path}] — immediate subdirs of ~/projects, refreshed on boot + after client create
 const expandedCardIds = new Set(); // parents the user has explicitly expanded; everything else stays collapsed
 let mode = 'add';
 // Show archived projects on the board. Off by default so archive feels "out of sight".
@@ -4813,7 +4807,6 @@ firstturnAi.addEventListener('click', async () => {
 const chatSettings       = document.getElementById('chatSettings');
 const chatSettingsBtn    = document.getElementById('chatSettingsBtn');
 const chatSettingsArchive = document.getElementById('chatSettingsArchive');
-const chatCwd            = document.getElementById('chatCwd');
 const chatPermMode       = document.getElementById('chatPermMode');
 const chatNotesWrap          = document.getElementById('chatNotesWrap');
 const chatNotesAccordionSlot = document.getElementById('chatNotesAccordionSlot');
@@ -5321,24 +5314,6 @@ function applyPanel(card) {
   chatDueWrap.hidden = isProject;
   chatToolbarDueRow.hidden = true;
   if (isProject) {
-    // Populate workspace picker. Options: "(none)" + known workspaces.
-    // A legacy/custom cwd that isn't under ~/projects survives as a synthetic
-    // first option so the user can see what's set before overriding.
-    const currentCwd = (card.location && card.location.cwd) || '';
-    const knownPaths = new Set(workspaces.map(w => w.path));
-    let html = '';
-    if (currentCwd && !knownPaths.has(currentCwd)) {
-      html += `<option value="${escapeHtml(currentCwd)}" selected>⚠ ${escapeHtml(currentCwd)} (not in ~/projects)</option>`;
-    }
-    html += '<option value="">(none — uses spawn default)</option>';
-    for (const w of workspaces) {
-      const sel = w.path === currentCwd ? ' selected' : '';
-      html += `<option value="${escapeHtml(w.path)}"${sel}>${escapeHtml(w.slug)}</option>`;
-    }
-    chatCwd.innerHTML = html;
-    if (!currentCwd) chatCwd.value = '';
-  }
-  if (isProject) {
     const mode = card.permission_mode || 'default';
     chatPermMode.value = mode;
     chatPermMode.dataset.mode = mode;
@@ -5665,21 +5640,6 @@ chatHours.addEventListener('change', () => {
   patchCard(openCardId, { hours: num }).catch(console.error);
 });
 
-// Project working directory — saves on change. Empty = clears the cwd so
-// the project falls back to its parent (none → DEFAULT_LOCATION on the server).
-// Picker is constrained to ~/projects subdirs (see GET /workspaces); legacy
-// free-form cwds survive as a synthetic option (see applyPanel).
-chatCwd.addEventListener('change', () => {
-  if (!openCardId) return;
-  const card = cards.get(openCardId);
-  if (!card || card.parent_id) return; // projects only
-  const next = chatCwd.value;
-  const cur  = (card.location && card.location.cwd) || '';
-  if (next === cur) return;
-  const location = next ? { type: 'local', cwd: next } : null;
-  patchCard(openCardId, { location }).catch(console.error);
-});
-
 // Blocking dropdown — task cards only. Independent (default) lets the queue
 // walk past this task; Blocking halts the queue until the task is marked done.
 chatBlocking.addEventListener('change', () => {
@@ -5820,9 +5780,9 @@ function setSettingsView(on) {
   if (!openProjectId) return;
   const project = cards.get(openProjectId);
   if (!project) return;
-  openCardId = openProjectId;        // legacy handlers (chatCwd blur etc.) target openCardId
+  openCardId = openProjectId;        // legacy handlers target openCardId
   setPane3('settings', openProjectId);
-  applyPanel(project);               // populates chatCwd, chatClient, chatTags, chatNotes
+  applyPanel(project);               // populates chatClient, chatTags, chatNotes
   if (isMobileLayout()) goPane(3);
   if (history.state?.runnPane !== 3) {
     history.pushState({ runnPane: 3, mode: 'settings', id: openProjectId }, '');
@@ -6486,11 +6446,6 @@ document.getElementById('csSave').addEventListener('click', async () => {
     else             saved = await api('POST', '/clients', body);
   } catch (err) { alert(`Save failed: ${err.message}`); return; }
   clients.set(saved.id, saved);
-  // New client → server just mkdir'd a workspace dir; refresh the picker cache
-  // so the new slug shows up immediately in the project settings dropdown.
-  if (!csCurrentId) {
-    try { workspaces = await api('GET', '/workspaces'); } catch {}
-  }
   // If we just created a new client and a project is open, auto-assign it.
   if (!csCurrentId && openCardId) {
     const c = cards.get(openCardId);
@@ -6554,18 +6509,7 @@ chatClient.addEventListener('change', async () => {
     return;
   }
   syncClientEditEnabled();
-  try { await patchCard(openCardId, { client_id: val || null }); } catch (e) { console.error(e); return; }
-  // After assigning a client, default the project's cwd to that client's
-  // workspace — but only if the project doesn't already have a cwd. User can
-  // still override via the picker afterwards.
-  const cardAfter = cards.get(openCardId);
-  if (!cardAfter || cardAfter.parent_id) return;
-  if (cardAfter.location && cardAfter.location.cwd) return;
-  const client = val ? clients.get(val) : null;
-  if (!client || !client.workspace) return;
-  const ws = workspaces.find(w => w.slug === client.workspace);
-  if (!ws) return;
-  patchCard(openCardId, { location: { type: 'local', cwd: ws.path } }).catch(console.error);
+  patchCard(openCardId, { client_id: val || null }).catch(console.error);
 });
 chatClientEdit.addEventListener('click', () => {
   // Use the dropdown value so the editor opens for whatever's currently picked,
@@ -6891,17 +6835,15 @@ async function renderInvoicePage(id) {
 
 // ── Boot ─────────────────────────────────────────────────────
 (async function boot() {
-  const [initial, initialClients, initialPerms, initialWorkspaces] = await Promise.all([
+  const [initial, initialClients, initialPerms] = await Promise.all([
     api('GET', '/cards'),
     api('GET', '/clients').catch(() => []),
     api('GET', '/permissions/pending').catch(() => []),
-    api('GET', '/workspaces').catch(() => []),
   ]);
   document.title = 'Runn';
   for (const c of initial) cards.set(c.id, c);
   for (const cl of initialClients) clients.set(cl.id, cl);
   for (const p of initialPerms) pendingPerms.set(p.request_id, p);
-  workspaces = initialWorkspaces;
   // Load settings (includes default_rate_per_hour for billing labels).
   await reloadGlobalSettings();
   renderAll();
