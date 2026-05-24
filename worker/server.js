@@ -278,12 +278,17 @@ function slugifyName(s) {
 
 async function ensureWorkspace(name, fallbackId) {
   // Idempotent. mkdir -p ~/projects/<slug>; seed a stub CLAUDE.md only if
-  // none exists (never overwrite). Returns the slug used.
+  // the dir is brand new (empty). Never overwrite an existing CLAUDE.md, and
+  // never drop a stub into a dir that already has real content (e.g. an
+  // existing repo whose name happened to collide with a new client slug).
+  // Returns the slug used.
   const slug = slugifyName(name) || fallbackId;
   const dir = path.join(WORKSPACES_ROOT, slug);
   await fsp.mkdir(dir, { recursive: true });
   const claudeMd = path.join(dir, 'CLAUDE.md');
-  try { await fsp.access(claudeMd); } catch {
+  try { await fsp.access(claudeMd); return slug; } catch {} // exists, done
+  const entries = await fsp.readdir(dir).catch(() => []);
+  if (entries.length === 0) {
     await fsp.writeFile(
       claudeMd,
       `# ${name || slug} — workspace stub\n\nInherits context from ../CLAUDE.md.\n`
