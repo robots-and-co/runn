@@ -12,6 +12,7 @@ const chokidar = require('chokidar');
 const bridge = require('./bridge');
 const queue = require('./queue');
 const migrateClients = require('./migrate-clients');
+const migratePaths = require('./migrate-paths');
 const { applyTimerTransition } = require('./timer');
 
 // ── Config ───────────────────────────────────────────────────
@@ -1430,6 +1431,12 @@ sessionsWatcher.on('change', (p) => {
     readJson, readJsonOr, atomicWriteJson, listCards,
     DEFAULT_SETTINGS, nowIso,
   }).catch(err => console.error('[runn] migration v1_clients failed', err));
+
+  await migratePaths.run({
+    HOME, CARDS_DIR, ARCHIVE_DIR, CLIENTS_DIR, WORKSPACES_ROOT, SETTINGS_PATH,
+    readJson, readJsonOr, atomicWriteJson,
+    ensureWorkspace, DEFAULT_SETTINGS, nowIso,
+  }).catch(err => console.error('[runn] migration v4_paths failed', err));
 
   // One-time: fold the retired `billing` field into the status conveyor.
   //   billing 'paid'                              → status 'paid'
