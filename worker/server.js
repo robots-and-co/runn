@@ -12,7 +12,6 @@ const chokidar = require('chokidar');
 const bridge = require('./bridge');
 const queue = require('./queue');
 const migrateClients = require('./migrate-clients');
-const migrateProjects = require('./migrate-projects');
 const { applyTimerTransition } = require('./timer');
 
 // ── Config ───────────────────────────────────────────────────
@@ -23,7 +22,6 @@ const ARCHIVE_DIR = path.join(CARDS_DIR, 'archive');
 const TAGS_DIR = path.join(DATA_ROOT, 'tags');
 const CLIENTS_DIR = path.join(DATA_ROOT, 'clients');
 const INVOICES_DIR = path.join(DATA_ROOT, 'invoices');
-const PROJECTS_DIR = path.join(DATA_ROOT, 'projects');
 const ASSETS_DIR = path.join(DATA_ROOT, 'assets');
 const SETTINGS_PATH = path.join(DATA_ROOT, 'settings.json');
 const CLAUDE_PROJECTS = path.join(HOME, '.claude', 'projects');
@@ -47,7 +45,6 @@ async function cardReadAnywhere(id) {
 const tagPath = (name) => path.join(TAGS_DIR, `${name}.json`);
 const clientPath = (id) => path.join(CLIENTS_DIR, `${id}.json`);
 const invoicePath = (id) => path.join(INVOICES_DIR, `${id}.json`);
-const projectPath = (id) => path.join(PROJECTS_DIR, `${id}.json`);
 const readJson = async (p) => JSON.parse(await fsp.readFile(p, 'utf8'));
 const readJsonOr = async (p, fallback) => {
   try { return await readJson(p); } catch { return fallback; }
@@ -162,17 +159,6 @@ async function listCards() {
     try { out.push(await readJson(path.join(CARDS_DIR, f))); } catch {}
   }
   out.sort((a, b) => a.sort_order - b.sort_order);
-  return out;
-}
-
-async function listProjects() {
-  const files = await fsp.readdir(PROJECTS_DIR).catch(() => []);
-  const out = [];
-  for (const f of files) {
-    if (!f.endsWith('.json') || f.endsWith('.tmp')) continue;
-    try { out.push(await readJson(path.join(PROJECTS_DIR, f))); } catch {}
-  }
-  out.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   return out;
 }
 
@@ -731,7 +717,6 @@ const server = http.createServer(async (req, res) => {
         // true = queue halts until this task is marked done.
         blocking: body.blocking === true,
         client_id: body.client_id ?? null,
-        project_id: body.project_id ?? null,
         acceptance_check: body.acceptance_check ?? null,
         created_at: nowIso(),
         updated_at: nowIso(),
@@ -755,10 +740,10 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       // Once a card is on an invoice (status invoiced/paid), the fields the
       // invoice depends on are frozen. Status itself can still change (e.g. to
-      // void back to 'invoice'), as can title/notes — but client_id, project_id,
-      // and hours must not drift, or we'd be re-billing or mis-attributing work.
+      // void back to 'invoice'), as can title/notes — but client_id and hours
+      // must not drift, or we'd be re-billing or mis-attributing work.
       if (card.status === 'invoiced' || card.status === 'paid') {
-        const frozen = ['client_id', 'project_id', 'hours'];
+        const frozen = ['client_id', 'hours'];
         const violated = frozen.filter(k => k in body && body[k] !== card[k]);
         if (violated.length) {
           return sendJson(res, 409, {
@@ -774,12 +759,6 @@ const server = http.createServer(async (req, res) => {
         created_at: card.created_at,
         updated_at: nowIso(),
       };
-      // Reassigning a card to a different client invalidates the old project_id
-      // (projects belong to one client). Clear it unless the caller is also
-      // setting project_id in the same PATCH.
-      if ('client_id' in body && body.client_id !== card.client_id && !('project_id' in body)) {
-        merged.project_id = null;
-      }
       // The conveyor's "completed" set — terminal states for both the done_at
       // stamp and the queue walker. done = personal; invoice/invoiced/paid =
       // the billable tail. Reaching any of them counts as completing the task.
@@ -1108,76 +1087,6 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
-    // ── Projects (groupings of cards under a client) ───────
-    if (m === 'GET' && url.pathname === '/projects') {
-      const all = await listProjects();
-      const clientId = url.searchParams.get('client_id');
-      const filtered = clientId ? all.filter(p => p.client_id === clientId) : all;
-      return sendJson(res, 200, filtered);
-    }
-    if (m === 'GET' && (mm = url.pathname.match(/^\/clients\/([^/]+)\/projects$/))) {
-      const all = await listProjects();
-      return sendJson(res, 200, all.filter(p => p.client_id === mm[1]));
-    }
-    if (m === 'GET' && (mm = url.pathname.match(/^\/projects\/([^/]+)$/))) {
-      return sendJson(res, 200, await readJson(projectPath(mm[1])));
-    }
-    if (m === 'POST' && url.pathname === '/projects') {
-      const body = await readBody(req);
-      if (!body.client_id) return sendJson(res, 400, { error: 'client_id required' });
-      // Reject if the client doesn't exist — otherwise an orphan project gets
-      // written and silently never appears in any client view.
-      try { await readJson(clientPath(body.client_id)); }
-      catch { return sendJson(res, 404, { error: `client '${body.client_id}' not found` }); }
-      const id = body.id || `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,6)}`;
-      const project = {
-        id,
-        client_id: body.client_id,
-        name: body.name || 'Untitled project',
-        color: body.color || null,
-        status: body.status === 'archived' ? 'archived' : 'active',
-        sort_order: typeof body.sort_order === 'number' ? body.sort_order : Date.now(),
-        notes_md: body.notes_md || '',
-        created_at: nowIso(),
-        updated_at: nowIso(),
-      };
-      await atomicWriteJson(projectPath(id), project);
-      return sendJson(res, 201, project);
-    }
-    if (m === 'PATCH' && (mm = url.pathname.match(/^\/projects\/([^/]+)$/))) {
-      const p = projectPath(mm[1]);
-      const current = await readJson(p);
-      const body = await readBody(req);
-      // client_id is part of the project's identity for billing — silently
-      // ignore attempts to change it. (Moving a project between clients would
-      // also need to move every card under it; defer that to an explicit flow.)
-      const merged = {
-        ...current, ...body,
-        id: current.id,
-        client_id: current.client_id,
-        created_at: current.created_at,
-        updated_at: nowIso(),
-      };
-      await atomicWriteJson(p, merged);
-      return sendJson(res, 200, merged);
-    }
-    if (m === 'DELETE' && (mm = url.pathname.match(/^\/projects\/([^/]+)$/))) {
-      const id = mm[1];
-      // Refuse if any non-archived card references the project. Forces the
-      // caller to reassign or archive cards first; protects historical
-      // invoices which reference card.project_id via snapshot.
-      const cards = await listCards();
-      const referencing = cards.filter(c => c.project_id === id);
-      if (referencing.length) {
-        return sendJson(res, 409, {
-          error: `project has ${referencing.length} card(s) — reassign or archive them first`,
-          card_ids: referencing.map(c => c.id),
-        });
-      }
-      await fsp.unlink(projectPath(id)).catch(() => {});
-      return sendJson(res, 200, { ok: true });
-    }
-
     // ── Invoices ──────────────────────────────────────────
     if (m === 'GET' && url.pathname === '/invoices') {
       const files = await fsp.readdir(INVOICES_DIR).catch(() => []);
@@ -1349,30 +1258,6 @@ clientsWatcher.on('add',    clientEvent('client.added'));
 clientsWatcher.on('change', clientEvent('client.changed'));
 clientsWatcher.on('unlink', clientEvent('client.removed'));
 
-// ── Projects-dir watcher ─────────────────────────────────────
-const projectsWatcher = chokidar.watch(PROJECTS_DIR, {
-  ignored: (p) => p.endsWith('.tmp'),
-  ignoreInitial: true,
-  awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 25 },
-  depth: 1,
-});
-function projectEvent(type) {
-  return async (p) => {
-    if (!p.endsWith('.json') || p.endsWith('.tmp')) return;
-    const id = path.basename(p, '.json');
-    let project;
-    if (type === 'project.removed') {
-      project = { id };
-    } else {
-      try { project = await readJson(p); } catch { return; }
-    }
-    broadcast({ type, project });
-  };
-}
-projectsWatcher.on('add',    projectEvent('project.added'));
-projectsWatcher.on('change', projectEvent('project.changed'));
-projectsWatcher.on('unlink', projectEvent('project.removed'));
-
 // ── Queue dependencies (injected so queue.js stays I/O-isolated) ──
 // Cards whose current turn the user has explicitly interrupted. The kill makes
 // claude exit by signal (which otherwise looks like a crash); this set tells
@@ -1538,7 +1423,6 @@ sessionsWatcher.on('change', (p) => {
   await fsp.mkdir(TAGS_DIR, { recursive: true });
   await fsp.mkdir(CLIENTS_DIR, { recursive: true });
   await fsp.mkdir(INVOICES_DIR, { recursive: true });
-  await fsp.mkdir(PROJECTS_DIR, { recursive: true });
   await fsp.mkdir(ASSETS_DIR, { recursive: true });
   await rebuildSessionIndex();
   await migrateClients.run({
@@ -1546,12 +1430,6 @@ sessionsWatcher.on('change', (p) => {
     readJson, readJsonOr, atomicWriteJson, listCards,
     DEFAULT_SETTINGS, nowIso,
   }).catch(err => console.error('[runn] migration v1_clients failed', err));
-
-  await migrateProjects.run({
-    CARDS_DIR, ARCHIVE_DIR, CLIENTS_DIR, PROJECTS_DIR, SETTINGS_PATH,
-    readJson, readJsonOr, atomicWriteJson,
-    DEFAULT_SETTINGS, nowIso,
-  }).catch(err => console.error('[runn] migration v2_projects failed', err));
 
   // One-time: fold the retired `billing` field into the status conveyor.
   //   billing 'paid'                              → status 'paid'
