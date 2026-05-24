@@ -32,6 +32,9 @@ services:
       # Externally-adopted sessions live in ~/projects/*; bridge needs that cwd
       # to exist (claude --resume spawns there) or spawn fails with ENOENT.
       - ${RUNN_HOME:-/home/waz}/projects:${RUNN_HOME:-/home/waz}/projects
+      # SSH keys/config so spawned Claude sessions can ssh into clients.
+      # Read-only — the container should never modify host keys.
+      - ${RUNN_HOME:-/home/waz}/.ssh:${RUNN_HOME:-/home/waz}/.ssh:ro
       # Live-mount the app source so host edits to frontend/worker propagate
       # without a rebuild. Remove these two lines for a self-contained prod image.
       - ./frontend:/app/frontend
