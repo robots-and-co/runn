@@ -5,12 +5,15 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const readline = require('readline');
 const { WebSocketServer } = require('ws');
 const chokidar = require('chokidar');
 const bridge = require('./bridge');
 const queue = require('./queue');
 const migrateClients = require('./migrate-clients');
+const migrateProjects = require('./migrate-projects');
+const { applyTimerTransition } = require('./timer');
 
 // ── Config ───────────────────────────────────────────────────
 const HOME = process.env.HOME;
@@ -20,6 +23,7 @@ const ARCHIVE_DIR = path.join(CARDS_DIR, 'archive');
 const TAGS_DIR = path.join(DATA_ROOT, 'tags');
 const CLIENTS_DIR = path.join(DATA_ROOT, 'clients');
 const INVOICES_DIR = path.join(DATA_ROOT, 'invoices');
+const PROJECTS_DIR = path.join(DATA_ROOT, 'projects');
 const ASSETS_DIR = path.join(DATA_ROOT, 'assets');
 const SETTINGS_PATH = path.join(DATA_ROOT, 'settings.json');
 const CLAUDE_PROJECTS = path.join(HOME, '.claude', 'projects');
@@ -29,9 +33,20 @@ const FRONTEND_DIR = path.join(__dirname, '..', 'frontend');
 
 const cardPath = (id) => path.join(CARDS_DIR, `${id}.json`);
 const archivePath = (id) => path.join(ARCHIVE_DIR, `${id}.json`);
+// Some flows (invoice void, historical invoice reads) need to find a card by
+// id without caring whether it's been archived. Returns { card, archived, path }
+// or null if neither location has it.
+async function cardReadAnywhere(id) {
+  const live = cardPath(id);
+  try { return { card: await readJson(live), archived: false, path: live }; } catch {}
+  const arch = archivePath(id);
+  try { return { card: await readJson(arch), archived: true,  path: arch  }; } catch {}
+  return null;
+}
 const tagPath = (name) => path.join(TAGS_DIR, `${name}.json`);
 const clientPath = (id) => path.join(CLIENTS_DIR, `${id}.json`);
 const invoicePath = (id) => path.join(INVOICES_DIR, `${id}.json`);
+const projectPath = (id) => path.join(PROJECTS_DIR, `${id}.json`);
 const readJson = async (p) => JSON.parse(await fsp.readFile(p, 'utf8'));
 const readJsonOr = async (p, fallback) => {
   try { return await readJson(p); } catch { return fallback; }
@@ -149,6 +164,95 @@ async function listCards() {
   return out;
 }
 
+async function listProjects() {
+  const files = await fsp.readdir(PROJECTS_DIR).catch(() => []);
+  const out = [];
+  for (const f of files) {
+    if (!f.endsWith('.json') || f.endsWith('.tmp')) continue;
+    try { out.push(await readJson(path.join(PROJECTS_DIR, f))); } catch {}
+  }
+  out.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  return out;
+}
+
+// Walk a card's parent chain looking for the nearest `location` field.
+// Projects own the working dir; tasks inherit it. Stops at the first hit and
+// falls back to bridge.DEFAULT_LOCATION at the top if nothing's set.
+async function resolveCardLocation(card) {
+  let c = card;
+  // Safety cap to prevent infinite loops on malformed parent_id cycles.
+  for (let i = 0; i < 8 && c; i++) {
+    if (c.location && c.location.cwd) return c.location;
+    if (!c.parent_id) break;
+    try { c = await readJson(cardPath(c.parent_id)); } catch { break; }
+  }
+  return bridge.DEFAULT_LOCATION;
+}
+
+// Same shape as resolveCardLocation but for the permission mode. Returns one
+// of 'default' | 'acceptEdits' | 'bypassPermissions'. Tasks inherit from their
+// project; absent → 'default' (every tool prompts via the MCP bridge).
+async function resolveCardPermissionMode(card) {
+  let c = card;
+  for (let i = 0; i < 8 && c; i++) {
+    if (c.permission_mode) return c.permission_mode;
+    if (!c.parent_id) break;
+    try { c = await readJson(cardPath(c.parent_id)); } catch { break; }
+  }
+  return 'default';
+}
+
+// Build the system-prompt context appended to a spawn. Walks the parent chain
+// to find the project (top-most ancestor), pulls notes_md off it (project
+// context) and off its linked client (client context). Returns a single string
+// or null. Order is client first (broader background), then project (specific
+// scope) — both fenced so the AI sees them as reference material, not turn 1.
+async function resolveCardSystemContext(card) {
+  let project = card;
+  for (let i = 0; i < 8 && project; i++) {
+    if (!project.parent_id) break;
+    try { project = await readJson(cardPath(project.parent_id)); } catch { project = null; break; }
+  }
+  const parts = [];
+  if (project && project.client_id) {
+    try {
+      const client = await readJson(clientPath(project.client_id));
+      if (client.notes_md && String(client.notes_md).trim()) {
+        const label = client.name || client.company || client.id;
+        parts.push(`# Client context: ${label}\n\n${String(client.notes_md).trim()}`);
+      }
+    } catch { /* missing client file — skip */ }
+  }
+  // Only include the project's notes_md as system context if it's a different
+  // card than the one being spawned. When the project itself is being ai-ified,
+  // its notes_md is already in turn 1 via bridge's title+notes concat.
+  if (project && project.id !== card.id && project.notes_md && String(project.notes_md).trim()) {
+    const label = project.title || project.id;
+    parts.push(`# Project context: ${label}\n\n${String(project.notes_md).trim()}`);
+  }
+  return parts.length ? parts.join('\n\n') : null;
+}
+
+// Archived cards live in cards/archive/. The fs watcher ignores that dir, so
+// changes here don't push WS events — clients refetch when the user toggles
+// "show archived" on.
+async function listArchived() {
+  const out = [];
+  try {
+    const files = await fsp.readdir(ARCHIVE_DIR);
+    for (const f of files) {
+      if (!f.endsWith('.json') || f.endsWith('.tmp')) continue;
+      try {
+        const c = await readJson(path.join(ARCHIVE_DIR, f));
+        c._archived = true;
+        out.push(c);
+      } catch {}
+    }
+  } catch {}
+  out.sort((a, b) => a.sort_order - b.sort_order);
+  return out;
+}
+
 function nowIso() { return new Date().toISOString(); }
 function mintCardId(seed) {
   if (seed) return `c_${seed.slice(0, 8)}`;
@@ -204,6 +308,42 @@ async function readLatestAiTitle(jsonlPath) {
   return customTitle || aiTitle;
 }
 
+function formatAskQuestions(questions) {
+  if (!Array.isArray(questions) || !questions.length) return '';
+  const parts = [];
+  for (const q of questions) {
+    if (!q || !q.question) continue;
+    parts.push(`**${q.question}**`);
+    if (Array.isArray(q.options)) {
+      for (const opt of q.options) {
+        if (opt && opt.label) parts.push(`- ${opt.label}${opt.description ? ` — ${opt.description}` : ''}`);
+      }
+    }
+  }
+  return parts.join('\n');
+}
+
+function formatAskAnswer(toolResultBlock, userEv) {
+  const tur = userEv && userEv.toolUseResult;
+  const answers = tur && tur.answers;
+  if (answers && typeof answers === 'object') {
+    const entries = Object.entries(answers);
+    if (!entries.length) return '_(no answer — question auto-dismissed)_';
+    return entries.map(([q, v]) => {
+      let ans;
+      if (v == null) ans = '(empty)';
+      else if (typeof v === 'string') ans = v;
+      else if (Array.isArray(v)) ans = v.join(', ');
+      else if (typeof v === 'object') ans = v.answer || v.label || JSON.stringify(v);
+      else ans = String(v);
+      return `**${q}**\n→ ${ans}`;
+    }).join('\n\n');
+  }
+  if (toolResultBlock && toolResultBlock.is_error) return '_(no answer — question dismissed)_';
+  if (toolResultBlock && typeof toolResultBlock.content === 'string') return toolResultBlock.content;
+  return '_(no answer)_';
+}
+
 // Parse a Claude Code session jsonl into a list of turns suitable for chat-style render.
 async function parseTranscript(jsonlPath) {
   const events = [];
@@ -217,14 +357,26 @@ async function parseTranscript(jsonlPath) {
   } catch {}
 
   const turns = [];
-  // Merge consecutive assistant events into one turn (Claude Code splits one response across multiple entries).
+  // One bubble per assistant API response (one message.id). Claude Code writes
+  // text/thinking/tool_use blocks of a single response as separate jsonl events
+  // that share message.id — those merge. A new message.id starts a new bubble,
+  // so each model turn renders chronologically instead of one wall of text.
   // We deliberately drop `thinking` blocks (almost always redacted) and `tool_use` blocks (implementation noise).
   let openAssistant = null;
+  let openAssistantId = null;
   const flushAssistant = () => {
     if (!openAssistant) return;
     if (openAssistant.text) turns.push(openAssistant);
     openAssistant = null;
+    openAssistantId = null;
   };
+
+  // AskUserQuestion is a real turn boundary: the tool_use carries the
+  // question, the paired tool_result carries the answer (or empty answers
+  // when Runn auto-dismisses it in -p mode). Without surfacing the pair,
+  // the next assistant response merges into the previous one and looks
+  // like the AI is answering itself.
+  const askIds = new Set();
 
   const SKIP = new Set(['ai-title', 'queue-operation', 'last-prompt', 'attachment', 'file-history-snapshot', 'permission-mode']);
   for (const ev of events) {
@@ -233,12 +385,19 @@ async function parseTranscript(jsonlPath) {
     if (ev.type === 'assistant') {
       const c = ev.message?.content;
       if (!Array.isArray(c)) continue;
+      const msgId = ev.message?.id || null;
+      if (openAssistant && msgId && msgId !== openAssistantId) flushAssistant();
       for (const block of c) {
         if (block.type === 'text' && block.text) {
-          if (!openAssistant) openAssistant = { kind: 'assistant', text: '', ts };
+          if (!openAssistant) { openAssistant = { kind: 'assistant', text: '', ts }; openAssistantId = msgId; }
           openAssistant.text = openAssistant.text ? `${openAssistant.text}\n${block.text}` : block.text;
+        } else if (block.type === 'tool_use' && block.name === 'AskUserQuestion' && block.id) {
+          flushAssistant();
+          const qText = formatAskQuestions(block.input && block.input.questions);
+          if (qText) turns.push({ kind: 'assistant', text: qText, ts });
+          askIds.add(block.id);
         }
-        // thinking + tool_use blocks intentionally ignored
+        // thinking + other tool_use blocks intentionally ignored
       }
       continue;
     }
@@ -246,7 +405,17 @@ async function parseTranscript(jsonlPath) {
     if (ev.type === 'user') {
       const c = ev.message?.content;
       const isPureToolResult = Array.isArray(c) && c.length && c.every(b => b.type === 'tool_result');
-      if (isPureToolResult) continue; // already paired into the open assistant turn — don't break it
+      if (isPureToolResult) {
+        const askResults = c.filter(b => askIds.has(b.tool_use_id));
+        if (askResults.length) {
+          flushAssistant();
+          for (const r of askResults) {
+            const ans = formatAskAnswer(r, ev);
+            if (ans) turns.push({ kind: 'user', text: ans, ts });
+          }
+        }
+        continue; // generic tool_results stay paired into the open assistant turn
+      }
       flushAssistant();
       if (typeof c === 'string' && c.trim()) {
         turns.push({ kind: 'user', text: c, ts });
@@ -273,7 +442,12 @@ async function parseTranscript(jsonlPath) {
 
 // ── HTTP plumbing ────────────────────────────────────────────
 function sendJson(res, code, body) {
-  res.writeHead(code, { 'content-type': 'application/json' });
+  res.writeHead(code, {
+    'content-type': 'application/json',
+    // Heuristic browser caching on responses without Cache-Control was masking
+    // live transcript updates — polling re-fetched the same stale copy.
+    'cache-control': 'no-store, no-cache, must-revalidate',
+  });
   res.end(JSON.stringify(body));
 }
 function readBody(req) {
@@ -323,7 +497,10 @@ function serveStatic(req, res) {
       if (!path.extname(p)) {
         fs.readFile(path.join(FRONTEND_DIR, 'index.html'), (err2, html) => {
           if (err2) { res.writeHead(404); res.end('not found'); return; }
-          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+          res.writeHead(200, {
+            'content-type': 'text/html; charset=utf-8',
+            'cache-control': 'no-store, no-cache, must-revalidate',
+          });
           res.end(html);
         });
         return;
@@ -331,12 +508,36 @@ function serveStatic(req, res) {
       res.writeHead(404); res.end('not found');
       return;
     }
-    res.writeHead(200, { 'content-type': ctFor(p) });
+    // Shell files change frequently during dev; never let the browser cache
+    // a stale copy. Assets in runn-data/assets/ are unaffected (different code path).
+    res.writeHead(200, {
+      'content-type': ctFor(p),
+      'cache-control': 'no-store, no-cache, must-revalidate',
+    });
     res.end(data);
   });
 }
 
 // ── HTTP routes ──────────────────────────────────────────────
+// ── Permission bridge state ──────────────────────────────────
+// Permission tokens are minted before spawning a Claude session and passed in
+// via env so the MCP server can identify which card a request belongs to.
+const permissionTokens   = new Map(); // token → card_id
+const pendingPermissions = new Map(); // request_id → { send, card_id, tool_name, input, created_at }
+
+function alwaysAllowKey(toolName) { return toolName; }
+async function isAlwaysAllowed(toolName) {
+  const s = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
+  return !!(s.permissions && s.permissions.alwaysAllow && s.permissions.alwaysAllow[alwaysAllowKey(toolName)]);
+}
+async function setAlwaysAllowed(toolName) {
+  const s = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
+  s.permissions = s.permissions || {};
+  s.permissions.alwaysAllow = s.permissions.alwaysAllow || {};
+  s.permissions.alwaysAllow[alwaysAllowKey(toolName)] = true;
+  await atomicWriteJson(SETTINGS_PATH, s);
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -345,6 +546,9 @@ const server = http.createServer(async (req, res) => {
 
     if (m === 'GET' && url.pathname === '/cards') {
       return sendJson(res, 200, await listCards());
+    }
+    if (m === 'GET' && url.pathname === '/archive') {
+      return sendJson(res, 200, await listArchived());
     }
     if (m === 'GET' && (mm = url.pathname.match(/^\/cards\/([^/]+)$/))) {
       return sendJson(res, 200, await readJson(cardPath(mm[1])));
@@ -361,25 +565,114 @@ const server = http.createServer(async (req, res) => {
       if (!body.text || !body.text.trim()) return sendJson(res, 400, { error: 'text required' });
       const location = card.location || locationFromSessionPath(card.session_path);
       if (!location) return sendJson(res, 400, { error: 'card has no resolvable location' });
+      const prevStatus = card.status;
+      const text = body.text.trim();
+      const permissionToken = crypto.randomUUID();
+      permissionTokens.set(permissionToken, card.id);
+      const permissionMode = await resolveCardPermissionMode(card);
+      // Flip the card to `status` and persist with timer accounting. Re-reads
+      // from disk first so we never clobber a concurrent write, and no-ops if
+      // it's already there (so a redundant doing→doing won't restart the timer).
+      const setStatus = async (status) => {
+        const current = await readJson(cardPath(card.id));
+        if (current.status === status) return;
+        const next = { ...current, status, updated_at: nowIso() };
+        applyTimerTransition(current, next, nowIso);
+        await atomicWriteJson(cardPath(card.id), next);
+      };
       try {
         await bridge.sendMessage({
           sessionId: card.session_id,
-          text: body.text.trim(),
+          text,
           location,
+          permissionToken,
+          permissionMode,
+          holder: `card:${card.id}`,
+          onExit: (code) => {
+            queue.handleAiExit(card.id, code, queueDeps).catch(err =>
+              console.error('[runn] queue handleAiExit (sendMessage) failed', err));
+          },
         });
+        // sendMessage resolved on the resume subprocess's init event — the turn
+        // is genuinely running now, so stamp `doing`. handleAiExit moves it to
+        // `review`/`blocked` when the subprocess exits, marking the turn's end.
+        await setStatus('doing');
         return sendJson(res, 202, { ok: true });
       } catch (err) {
+        // CWD_BUSY isn't a failure — the cwd is held (typically by this same
+        // card's previous turn that hasn't exited yet, or by another project
+        // sharing the working tree). Buffer the message; it dispatches when the
+        // holder exits and releaseCwd fires. Reflect the wait in the card's
+        // status: if it isn't already running its own turn, mark it `waiting`
+        // so the UI shows "queued behind something" rather than a stale `doing`.
+        if (err && err.code === 'CWD_BUSY') {
+          if (prevStatus !== 'doing') {
+            await setStatus('waiting').catch(e =>
+              console.error('[runn] setStatus(waiting) failed', e));
+          }
+          const position = bridge.enqueueMessage(card.session_id, {
+            text,
+            location,
+            permissionToken,
+            permissionMode,
+            holder: `card:${card.id} (queued)`,
+            // When the buffered message actually starts, flip waiting → doing.
+            onStart: () => {
+              setStatus('doing').catch(e =>
+                console.error('[runn] queued onStart setStatus(doing) failed', e));
+            },
+            onExit: (code) => {
+              queue.handleAiExit(card.id, code, queueDeps).catch(e =>
+                console.error('[runn] queue handleAiExit (queued message) failed', e));
+            },
+          });
+          console.log(`[runn] message ${card.id} queued (position ${position}, cwd busy: ${err.holder})`);
+          return sendJson(res, 202, { ok: true, queued: true, queue_position: position });
+        }
         console.error('[runn] sendMessage failed', err);
         return sendJson(res, 500, { error: String(err.message || err) });
       }
+    }
+    if (m === 'POST' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/interrupt$/))) {
+      const card = await readJson(cardPath(mm[1])).catch(() => null);
+      if (!card) return sendJson(res, 404, { error: 'card not found' });
+      if (!card.session_id) return sendJson(res, 400, { error: 'card has no session' });
+      // Mark before killing so the exit callback (which fires asynchronously
+      // once claude actually dies) lands the card in `review`, not `blocked`.
+      // Drop buffered follow-ups first so the kill doesn't immediately respawn.
+      interruptedCards.add(card.id);
+      const cleared = bridge.clearPending(card.session_id);
+      const result = bridge.killSession(card.session_id);
+      if (result.ok) {
+        console.log(`[runn] interrupt ${card.id}: signalled pid ${result.pid} (cleared ${cleared} queued)`);
+        return sendJson(res, 202, { ok: true, cleared });
+      }
+      // Nothing was actually running for this session — the turn already
+      // finished. No exit callback will come, so clear the marker ourselves and
+      // reconcile a card that's still showing `doing`/`waiting` (a dead/orphaned
+      // turn) down to `review` so the Stop button always clears the spinner
+      // rather than dead-ending on an error.
+      interruptedCards.delete(card.id);
+      const fresh = await readJson(cardPath(card.id)).catch(() => card);
+      if (fresh.status === 'doing' || fresh.status === 'waiting') {
+        const next = { ...fresh, status: 'review', updated_at: nowIso() };
+        applyTimerTransition(fresh, next, nowIso);
+        await atomicWriteJson(cardPath(card.id), next);
+        // cardsWatcher broadcasts card.changed on the file write.
+        console.log(`[runn] interrupt ${card.id}: no live turn; reconciled ${fresh.status} → review`);
+        return sendJson(res, 200, { ok: true, reconciled: true, cleared });
+      }
+      return sendJson(res, 200, { ok: true, reconciled: false, cleared, note: result.reason });
     }
     if (m === 'POST' && url.pathname === '/cards') {
       const body = await readBody(req);
       const id = body.id || mintCardId();
       const card = {
         id,
-        title: body.title || 'Untitled',
-        status: body.status || 'todo',
+        // Allow explicit '' so the frontend can create a "fresh" task with no
+        // first turn yet and let the user type it in the chat panel.
+        title: body.title ?? 'Untitled',
+        status: body.status || 'queued',
         parent_id: body.parent_id ?? null,
         sort_order: body.sort_order ?? Date.now(),
         session_id: body.session_id ?? null,
@@ -388,34 +681,108 @@ const server = http.createServer(async (req, res) => {
         notes_md: body.notes_md || '',
         tags: Array.isArray(body.tags) ? body.tags : [],
         hours: (typeof body.hours === 'number' ? body.hours : null),
-        billing: body.billing || 'unbilled',
-        assignee: body.assignee === 'ai' ? 'ai' : 'human',
+        // null is allowed at creation time so the frontend can render a
+        // "Human vs Claude" picker for a freshly-spawned task. Any later PATCH
+        // setting assignee = 'ai' or 'human' commits the choice.
+        assignee: (body.assignee === 'ai' || body.assignee === 'human') ? body.assignee : null,
+        // Blocking: false = independent (queue keeps going past this task);
+        // true = queue halts until this task is marked done.
+        blocking: body.blocking === true,
         client_id: body.client_id ?? null,
+        project_id: body.project_id ?? null,
         acceptance_check: body.acceptance_check ?? null,
         created_at: nowIso(),
         updated_at: nowIso(),
       };
+      applyTimerTransition(undefined, card, nowIso);
       await atomicWriteJson(cardPath(id), card);
+      // A new queued+AI task lands ready-to-spawn; if the parent's runn switch
+      // is on, tick the walker so the queue doesn't sit idle waiting for
+      // something else to nudge it. The walker itself enforces ordering /
+      // sequential constraints, so this is safe regardless of in-flight state.
+      const createStatus = card.status === 'todo' ? 'queued' : card.status;
+      if (card.parent_id && card.assignee === 'ai' && createStatus === 'queued') {
+        queue.maybeAdvanceQueue(card.parent_id, queueDeps).catch(err =>
+          console.error('[runn] queue advance after card create failed', err));
+      }
       return sendJson(res, 201, card);
     }
     if (m === 'PATCH' && (mm = url.pathname.match(/^\/cards\/([^/]+)$/))) {
       const p = cardPath(mm[1]);
       const card = await readJson(p);
       const body = await readBody(req);
+      // Once a card is on an invoice (status invoiced/paid), the fields the
+      // invoice depends on are frozen. Status itself can still change (e.g. to
+      // void back to 'invoice'), as can title/notes — but client_id, project_id,
+      // and hours must not drift, or we'd be re-billing or mis-attributing work.
+      if (card.status === 'invoiced' || card.status === 'paid') {
+        const frozen = ['client_id', 'project_id', 'hours'];
+        const violated = frozen.filter(k => k in body && body[k] !== card[k]);
+        if (violated.length) {
+          return sendJson(res, 409, {
+            error: `card is on invoice ${card.invoice_id || '(unknown)'}; cannot change ${violated.join(', ')} until the invoice is voided`,
+            invoice_id: card.invoice_id || null,
+            frozen_fields: violated,
+          });
+        }
+      }
       const merged = {
         ...card, ...body,
         id: card.id,
         created_at: card.created_at,
         updated_at: nowIso(),
       };
+      // Reassigning a card to a different client invalidates the old project_id
+      // (projects belong to one client). Clear it unless the caller is also
+      // setting project_id in the same PATCH.
+      if ('client_id' in body && body.client_id !== card.client_id && !('project_id' in body)) {
+        merged.project_id = null;
+      }
+      // The conveyor's "completed" set — terminal states for both the done_at
+      // stamp and the queue walker. done = personal; invoice/invoiced/paid =
+      // the billable tail. Reaching any of them counts as completing the task.
+      const COMPLETED_STATUSES = new Set(['done', 'invoice', 'invoiced', 'paid']);
+      // done_at lifecycle (done_at is the work's completion date, used as the
+      // invoice line date):
+      //   - stamped automatically when a card first enters a completed state
+      //   - cleared automatically when it leaves the completed set (reopened)
+      //   - explicitly settable via PATCH body (backdate historical work)
+      const wasCompleted = COMPLETED_STATUSES.has(card.status);
+      const nowCompleted = COMPLETED_STATUSES.has(merged.status);
+      const stayedDone = wasCompleted && nowCompleted;
+      const becameDone = !wasCompleted && nowCompleted;
+      const leftDone   = wasCompleted && !nowCompleted;
+      if ('done_at' in body) {
+        // Explicit user edit wins — null/empty clears, ISO string sets.
+        merged.done_at = body.done_at || null;
+      } else if (becameDone) {
+        merged.done_at = nowIso();
+      } else if (leftDone) {
+        merged.done_at = null;
+      } else if (stayedDone) {
+        // Preserve any existing stamp through unrelated edits.
+        merged.done_at = card.done_at || null;
+      }
+      applyTimerTransition(card, merged, nowIso);
       await atomicWriteJson(p, merged);
-      // Resume queue when a human task transitions to done.
-      const wasNotDone = card.status !== 'done';
-      const nowDone = merged.status === 'done';
-      const isHuman = (merged.assignee || 'human') === 'human';
-      if (wasNotDone && nowDone && isHuman && merged.parent_id) {
+      // Tick the walker on transitions that could unblock or introduce work:
+      //   - any → completed (next sibling can run). "Completed" now spans the
+      //     conveyor's terminal states: done / invoice / invoiced / paid.
+      //   - blocking just cleared (barrier released)
+      //   - newly handed off to AI (status:queued + assignee:ai, no session) —
+      //     covers the + AI button on a live-runn project.
+      const wasNotDone = !wasCompleted;
+      const nowDone = nowCompleted;
+      const blockingCleared = card.blocking === true && merged.blocking !== true;
+      const mergedStatus = merged.status === 'todo' ? 'queued' : merged.status;
+      const becameAiQueued =
+        merged.assignee === 'ai' &&
+        mergedStatus === 'queued' &&
+        !merged.session_id &&
+        !(card.assignee === 'ai' && (card.status === 'queued' || card.status === 'todo') && !card.session_id);
+      if (((wasNotDone && nowDone) || blockingCleared || becameAiQueued) && merged.parent_id) {
         queue.maybeAdvanceQueue(merged.parent_id, queueDeps).catch(err =>
-          console.error('[runn] queue advance after human done failed', err));
+          console.error('[runn] queue advance after card change failed', err));
       }
       return sendJson(res, 200, merged);
     }
@@ -432,12 +799,34 @@ const server = http.createServer(async (req, res) => {
     if (m === 'POST' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/ai-ify$/))) {
       const card = await readJson(cardPath(mm[1]));
       if (card.session_id) return sendJson(res, 400, { error: 'card already has a session' });
-      const location = card.location || bridge.DEFAULT_LOCATION;
+      // Sequential constraint: every task shares the project's working tree,
+      // so we never allow a second AI subprocess while one is already in
+      // flight. Even with the parent's Runn switch off, the manual ▶ play
+      // button must respect this — block the spawn if any sibling is doing.
+      if (card.parent_id) {
+        const all = await listCards();
+        const busy = all.find(c => c.parent_id === card.parent_id && c.status === 'doing' && c.session_id);
+        if (busy) {
+          return sendJson(res, 409, { error: `another task is running (${busy.title || busy.id}) — wait for it to finish` });
+        }
+      }
+      // Walk the parent chain to find the nearest set location — projects own
+      // the working dir, tasks inherit. Falls back to DEFAULT_LOCATION at the root.
+      const location = await resolveCardLocation(card);
+      const permissionMode = await resolveCardPermissionMode(card);
+      const systemPromptAppend = await resolveCardSystemContext(card);
       try {
         const cardId = card.id;
+        const permissionToken = crypto.randomUUID();
+        permissionTokens.set(permissionToken, cardId);
         const { session_id, session_path, location: resolvedLoc } = await bridge.spawnSession({
           title: card.title,
+          notes: card.notes_md,
           location,
+          permissionToken,
+          permissionMode,
+          systemPromptAppend,
+          holder: `card:${cardId}`,
           onExit: (code) => {
             queue.handleAiExit(cardId, code, queueDeps).catch(err =>
               console.error('[runn] queue handleAiExit failed', err));
@@ -454,14 +843,109 @@ const server = http.createServer(async (req, res) => {
           origin: 'runn',
           updated_at: nowIso(),
         };
+        applyTimerTransition(card, merged, nowIso);
         await atomicWriteJson(cardPath(card.id), merged);
         console.log(`[runn] ai-ified ${card.id} → session ${session_id.slice(0,8)}`);
         return sendJson(res, 200, merged);
       } catch (err) {
+        // Cross-cwd mutex hit — another project is using this working tree.
+        // Surface as 409 so the frontend can distinguish from generic spawn
+        // failures and show a sensible "another project is running" message.
+        if (err && err.code === 'CWD_BUSY') {
+          console.log(`[runn] ai-ify ${card.id} blocked: ${err.message}`);
+          return sendJson(res, 409, { error: err.message, holder: err.holder, cwd: err.cwd });
+        }
         console.error('[runn] ai-ify failed', err);
         return sendJson(res, 500, { error: String(err.message || err) });
       }
     }
+    if (m === 'POST' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/runn$/))) {
+      // Toggle the project's autonomous-mode switch. With runn_mode=true the
+      // queue walker spawns queued+AI siblings sequentially and handleAiExit
+      // auto-promotes review→done; with runn_mode=false queued+AI tasks sit
+      // untouched until the user flips it back on. Body: { on: boolean }
+      // (defaults to true for back-compat with the original kick-on-click
+      // endpoint). An in-flight task is left alone when turning off — Claude
+      // is already running and the project drains naturally as it exits.
+      const body = await readBody(req).catch(() => ({}));
+      const turningOn = body.on !== false;
+      const card = await readJson(cardPath(mm[1]));
+      if (card.parent_id) return sendJson(res, 400, { error: 'runn only applies to parent cards' });
+      const merged = { ...card, runn_mode: turningOn, updated_at: nowIso() };
+      await atomicWriteJson(cardPath(card.id), merged);
+      console.log(`[runn] runn-mode ${turningOn ? 'ON' : 'OFF'} for ${card.id}`);
+      if (turningOn) {
+        queue.maybeAdvanceQueue(card.id, queueDeps).catch(err =>
+          console.error('[runn] runn maybeAdvanceQueue failed', err));
+      }
+      return sendJson(res, 200, merged);
+    }
+
+    // ── Permission prompts (MCP bridge) ───────────────────────
+    // MCP server posts here when Claude wants to use a tool. We hold the
+    // response open until the user clicks Allow/Deny in the chat (or a
+    // session-wide "always allow" rule short-circuits the wait).
+    if (m === 'POST' && url.pathname === '/permissions/request') {
+      const body = await readBody(req);
+      const cardId = permissionTokens.get(body.token) || null;
+      // Short-circuit on persisted "always allow" rules so familiar tools don't pile up prompts.
+      if (await isAlwaysAllowed(body.tool_name)) {
+        console.log(`[perm] auto-allow ${body.tool_name} (always-allow rule)`);
+        return sendJson(res, 200, { behavior: 'allow' });
+      }
+      const requestId = crypto.randomUUID();
+      pendingPermissions.set(requestId, {
+        card_id: cardId,
+        tool_name: body.tool_name,
+        input: body.input,
+        created_at: Date.now(),
+        send: (decision) => {
+          pendingPermissions.delete(requestId);
+          sendJson(res, 200, decision);
+        },
+      });
+      // The MCP server may hang for minutes waiting. Disable keepalive timeout
+      // on this response so node doesn't reap the socket before the user decides.
+      res.setTimeout(0);
+      req.on('close', () => {
+        // Client (MCP server / Claude) went away — drop the pending request.
+        if (pendingPermissions.has(requestId)) pendingPermissions.delete(requestId);
+      });
+      broadcast({
+        type: 'permission.requested',
+        request_id: requestId,
+        card_id: cardId,
+        tool_name: body.tool_name,
+        input: body.input,
+      });
+      return; // response will be sent later via pending.send()
+    }
+    if (m === 'POST' && url.pathname === '/permissions/decide') {
+      const body = await readBody(req);
+      const pending = pendingPermissions.get(body.request_id);
+      if (!pending) return sendJson(res, 404, { error: 'no such request' });
+      const decision = body.decision === 'allow' ? 'allow' : 'deny';
+      if (decision === 'allow' && body.remember) {
+        await setAlwaysAllowed(pending.tool_name);
+      }
+      pending.send({ behavior: decision, message: decision === 'deny' ? (body.message || 'denied by user') : undefined });
+      broadcast({
+        type: 'permission.resolved',
+        request_id: body.request_id,
+        decision,
+        remember: !!body.remember,
+      });
+      return sendJson(res, 200, { ok: true });
+    }
+    if (m === 'GET' && url.pathname === '/permissions/pending') {
+      // Lets the panel rehydrate any in-flight prompts on reload.
+      const list = [];
+      for (const [id, p] of pendingPermissions) {
+        list.push({ request_id: id, card_id: p.card_id, tool_name: p.tool_name, input: p.input, created_at: p.created_at });
+      }
+      return sendJson(res, 200, list);
+    }
+
     // ── Settings (global) ──────────────────────────────────
     if (m === 'GET' && url.pathname === '/settings') {
       return sendJson(res, 200, await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS));
@@ -524,6 +1008,17 @@ const server = http.createServer(async (req, res) => {
         invoice_prefix: body.invoice_prefix || '',
         invoice_seq: Number.isFinite(body.invoice_seq) ? body.invoice_seq : 1,
         contact: body.contact || '',
+        wg_conf: body.wg_conf || '',
+        wg_ip: body.wg_ip || '',
+        ssh_user: body.ssh_user || '',
+        // Freeform AI context appended to the system prompt on every spawn for
+        // tasks under a project linked to this client. People, IPs, platforms,
+        // permissions — anything Claude should "just know" without you typing
+        // it into every task.
+        notes_md: body.notes_md || '',
+        // Internal/non-billable clients (e.g. the user's own org) still let
+        // you track hours per project but never roll up into outstanding $.
+        non_billable: body.non_billable === true,
         created_at: nowIso(),
         updated_at: nowIso(),
       };
@@ -545,6 +1040,76 @@ const server = http.createServer(async (req, res) => {
     }
     if (m === 'DELETE' && (mm = url.pathname.match(/^\/clients\/([^/]+)$/))) {
       await fsp.unlink(clientPath(mm[1])).catch(() => {});
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // ── Projects (groupings of cards under a client) ───────
+    if (m === 'GET' && url.pathname === '/projects') {
+      const all = await listProjects();
+      const clientId = url.searchParams.get('client_id');
+      const filtered = clientId ? all.filter(p => p.client_id === clientId) : all;
+      return sendJson(res, 200, filtered);
+    }
+    if (m === 'GET' && (mm = url.pathname.match(/^\/clients\/([^/]+)\/projects$/))) {
+      const all = await listProjects();
+      return sendJson(res, 200, all.filter(p => p.client_id === mm[1]));
+    }
+    if (m === 'GET' && (mm = url.pathname.match(/^\/projects\/([^/]+)$/))) {
+      return sendJson(res, 200, await readJson(projectPath(mm[1])));
+    }
+    if (m === 'POST' && url.pathname === '/projects') {
+      const body = await readBody(req);
+      if (!body.client_id) return sendJson(res, 400, { error: 'client_id required' });
+      // Reject if the client doesn't exist — otherwise an orphan project gets
+      // written and silently never appears in any client view.
+      try { await readJson(clientPath(body.client_id)); }
+      catch { return sendJson(res, 404, { error: `client '${body.client_id}' not found` }); }
+      const id = body.id || `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,6)}`;
+      const project = {
+        id,
+        client_id: body.client_id,
+        name: body.name || 'Untitled project',
+        color: body.color || null,
+        status: body.status === 'archived' ? 'archived' : 'active',
+        sort_order: typeof body.sort_order === 'number' ? body.sort_order : Date.now(),
+        notes_md: body.notes_md || '',
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      await atomicWriteJson(projectPath(id), project);
+      return sendJson(res, 201, project);
+    }
+    if (m === 'PATCH' && (mm = url.pathname.match(/^\/projects\/([^/]+)$/))) {
+      const p = projectPath(mm[1]);
+      const current = await readJson(p);
+      const body = await readBody(req);
+      // client_id is part of the project's identity for billing — silently
+      // ignore attempts to change it. (Moving a project between clients would
+      // also need to move every card under it; defer that to an explicit flow.)
+      const merged = {
+        ...current, ...body,
+        id: current.id,
+        client_id: current.client_id,
+        created_at: current.created_at,
+        updated_at: nowIso(),
+      };
+      await atomicWriteJson(p, merged);
+      return sendJson(res, 200, merged);
+    }
+    if (m === 'DELETE' && (mm = url.pathname.match(/^\/projects\/([^/]+)$/))) {
+      const id = mm[1];
+      // Refuse if any non-archived card references the project. Forces the
+      // caller to reassign or archive cards first; protects historical
+      // invoices which reference card.project_id via snapshot.
+      const cards = await listCards();
+      const referencing = cards.filter(c => c.project_id === id);
+      if (referencing.length) {
+        return sendJson(res, 409, {
+          error: `project has ${referencing.length} card(s) — reassign or archive them first`,
+          card_ids: referencing.map(c => c.id),
+        });
+      }
+      await fsp.unlink(projectPath(id)).catch(() => {});
       return sendJson(res, 200, { ok: true });
     }
 
@@ -571,13 +1136,13 @@ const server = http.createServer(async (req, res) => {
     if (m === 'POST' && url.pathname === '/invoices') {
       const body = await readBody(req);
       const inv = await createInvoice(body);
-      // Flip referenced cards to invoiced + set invoice_id
+      // Move referenced cards along the conveyor: → 'invoiced' + record invoice_id.
       for (const item of inv.items) {
         if (!item.card_id) continue;
         try {
           const cp = cardPath(item.card_id);
           const c = await readJson(cp);
-          await atomicWriteJson(cp, { ...c, billing: 'invoiced', invoice_id: inv.id, updated_at: nowIso() });
+          await atomicWriteJson(cp, { ...c, status: 'invoiced', invoice_id: inv.id, updated_at: nowIso() });
         } catch (err) {
           console.error(`[runn] failed to flip card ${item.card_id} → invoiced:`, err.message);
         }
@@ -592,14 +1157,14 @@ const server = http.createServer(async (req, res) => {
       // Recompute balance if paid changed
       if (typeof merged.paid === 'number') merged.balance = (merged.total_inc_gst || 0) - merged.paid;
       await atomicWriteJson(invoicePath(id), merged);
-      // If status flipped to paid, cascade to referenced cards
+      // If the invoice flipped to paid, move its cards → 'paid' on the conveyor.
       if (body.status === 'paid' && inv.status !== 'paid') {
         for (const item of inv.items) {
           if (!item.card_id) continue;
           try {
             const cp = cardPath(item.card_id);
             const c = await readJson(cp);
-            await atomicWriteJson(cp, { ...c, billing: 'paid', updated_at: nowIso() });
+            await atomicWriteJson(cp, { ...c, status: 'paid', updated_at: nowIso() });
           } catch {}
         }
       }
@@ -633,6 +1198,9 @@ const server = http.createServer(async (req, res) => {
         };
         // Pre-register so the discovery watcher dedups when it sees the new jsonl
         sessionIndex.set(session_id, id);
+        // The card is born `doing`, so start its work clock now — otherwise it
+        // accrues no time until it next *re-enters* doing from some other state.
+        applyTimerTransition(undefined, card, nowIso);
         await atomicWriteJson(cardPath(id), card);
         console.log(`[runn] spawned session ${session_id.slice(0,8)} → ${card.title}`);
         return sendJson(res, 201, card);
@@ -716,10 +1284,50 @@ clientsWatcher.on('add',    clientEvent('client.added'));
 clientsWatcher.on('change', clientEvent('client.changed'));
 clientsWatcher.on('unlink', clientEvent('client.removed'));
 
+// ── Projects-dir watcher ─────────────────────────────────────
+const projectsWatcher = chokidar.watch(PROJECTS_DIR, {
+  ignored: (p) => p.endsWith('.tmp'),
+  ignoreInitial: true,
+  awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 25 },
+  depth: 1,
+});
+function projectEvent(type) {
+  return async (p) => {
+    if (!p.endsWith('.json') || p.endsWith('.tmp')) return;
+    const id = path.basename(p, '.json');
+    let project;
+    if (type === 'project.removed') {
+      project = { id };
+    } else {
+      try { project = await readJson(p); } catch { return; }
+    }
+    broadcast({ type, project });
+  };
+}
+projectsWatcher.on('add',    projectEvent('project.added'));
+projectsWatcher.on('change', projectEvent('project.changed'));
+projectsWatcher.on('unlink', projectEvent('project.removed'));
+
 // ── Queue dependencies (injected so queue.js stays I/O-isolated) ──
+// Cards whose current turn the user has explicitly interrupted. The kill makes
+// claude exit by signal (which otherwise looks like a crash); this set tells
+// handleAiExit to land the card in `review` rather than `blocked`. The exit
+// callback clears the entry.
+const interruptedCards = new Set();
+
 const queueDeps = {
   readJson, atomicWriteJson, cardPath, bridge, broadcast,
   listCards, nowIso,
+  interruptedCards,
+  resolveCardPermissionMode,
+  resolveCardSystemContext,
+  // Mint and register a permission token so MCP requests from this spawn
+  // can be tied back to the correct card in the chat UI.
+  mintPermissionToken: (cardId) => {
+    const t = crypto.randomUUID();
+    permissionTokens.set(t, cardId);
+    return t;
+  },
   onAiExit: (cardId, code) =>
     queue.handleAiExit(cardId, code, queueDeps).catch(err =>
       console.error('[runn] queue handleAiExit failed', err)),
@@ -773,6 +1381,9 @@ async function adoptSession(jsonlPath) {
     updated_at: now,
   };
   sessionIndex.set(sessionId, id);
+  // Adopted externally-spawned sessions land in `doing` too — start their clock
+  // from adoption forward (we can't know how long they ran before we saw them).
+  applyTimerTransition(undefined, card, nowIso);
   try {
     await atomicWriteJson(cardPath(id), card);
     console.log(`[runn] adopted session ${sessionId.slice(0,8)} → ${card.title}`);
@@ -797,25 +1408,62 @@ async function syncSessionTitle(jsonlPath) {
   } catch {}
 }
 
+// Note: no `awaitWriteFinish` here. That option holds the change event back
+// until the file is stable, which — for a live streaming jsonl — meant the
+// frontend only saw the response *after* claude was completely finished.
+// Instead we let chokidar fire raw `change` events and throttle the broadcast
+// per-session (leading + trailing edge) so the panel updates as the response
+// streams in, without flooding the WS.
 const sessionsWatcher = chokidar.watch(CLAUDE_PROJECTS, {
   ignored: (p) => p.endsWith('.tmp'),
   ignoreInitial: true, // skip the 266 existing files on boot
-  awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
 });
+
+const SESSION_UPDATE_THROTTLE_MS = 600;
+const sessionUpdateState = new Map(); // session_id → { lastFire, trailing }
+
+function broadcastSessionUpdate(sessionId, jsonlPath) {
+  broadcast({ type: 'session.updated', session_id: sessionId });
+  syncSessionTitle(jsonlPath).catch(() => {});
+}
+
+function scheduleSessionUpdate(sessionId, jsonlPath) {
+  const now = Date.now();
+  let state = sessionUpdateState.get(sessionId);
+  if (!state) {
+    state = { lastFire: 0, trailing: null };
+    sessionUpdateState.set(sessionId, state);
+  }
+  const elapsed = now - state.lastFire;
+  if (elapsed >= SESSION_UPDATE_THROTTLE_MS) {
+    state.lastFire = now;
+    if (state.trailing) { clearTimeout(state.trailing); state.trailing = null; }
+    broadcastSessionUpdate(sessionId, jsonlPath);
+    return;
+  }
+  // Inside the throttle window — ensure a trailing-edge fire is scheduled so
+  // the very last write in a burst still reaches the client.
+  if (state.trailing) return;
+  state.trailing = setTimeout(() => {
+    state.trailing = null;
+    state.lastFire = Date.now();
+    broadcastSessionUpdate(sessionId, jsonlPath);
+  }, SESSION_UPDATE_THROTTLE_MS - elapsed);
+}
+
 // Auto-discovery of external CC Desktop / terminal sessions is OFF — Runn is a
 // task/invoicing tool, not a session viewer. Only sessions Runn explicitly
 // spawned (origin='runn') exist as cards. Chokidar still runs so we can fire
 // live-transcript updates on sessions Runn already knows about.
 sessionsWatcher.on('add', () => {});
-sessionsWatcher.on('change', async (p) => {
+sessionsWatcher.on('change', (p) => {
   if (!p.endsWith('.jsonl')) return;
   const sessionId = sessionIdFromPath(p);
   if (!sessionId) return;
   // Only react if this is a known Runn-owned session. Unknown jsonls are
   // someone else's business (CC Desktop, terminal claude, etc.) — ignored.
   if (!sessionIndex.has(sessionId)) return;
-  broadcast({ type: 'session.updated', session_id: sessionId });
-  await syncSessionTitle(p);
+  scheduleSessionUpdate(sessionId, p);
 });
 
 // ── Boot ─────────────────────────────────────────────────────
@@ -825,6 +1473,7 @@ sessionsWatcher.on('change', async (p) => {
   await fsp.mkdir(TAGS_DIR, { recursive: true });
   await fsp.mkdir(CLIENTS_DIR, { recursive: true });
   await fsp.mkdir(INVOICES_DIR, { recursive: true });
+  await fsp.mkdir(PROJECTS_DIR, { recursive: true });
   await fsp.mkdir(ASSETS_DIR, { recursive: true });
   await rebuildSessionIndex();
   await migrateClients.run({
@@ -832,6 +1481,65 @@ sessionsWatcher.on('change', async (p) => {
     readJson, readJsonOr, atomicWriteJson, listCards,
     DEFAULT_SETTINGS, nowIso,
   }).catch(err => console.error('[runn] migration v1_clients failed', err));
+
+  await migrateProjects.run({
+    CARDS_DIR, ARCHIVE_DIR, CLIENTS_DIR, PROJECTS_DIR, SETTINGS_PATH,
+    readJson, readJsonOr, atomicWriteJson,
+    DEFAULT_SETTINGS, nowIso,
+  }).catch(err => console.error('[runn] migration v2_projects failed', err));
+
+  // One-time: fold the retired `billing` field into the status conveyor.
+  //   billing 'paid'                              → status 'paid'
+  //   billing 'invoiced'                          → status 'invoiced'
+  //   billing 'unbilled' + done task + billable   → status 'invoice'
+  // Personal done tasks stay 'done'; everything else keeps its status. The
+  // `billing` field is then dropped. Gated by settings.migrations.v3_status_billing.
+  try {
+    const settings = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
+    if (!(settings.migrations && settings.migrations.v3_status_billing)) {
+      const resolveClient = async (card) => {
+        let c = card, guard = 0;
+        while (c && c.parent_id && guard++ < 8) {
+          const r = await cardReadAnywhere(c.parent_id);
+          c = r ? r.card : null;
+        }
+        return c ? (c.client_id || null) : null;
+      };
+      const billableCache = new Map();
+      const isBillable = async (clientId) => {
+        if (!clientId) return false;
+        if (billableCache.has(clientId)) return billableCache.get(clientId);
+        let ok = false;
+        try { const cl = await readJson(clientPath(clientId)); ok = !(cl && cl.non_billable); } catch {}
+        billableCache.set(clientId, ok);
+        return ok;
+      };
+      let touched = 0;
+      for (const dir of [CARDS_DIR, ARCHIVE_DIR]) {
+        const files = await fsp.readdir(dir).catch(() => []);
+        for (const f of files) {
+          if (!f.endsWith('.json') || f.endsWith('.tmp')) continue;
+          const fp = path.join(dir, f);
+          let c;
+          try { c = await readJson(fp); } catch { continue; }
+          if (!('billing' in c)) continue; // already migrated
+          let status = c.status;
+          if (c.billing === 'paid') status = 'paid';
+          else if (c.billing === 'invoiced') status = 'invoiced';
+          else if (c.status === 'done' && c.parent_id && await isBillable(await resolveClient(c))) status = 'invoice';
+          const { billing: _drop, ...rest } = c;
+          await atomicWriteJson(fp, { ...rest, status, updated_at: nowIso() });
+          touched++;
+        }
+      }
+      const cur = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
+      await atomicWriteJson(SETTINGS_PATH, { ...cur, migrations: { ...(cur.migrations || {}), v3_status_billing: true } });
+      if (touched) console.log(`[runn] migration v3_status_billing: converted ${touched} card(s)`);
+      console.log('[runn] migration v3_status_billing complete');
+    }
+  } catch (err) {
+    console.error('[runn] migration v3_status_billing failed', err);
+  }
 
   server.listen(PORT, HOST, () => {
     const urls = [`http://localhost:${PORT}`];

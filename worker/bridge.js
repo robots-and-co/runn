@@ -3,8 +3,31 @@
 const { spawn } = require('child_process');
 const readline = require('readline');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
+
+// Write a fresh MCP config pointing Claude at our in-tree permission server,
+// then expose its path so spawn args can reference it. The MCP server is a
+// stdio Node script; Claude launches it per session and routes every Write/
+// Edit/Bash permission check to it.
+const MCP_SERVER_PATH = path.join(__dirname, 'mcp-permission.js');
+const MCP_CONFIG_PATH = path.join(os.tmpdir(), 'runn-mcp-config.json');
+function ensureMcpConfig() {
+  const cfg = {
+    mcpServers: {
+      runn: {
+        type: 'stdio',
+        command: process.execPath, // node binary inside this container/runtime
+        args: [MCP_SERVER_PATH],
+      },
+    },
+  };
+  fs.writeFileSync(MCP_CONFIG_PATH, JSON.stringify(cfg, null, 2));
+}
+ensureMcpConfig();
+const PERMISSION_TOOL_NAME = 'mcp__runn__ask_permission';
 
 // Convert an absolute cwd to the slug Claude Code uses for its project dir.
 // e.g. /home/waz/runn-data  →  -home-waz-runn-data
@@ -18,11 +41,131 @@ function sessionPathFor(cwd, sessionId) {
 
 const DEFAULT_LOCATION = { type: 'local', cwd: path.join(process.env.HOME, 'runn-data') };
 
+// ── Cross-cwd AI mutex ──────────────────────────────────────
+// Every claude subprocess we spawn (initial spawnSession + each --resume
+// sendMessage) writes against the cwd's working tree. Two subprocesses on
+// the same cwd would clobber each other's edits, regardless of which project
+// or task triggered them. This mutex enforces "one claude per cwd" globally,
+// so the per-parent queue walker plus this guard together make the system
+// clobber-safe across the whole worker.
+const activeCwds = new Map(); // cwd → { holder: string, since: number }
+
+// ── Running-child registry ──────────────────────────────────
+// We hold each running claude child's handle keyed by session_id — the stable
+// identity an interrupt targets (the cwd is ambiguous: a follow-up and the
+// initial spawn can resolve it differently, and siblings share one). A
+// user-initiated interrupt looks the child up and signals it, so an in-flight
+// turn can be stopped (without this the child is detached + unref'd and
+// unreachable). Entries are removed by each child's own exit handler.
+const runningChildren = new Map(); // sessionId → { child, holder, cwd, since }
+function registerChild(sessionId, child, holder, cwd) {
+  if (!sessionId) return;
+  runningChildren.set(sessionId, { child, holder: holder || '?', cwd, since: Date.now() });
+}
+function unregisterChild(sessionId, child) {
+  // Only drop the entry if it's still ours — a fast follow-up turn may have
+  // already registered a new child under the same session_id.
+  const e = sessionId && runningChildren.get(sessionId);
+  if (e && e.child === child) runningChildren.delete(sessionId);
+}
+
+// Signal the running claude child for a session to stop. A detached child is
+// its own process-group leader, so kill the whole group (claude + its tool/MCP
+// subprocesses) via the negative pid; fall back to the bare child on failure.
+function killSession(sessionId) {
+  const entry = runningChildren.get(sessionId);
+  if (!entry) return { ok: false, reason: 'no_running_child' };
+  const pid = entry.child.pid;
+  let signalled = false;
+  try { process.kill(-pid, 'SIGTERM'); signalled = true; }
+  catch { try { entry.child.kill('SIGTERM'); signalled = true; } catch {} }
+  return { ok: signalled, holder: entry.holder, pid };
+}
+
+// Drop any buffered follow-up turns for a session so a kill doesn't get
+// immediately undone by dispatchPendingForCwd respawning the next one.
+function clearPending(sessionId) {
+  const q = pendingMessages.get(sessionId);
+  const n = q ? q.length : 0;
+  pendingMessages.delete(sessionId);
+  return n;
+}
+
+function claimCwd(cwd, holder) {
+  if (activeCwds.has(cwd)) {
+    const cur = activeCwds.get(cwd);
+    const err = new Error(`cwd ${cwd} is busy: ${cur.holder}`);
+    err.code = 'CWD_BUSY';
+    err.holder = cur.holder;
+    err.cwd = cwd;
+    throw err;
+  }
+  activeCwds.set(cwd, { holder, since: Date.now() });
+}
+function releaseCwd(cwd) {
+  activeCwds.delete(cwd);
+  // (runningChildren is keyed by session_id and cleaned up in each child's exit
+  // handler — nothing to drop here.)
+  // After releasing the cwd, check if a queued message is waiting for it and
+  // fire the next one. Wrapped so a dispatch failure can't poison the release
+  // — the AI exit chain still needs to run cleanly.
+  try { dispatchPendingForCwd(cwd); }
+  catch (err) { console.error('[bridge] dispatchPendingForCwd threw', err); }
+}
+function whoHoldsCwd(cwd) {
+  const cur = activeCwds.get(cwd);
+  return cur ? cur.holder : null;
+}
+
+// ── Pending message buffer ──────────────────────────────────
+// When a user sends a follow-up message while a session's cwd is busy (the
+// previous turn is still mid-flight, or another project is holding the
+// working tree), /message can enqueue here instead of bouncing with 409. On
+// every cwd-free event, dispatchPendingForCwd looks for the first queued
+// message destined for that cwd and dispatches it via sendMessage.
+const pendingMessages = new Map(); // sessionId → [{ text, location, permissionToken, permissionMode, onStart, onExit, holder }]
+function enqueueMessage(sessionId, params) {
+  if (!pendingMessages.has(sessionId)) pendingMessages.set(sessionId, []);
+  const q = pendingMessages.get(sessionId);
+  q.push(params);
+  return q.length;
+}
+function pendingMessageCount(sessionId) {
+  const q = pendingMessages.get(sessionId);
+  return q ? q.length : 0;
+}
+function dispatchPendingForCwd(cwd) {
+  for (const [sessionId, queue] of pendingMessages.entries()) {
+    if (!queue.length) continue;
+    const next = queue[0];
+    const nextCwd = next.location && next.location.cwd;
+    if (nextCwd !== cwd) continue;
+    queue.shift();
+    if (queue.length === 0) pendingMessages.delete(sessionId);
+    const onStart = next.onStart;
+    // Strip onStart from params before forwarding to sendMessage (which doesn't
+    // know about it). sendMessage resolves on init, so chaining .then here is
+    // the right hook to mark the card as actually-running.
+    const params = { ...next };
+    delete params.onStart;
+    sendMessage({ sessionId, ...params })
+      .then(() => {
+        if (typeof onStart === 'function') {
+          try { onStart(); } catch (err) { console.error('[bridge] queued onStart threw', err); }
+        }
+      })
+      .catch(err => {
+        console.error(`[bridge] queued message dispatch failed for ${sessionId.slice(0,8)}`, err);
+      });
+    return; // one dispatch per cwd-free event
+  }
+}
+
 // Spawn a fresh Claude session non-interactively. Resolves as soon as the
 // init event arrives carrying the session_id; the child keeps running in
 // the background and writes to its session jsonl, which Runn picks up via
 // the discovery watcher.
-function spawnSession({ title, location, onExit }) {
+function spawnSession({ title, notes, location, permissionToken, permissionMode, systemPromptAppend, onExit, holder }) {
   location = location || DEFAULT_LOCATION;
   if (location.type === 'ssh') {
     return Promise.reject(new Error('SSH transport not yet implemented — see slice 2d'));
@@ -31,22 +174,52 @@ function spawnSession({ title, location, onExit }) {
     return Promise.reject(new Error(`unknown location.type: ${location.type}`));
   }
   const cwd = location.cwd;
+  // Claim the cwd before spawning — synchronous so two concurrent calls
+  // can't both pass the check. Released when the child exits (the wrapped
+  // onExit below).
+  try { claimCwd(cwd, holder || 'spawnSession'); }
+  catch (err) { return Promise.reject(err); }
   return new Promise((resolve, reject) => {
-    const child = spawn(CLAUDE_BIN, [
+    const args = [
       '-p',
       '--output-format', 'stream-json',
       '--verbose',
-      '--print', title,
-    ], {
+      '--mcp-config', MCP_CONFIG_PATH,
+      '--permission-prompt-tool', PERMISSION_TOOL_NAME,
+    ];
+    if (permissionMode && permissionMode !== 'default') {
+      args.push('--permission-mode', permissionMode);
+    }
+    if (systemPromptAppend && String(systemPromptAppend).trim()) {
+      args.push('--append-system-prompt', String(systemPromptAppend).trim());
+    }
+    const prompt = (notes && String(notes).trim()) ? `${title}\n\n${String(notes).trim()}` : title;
+    args.push('--print', prompt);
+    const child = spawn(CLAUDE_BIN, args, {
       cwd,
+      env: {
+        ...process.env,
+        // The MCP server reads these to find the worker and identify this spawn.
+        RUNN_PORT: process.env.PORT || '17777',
+        RUNN_PERMISSION_TOKEN: permissionToken || '',
+      },
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
+    // session_id isn't known until the init event; capture it here so both the
+    // registry (for interrupts) and the exit cleanup can key off it.
+    let mySessionId = null;
+
     // Attach exit listener BEFORE unref so it still fires while the worker is alive.
-    if (typeof onExit === 'function') {
-      child.on('exit', (code) => { try { onExit(code); } catch (err) { console.error('[bridge] onExit threw', err); } });
-    }
+    // Release the cwd lock on exit so the next sibling / project / message can spawn.
+    child.on('exit', (code) => {
+      unregisterChild(mySessionId, child);
+      releaseCwd(cwd);
+      if (typeof onExit === 'function') {
+        try { onExit(code); } catch (err) { console.error('[bridge] onExit threw', err); }
+      }
+    });
 
     let resolved = false;
     const rl = readline.createInterface({ input: child.stdout });
@@ -63,6 +236,9 @@ function spawnSession({ title, location, onExit }) {
           child.stderr.on('data', () => {});
           child.unref();
           const resolvedCwd = ev.cwd || cwd;
+          // Hold the handle so an interrupt can reach this child by session_id.
+          mySessionId = ev.session_id;
+          registerChild(ev.session_id, child, holder || 'spawnSession', resolvedCwd);
           resolve({
             session_id: ev.session_id,
             location: { type: 'local', cwd: resolvedCwd },
@@ -75,6 +251,7 @@ function spawnSession({ title, location, onExit }) {
     child.on('error', (err) => {
       if (resolved) return;
       resolved = true;
+      releaseCwd(cwd);
       reject(err);
     });
 
@@ -85,7 +262,10 @@ function spawnSession({ title, location, onExit }) {
     setTimeout(() => {
       if (resolved) return;
       resolved = true;
+      // SIGTERM should trigger child 'exit' → releaseCwd; if it doesn't, this
+      // belt-and-braces release prevents the cwd from being permanently stuck.
       try { child.kill('SIGTERM'); } catch {}
+      releaseCwd(cwd);
       reject(new Error('bridge: no session_id received within 30s'));
     }, 30000);
   });
@@ -96,22 +276,46 @@ function spawnSession({ title, location, onExit }) {
 // actually running and writing to the session jsonl), then lets it run
 // detached. The chokidar watcher catches the resulting jsonl writes and
 // broadcasts session.updated → the panel refreshes.
-function sendMessage({ sessionId, text, location }) {
+function sendMessage({ sessionId, text, location, permissionToken, permissionMode, onExit, holder }) {
   location = location || DEFAULT_LOCATION;
   if (location.type !== 'local') {
     return Promise.reject(new Error(`sendMessage: only local sessions supported (got ${location.type})`));
   }
+  const cwd = location.cwd;
+  try { claimCwd(cwd, holder || `sendMessage:${sessionId.slice(0,8)}`); }
+  catch (err) { return Promise.reject(err); }
   return new Promise((resolve, reject) => {
-    const child = spawn(CLAUDE_BIN, [
+    const args = [
       '-p',
       '--output-format', 'stream-json',
       '--verbose',
-      '--resume', sessionId,
-      '--print', text,
-    ], {
-      cwd: location.cwd,
+      '--mcp-config', MCP_CONFIG_PATH,
+      '--permission-prompt-tool', PERMISSION_TOOL_NAME,
+    ];
+    if (permissionMode && permissionMode !== 'default') {
+      args.push('--permission-mode', permissionMode);
+    }
+    args.push('--resume', sessionId, '--print', text);
+    const child = spawn(CLAUDE_BIN, args, {
+      cwd,
+      env: {
+        ...process.env,
+        RUNN_PORT: process.env.PORT || '17777',
+        RUNN_PERMISSION_TOKEN: permissionToken || '',
+      },
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    // Hold the handle so an interrupt can reach this child by session_id.
+    registerChild(sessionId, child, holder || `sendMessage:${sessionId.slice(0,8)}`, cwd);
+
+    // Release the cwd lock + fire caller's onExit when the --resume claude exits.
+    child.on('exit', (code) => {
+      unregisterChild(sessionId, child);
+      releaseCwd(cwd);
+      if (typeof onExit === 'function') {
+        try { onExit(code); } catch (err) { console.error('[bridge] sendMessage onExit threw', err); }
+      }
     });
 
     let resolved = false;
@@ -137,6 +341,8 @@ function sendMessage({ sessionId, text, location }) {
     child.on('error', (err) => {
       if (resolved) return;
       resolved = true;
+      // The 'exit' handler may not fire on spawn error; release defensively.
+      releaseCwd(cwd);
       reject(err);
     });
     child.on('exit', (code) => {
@@ -149,9 +355,21 @@ function sendMessage({ sessionId, text, location }) {
       if (resolved) return;
       resolved = true;
       try { child.kill('SIGTERM'); } catch {}
+      releaseCwd(cwd);
       reject(new Error('bridge sendMessage: no init within 30s'));
     }, 30000);
   });
 }
 
-module.exports = { spawnSession, sendMessage, sessionPathFor, cwdToSlug, DEFAULT_LOCATION };
+module.exports = {
+  spawnSession,
+  sendMessage,
+  sessionPathFor,
+  cwdToSlug,
+  DEFAULT_LOCATION,
+  whoHoldsCwd,
+  enqueueMessage,
+  pendingMessageCount,
+  killSession,
+  clearPending,
+};

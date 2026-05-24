@@ -1,12 +1,21 @@
 'use strict';
 
-// AI-task queue: when an AI task's stated goal is met (subprocess exit 0 + optional
-// acceptance check passes), mark it done and start the next AI task in sort_order
-// within the same project. A human task in the queue pauses progress until the
-// human marks the task done (PATCH /cards in server.js calls maybeAdvanceQueue
-// to resume).
+// AI-task queue. Execution is SEQUENTIAL: at most one AI subprocess running at
+// a time, since all tasks share the same working tree and parallel claude
+// processes would clobber each other's edits. (Parallel runs are deferred
+// until per-task branching exists.)
+//
+// Tasks are independent by default — once an independent task is no longer
+// `doing` (review/todo human/done), the queue keeps walking. A task marked
+// `blocking: true` is a barrier: the queue halts at it (in any non-done state)
+// until a human marks it `done`.
+//
+// AI never marks `done` itself. On clean exit it lands in `review` (awaiting
+// human assessment); on failure, `blocked`. The human's done-click is what
+// releases tasks downstream of a cleared blocker.
 
 const { spawn } = require('child_process');
+const { applyTimerTransition } = require('./timer');
 
 const ACCEPTANCE_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -84,25 +93,65 @@ async function runAcceptanceCheck(card) {
   return { ok: false, output: `unknown acceptance_check.type: ${ac.type}`, code: -1 };
 }
 
-// Called when an AI subprocess (spawned via /ai-ify) exits.
-// code === 0 → maybe run acceptance check → mark done + advance, else block + halt.
+// Called when an AI subprocess exits (initial spawn from /ai-ify or auto-queue
+// spawn, and follow-up turns via /cards/:id/message).
+//
+// AI never marks a card `done` — that's a human-only transition. On clean exit
+// the card lands in `review` (awaiting human assessment); on non-zero exit or
+// failed acceptance check, in `blocked`. After settling the card, we tick the
+// parent's queue so any later non-blocking siblings can advance.
 async function handleAiExit(cardId, code, deps) {
   const { readJson, atomicWriteJson, cardPath, nowIso } = deps;
   let card;
   try { card = await readJson(cardPath(cardId)); }
   catch (err) { console.error(`[queue] card ${cardId} not found on exit`, err); return; }
 
-  // Guard against double-advance: if a user already marked this done manually,
-  // don't run the check or advance again from the exit callback.
-  if (card.status === 'done' || card.status === 'blocked') {
-    console.log(`[queue] ${cardId} already ${card.status} on exit (code=${code}); not advancing`);
+  // User-initiated interrupt: the turn was killed on purpose, so the signal
+  // exit must NOT read as a crash. Land the card in `review` (turn ended,
+  // human to assess) and clear the marker. Skip if the user already pushed it
+  // to a terminal state in the meantime.
+  if (deps.interruptedCards && deps.interruptedCards.has(cardId)) {
+    deps.interruptedCards.delete(cardId);
+    if (!['done', 'blocked', 'hold', 'invoice', 'invoiced', 'paid'].includes(card.status)) {
+      const next = { ...card, status: 'review', updated_at: nowIso() };
+      applyTimerTransition(card, next, nowIso);
+      await atomicWriteJson(cardPath(cardId), next);
+      console.log(`[queue] ${cardId} → review (interrupted by user)`);
+    }
+    await tickQueueAfterExit(card.parent_id, deps);
     return;
+  }
+
+  // Guard against double-resolve: if the user already moved this to a terminal
+  // state manually (done/blocked/hold or the billing tail), don't overwrite
+  // their decision from the exit callback.
+  if (['done', 'blocked', 'hold', 'invoice', 'invoiced', 'paid'].includes(card.status)) {
+    console.log(`[queue] ${cardId} already ${card.status} on exit (code=${code}); not changing`);
+    await tickQueueAfterExit(card.parent_id, deps);
+    return;
+  }
+
+  // A buffered follow-up may have already re-claimed the cwd for this same card
+  // by the time we get here (releaseCwd → dispatchPendingForCwd runs before this
+  // exit callback). If so, a new turn is starting now — don't bounce the card
+  // through `review` in the gap; leave it `doing` so the chat reads as
+  // continuously running. Only on a clean exit; a crash still surfaces.
+  if (code === 0 && card.session_id && deps.bridge && typeof deps.bridge.whoHoldsCwd === 'function') {
+    const cwd = card.location && card.location.cwd;
+    const holder = cwd ? deps.bridge.whoHoldsCwd(cwd) : null;
+    if (holder === `card:${cardId}` || holder === `card:${cardId} (queued)`) {
+      console.log(`[queue] ${cardId} clean exit but a follow-up turn is starting — staying doing`);
+      await tickQueueAfterExit(card.parent_id, deps);
+      return;
+    }
   }
 
   if (code !== 0) {
     const next = { ...card, status: 'blocked', updated_at: nowIso() };
+    applyTimerTransition(card, next, nowIso);
     await atomicWriteJson(cardPath(cardId), next);
     console.log(`[queue] ${cardId} blocked (claude exit ${code})`);
+    await tickQueueAfterExit(card.parent_id, deps);
     return;
   }
 
@@ -114,20 +163,54 @@ async function handleAiExit(cardId, code, deps) {
       notes_md: appendCheckLog(card.notes_md, 'FAIL', check.output),
       updated_at: nowIso(),
     };
+    applyTimerTransition(card, next, nowIso);
     await atomicWriteJson(cardPath(cardId), next);
     console.log(`[queue] ${cardId} blocked (acceptance check FAILED)`);
+    await tickQueueAfterExit(card.parent_id, deps);
     return;
   }
 
-  const done = {
+  // Success path: every AI turn lands the card in `review` for human
+  // assessment. `done` is a human-only transition. runn_mode only controls
+  // walker continuation (siblings advance past `review` just like `done`),
+  // not the human gate.
+  const settled = {
     ...card,
-    status: 'done',
+    status: 'review',
     notes_md: check.skipped ? card.notes_md : appendCheckLog(card.notes_md, 'PASS', check.output),
     updated_at: nowIso(),
   };
-  await atomicWriteJson(cardPath(cardId), done);
-  console.log(`[queue] ${cardId} done${check.skipped ? '' : ' (acceptance check PASS)'}`);
-  if (done.parent_id) await maybeAdvanceQueue(done.parent_id, deps);
+  applyTimerTransition(card, settled, nowIso);
+  await atomicWriteJson(cardPath(cardId), settled);
+  console.log(`[queue] ${cardId} → review${check.skipped ? '' : ' (acceptance check PASS)'}`);
+
+  await tickQueueAfterExit(card.parent_id, deps);
+}
+
+// Standard post-exit tick: the holder's own parent queue plus a sweep of every
+// other Runn-on project. The cwd lock just released, so other projects waiting
+// on it should get a chance to spawn.
+async function tickQueueAfterExit(parentId, deps) {
+  if (parentId) await maybeAdvanceQueue(parentId, deps);
+  await tickOtherProjects(parentId, deps);
+}
+
+// Walk every top-level project except `excludeParentId` and tick its queue.
+// Used after a holder's exit so other projects waiting on the same cwd get a
+// chance to pick up where they left off.
+async function tickOtherProjects(excludeParentId, deps) {
+  const { listCards } = deps;
+  try {
+    const all = await listCards();
+    for (const c of all) {
+      if (c.parent_id) continue; // top-level only
+      if (c.id === excludeParentId) continue;
+      if (!c.runn_mode) continue; // gated parents skip themselves; small saving
+      await maybeAdvanceQueue(c.id, deps);
+    }
+  } catch (err) {
+    console.error('[queue] tickOtherProjects failed', err);
+  }
 }
 
 function appendCheckLog(notes, verdict, output) {
@@ -137,59 +220,137 @@ function appendCheckLog(notes, verdict, output) {
   return (notes || '') + block;
 }
 
-// Look for the next runnable sibling under `parentId` (sorted by sort_order).
-// AI + status=todo → spawn it. Human + status=todo → pause. Anything else → skip.
+// Walk siblings under `parentId` (sorted by sort_order) and advance the queue.
+//
+// Sequential model: every walk spawns at most one AI subprocess, since the
+// tasks share a working tree. The walk is also gated on the parent's
+// `runn_mode` flag — if the user has the project switched off, queued AI
+// tasks sit untouched until they flip it back on. Status semantics:
+//   - done                 → walk past
+//   - hold                 → walk past (user-requested skip)
+//   - doing                → HALT (one AI subprocess at a time)
+//   - waiting              → HALT (a follow-up turn is buffered, about to run)
+//   - blocked              → HALT (error state — surface it for the user)
+//   - blocking + review    → HALT (human approval gate)
+//   - blocking + queued    → spawn-if-AI (only if runn_mode), then HALT
+//   - independent + review → walk past (no approval gate)
+//   - independent + queued (human) → walk past
+//   - queued (AI) + runn_mode → spawn it and HALT (next walk picks up next)
+//   - queued (AI) + !runn_mode → HALT silently (project is paused)
+// Legacy: cards with status='todo' are treated as 'queued'.
 async function maybeAdvanceQueue(parentId, deps) {
   if (!parentId) return;
-  const { listCards, bridge, onAiExit, atomicWriteJson, cardPath, nowIso } = deps;
+  const { listCards, readJson, cardPath } = deps;
+  // Read the parent so we can honor its runn_mode switch. If the parent file
+  // is missing/unreadable, treat as off — better to do nothing than spawn
+  // against an unknown project.
+  let parent = null;
+  try { parent = await readJson(cardPath(parentId)); }
+  catch { /* parent gone */ }
+  const runnOn = !!(parent && parent.runn_mode);
+
   const all = await listCards();
   const siblings = all
     .filter(c => c.parent_id === parentId)
     .sort((a, b) => a.sort_order - b.sort_order);
 
   for (const sib of siblings) {
-    if (sib.status === 'done') continue;
-    if (sib.status === 'blocked') {
+    const status = sib.status === 'todo' ? 'queued' : sib.status;
+    // Completed states the walker steps past: done/hold plus the conveyor's
+    // billing tail (invoice/invoiced/paid all mean the task is finished).
+    if (status === 'done' || status === 'hold' ||
+        status === 'invoice' || status === 'invoiced' || status === 'paid') continue;
+
+    // Anything mid-flight or in error halts the walk regardless of blocking.
+    // `waiting` = a queued follow-up message buffered behind a busy cwd; it's
+    // about to run, so treat it like `doing` for the sequential constraint.
+    if (status === 'doing' || status === 'waiting') {
+      console.log(`[queue] halting at ${sib.id} (status=${status} — sequential constraint)`);
+      return;
+    }
+    if (status === 'blocked') {
       console.log(`[queue] halting at ${sib.id} (status=blocked)`);
       return;
     }
-    if (sib.status === 'doing') {
-      // Something's already running — let it complete; queue will re-trigger on exit.
-      return;
-    }
-    if (sib.status !== 'todo') continue;
 
+    if (status === 'review') {
+      if (sib.blocking) {
+        console.log(`[queue] halting at ${sib.id} (blocking, awaiting human review)`);
+        return;
+      }
+      continue;
+    }
+
+    // status === 'queued'
     const assignee = sib.assignee || 'human';
     if (assignee === 'human') {
-      console.log(`[queue] pausing at human task ${sib.id}`);
+      if (sib.blocking) {
+        console.log(`[queue] halting at human task ${sib.id} (blocking)`);
+        return;
+      }
+      continue;
+    }
+
+    if (sib.session_id) {
+      console.log(`[queue] halting at ${sib.id} (AI queued but already has session — defensive)`);
       return;
     }
-    // AI todo → spawn it.
-    if (sib.session_id) continue; // already had a session, skip (defensive)
-    const location = sib.location || bridge.DEFAULT_LOCATION;
-    try {
-      const { session_id, session_path, location: resolvedLoc } = await bridge.spawnSession({
-        title: sib.title,
-        location,
-        onExit: (code) => onAiExit(sib.id, code),
-      });
-      const merged = {
-        ...sib,
-        status: 'doing',
-        assignee: 'ai',
-        session_id,
-        session_path,
-        location: resolvedLoc,
-        origin: 'runn',
-        updated_at: nowIso(),
-      };
-      await atomicWriteJson(cardPath(sib.id), merged);
-      console.log(`[queue] auto-started ${sib.id} → session ${session_id.slice(0,8)}`);
-    } catch (err) {
-      console.error(`[queue] failed to auto-start ${sib.id}`, err);
-      await atomicWriteJson(cardPath(sib.id), { ...sib, status: 'blocked', updated_at: nowIso() });
+    if (!runnOn) {
+      console.log(`[queue] halting at ${sib.id} (parent runn_mode=off; project is paused)`);
+      return;
     }
+    await spawnSibling(sib, deps);
     return;
+  }
+}
+
+// Spawn an AI session for a single sibling and write the resulting `doing`
+// card back to disk. On failure, mark the card `blocked` so the user sees it.
+async function spawnSibling(sib, deps) {
+  const { bridge, onAiExit, atomicWriteJson, cardPath, nowIso, mintPermissionToken, resolveCardPermissionMode, resolveCardSystemContext } = deps;
+  const location = sib.location || bridge.DEFAULT_LOCATION;
+  try {
+    const permissionToken = mintPermissionToken ? mintPermissionToken(sib.id) : undefined;
+    const permissionMode = resolveCardPermissionMode ? await resolveCardPermissionMode(sib) : 'default';
+    const systemPromptAppend = resolveCardSystemContext ? await resolveCardSystemContext(sib) : null;
+    const { session_id, session_path, location: resolvedLoc } = await bridge.spawnSession({
+      title: sib.title,
+      notes: sib.notes_md,
+      location,
+      permissionToken,
+      permissionMode,
+      systemPromptAppend,
+      holder: `card:${sib.id}`,
+      onExit: (code) => onAiExit(sib.id, code),
+    });
+    const merged = {
+      ...sib,
+      status: 'doing',
+      assignee: 'ai',
+      session_id,
+      session_path,
+      location: resolvedLoc,
+      origin: 'runn',
+      updated_at: nowIso(),
+    };
+    applyTimerTransition(sib, merged, nowIso);
+    await atomicWriteJson(cardPath(sib.id), merged);
+    console.log(`[queue] auto-started ${sib.id} → session ${session_id.slice(0,8)}`);
+  } catch (err) {
+    // CWD_BUSY means another project is using the working tree right now.
+    // Don't mark the card blocked — it's still a valid queued task; we just
+    // need to wait. The walker will re-fire from the holder's exit handler
+    // (handleAiExit → maybeAdvanceQueue across every parent that shares this
+    // cwd is the eventual fix; for now, the holder's own queue tick will
+    // free things up and any user action on this project re-pokes us).
+    if (err && err.code === 'CWD_BUSY') {
+      console.log(`[queue] skipping ${sib.id} — cwd held by ${err.holder}`);
+      return;
+    }
+    console.error(`[queue] failed to auto-start ${sib.id}`, err);
+    const blocked = { ...sib, status: 'blocked', updated_at: nowIso() };
+    applyTimerTransition(sib, blocked, nowIso);
+    await atomicWriteJson(cardPath(sib.id), blocked);
   }
 }
 
