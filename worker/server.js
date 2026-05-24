@@ -27,6 +27,7 @@ const PROJECTS_DIR = path.join(DATA_ROOT, 'projects');
 const ASSETS_DIR = path.join(DATA_ROOT, 'assets');
 const SETTINGS_PATH = path.join(DATA_ROOT, 'settings.json');
 const CLAUDE_PROJECTS = path.join(HOME, '.claude', 'projects');
+const WORKSPACES_ROOT = path.join(HOME, 'projects');
 const PORT = Number(process.env.PORT || 17777);
 const HOST = process.env.HOST || '0.0.0.0';
 const FRONTEND_DIR = path.join(__dirname, '..', 'frontend');
@@ -257,6 +258,47 @@ function nowIso() { return new Date().toISOString(); }
 function mintCardId(seed) {
   if (seed) return `c_${seed.slice(0, 8)}`;
   return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,6)}`;
+}
+
+// ── Workspace helpers (per-client folder under ~/projects) ──
+// A workspace is just a directory under $HOME/projects. Clients have a
+// default workspace slug; tasks may override per-task. Picking is constrained
+// to this tree (no arbitrary host paths) — this is also the first structural
+// step toward per-client access scoping. See HANDOFF.md "WORKSPACE PICKER".
+function slugifyName(s) {
+  return String(s || '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+async function ensureWorkspace(name, fallbackId) {
+  // Idempotent. mkdir -p ~/projects/<slug>; seed a stub CLAUDE.md only if
+  // none exists (never overwrite). Returns the slug used.
+  const slug = slugifyName(name) || fallbackId;
+  const dir = path.join(WORKSPACES_ROOT, slug);
+  await fsp.mkdir(dir, { recursive: true });
+  const claudeMd = path.join(dir, 'CLAUDE.md');
+  try { await fsp.access(claudeMd); } catch {
+    await fsp.writeFile(
+      claudeMd,
+      `# ${name || slug} — workspace stub\n\nInherits context from ../CLAUDE.md.\n`
+    );
+  }
+  return slug;
+}
+
+async function listWorkspaces() {
+  // Immediate subdirs of ~/projects. Skip dotfiles + node_modules.
+  const entries = await fsp.readdir(WORKSPACES_ROOT, { withFileTypes: true }).catch(() => []);
+  const out = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    if (e.name.startsWith('.')) continue;
+    if (e.name === 'node_modules') continue;
+    out.push({ slug: e.name, path: path.join(WORKSPACES_ROOT, e.name) });
+  }
+  out.sort((a, b) => a.slug.localeCompare(b.slug));
+  return out;
 }
 
 // ── Claude session helpers ───────────────────────────────────
@@ -979,6 +1021,14 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, merged);
     }
 
+    // ── Workspaces (immediate subdirs of ~/projects) ──────
+    // Feeds the cwd picker in the project/task settings. Returns
+    // [{ slug, path }] — path is absolute (relative-path migration is
+    // deferred to ANCHOR CUTOVER step 2).
+    if (m === 'GET' && url.pathname === '/workspaces') {
+      return sendJson(res, 200, await listWorkspaces());
+    }
+
     // ── Clients (first-class invoice recipients) ───────────
     if (m === 'GET' && url.pathname === '/clients') {
       const files = await fsp.readdir(CLIENTS_DIR).catch(() => []);
@@ -996,6 +1046,11 @@ const server = http.createServer(async (req, res) => {
     if (m === 'POST' && url.pathname === '/clients') {
       const body = await readBody(req);
       const id = body.id || `cl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,6)}`;
+      // Provision the workspace folder + stub CLAUDE.md (idempotent). Body
+      // can override the slug explicitly; otherwise we derive from name.
+      const workspace = body.workspace
+        ? await ensureWorkspace(body.workspace, id)
+        : await ensureWorkspace(body.name, id);
       const client = {
         id,
         name: body.name || 'Untitled',
@@ -1011,6 +1066,10 @@ const server = http.createServer(async (req, res) => {
         wg_conf: body.wg_conf || '',
         wg_ip: body.wg_ip || '',
         ssh_user: body.ssh_user || '',
+        // Default workspace dir for this client — a slug under $HOME/projects.
+        // Tasks may override per-task. Picker is constrained to existing
+        // workspace dirs (GET /workspaces).
+        workspace,
         // Freeform AI context appended to the system prompt on every spawn for
         // tasks under a project linked to this client. People, IPs, platforms,
         // permissions — anything Claude should "just know" without you typing
@@ -1035,6 +1094,12 @@ const server = http.createServer(async (req, res) => {
         created_at: current.created_at,
         updated_at: nowIso(),
       };
+      // Retro-fit: a client created before WORKSPACE PICKER landed has no
+      // workspace field. The first PATCH after the upgrade provisions one
+      // (derived from name, never silently overwrites an existing CLAUDE.md).
+      if (!merged.workspace) {
+        merged.workspace = await ensureWorkspace(merged.name, merged.id);
+      }
       await atomicWriteJson(p, merged);
       return sendJson(res, 200, merged);
     }
