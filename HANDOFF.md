@@ -55,16 +55,30 @@ live); `./worker` requires `docker restart runn` to pick up.
 
 Domain shape is **Client → Project → Task**, where "Project" is just a
 top-level card (a card with no `parent_id`). There is no separate
-`proj_*.json` layer anymore (removed in the cleanup after WORKSPACE PICKER
-landed) — a project's id is its card id, its name is its card title.
+`proj_*.json` layer — a project's id is its card id, its name is its
+card title.
+
+**Every project has a client** (no more "personal, client_id=null"
+flavour). Personal work goes under a non-billable client called `waz`.
+Other non-billable clients exist per product/workspace: `Runn`, `EFEM`,
+`EFITM`. `RC` is kept as an empty shell for future RC-org-but-not-product
+work.
+
+**Cwd is derived, not stored.** A card's spawn cwd is computed at spawn
+time as `~/projects/<root.client.workspace>`. The `location.cwd` field
+is gone from cards. There is no per-project working-directory picker —
+the workspace is set on the client and inherited by every project under
+it. Changing a client's workspace silently orphans its sessions; the
+workaround is in `worker/migrate-cwd-collapse.js` (mv jsonls between
+project slugs).
 
 Domain objects:
 - **Client** (`~/runn-data/clients/cl_*.json`). Billing fields:
   `rate_per_hour` (per-client; null falls back to settings default),
   `gst_rate`, `currency`, `non_billable` (bool — track hours but exclude
-  from outstanding totals + billing panel; used for the user's own org
-  "RC"), `invoice_prefix`, `invoice_seq`. Workspace field: `workspace`
-  (slug under `~/projects/`; auto-mkdir on POST or first PATCH).
+  from outstanding totals + billing panel), `invoice_prefix`,
+  `invoice_seq`. Workspace field: `workspace` (slug under `~/projects/`;
+  auto-mkdir on POST or first PATCH). One client = one workspace.
 - **Settings** (`~/runn-data/settings.json`). `default_rate_per_hour`
   (fallback when client has none), `currency_symbol`, `default_gst_rate`,
   `default_due_days`, `business_*`, `bank`. Cached client-side as
@@ -99,12 +113,12 @@ Backend endpoints:
 - `GET/PUT /settings` — global settings (spread-merge body).
 - `GET/POST/PATCH/DELETE /clients[/:id]`. POST + first PATCH-after-upgrade
   auto-provision the workspace dir + stub CLAUDE.md.
-- `GET /workspaces` → `[{slug, path}]` for immediate subdirs of
-  `$HOME/projects` (dotfiles + node_modules skipped). Feeds the cwd picker.
 - `POST /invoices` — issues; bumps client.invoice_seq, mints id from
   `{prefix}{seq}`, snapshots from/to/bank/currency.
 - `GET /invoices`, `GET /invoices/:id`, `PATCH /invoices/:id` (status, paid).
 - (No `/projects` routes — the billing-project layer was retired.)
+- (No `/workspaces` route — the cwd picker was retired; cwd is derived
+  from `client.workspace` at spawn time.)
 
 ## Where billing UX is weak right now (probable next-session targets)
 
@@ -138,9 +152,12 @@ Backend endpoints:
 - `worker/bridge.js` — Claude subprocess spawning; concatenates
   `title + "\n\n" + notes_md` as the first prompt (this is how multi-turn
   human chat reaches Claude).
-- `worker/migrate-{clients,paths}.js` — one-shot, idempotent migrations
-  gated by `settings.migrations.{v1_clients,v4_paths}`. (v2_projects /
-  v3_status_billing gates persist on disk but their scripts are gone.)
+- `worker/migrate-{clients,paths,cwd-collapse}.js` — one-shot, idempotent
+  migrations gated by `settings.migrations.{v1_clients,v4_paths,v5_cwd_collapse}`.
+  (v2_projects / v3_status_billing gates persist on disk but their scripts
+  are gone.) v5 created the waz/Runn/EFEM/EFITM clients, reassigned 5
+  projects off RC, relocated 42 orphaned session jsonls, and stripped the
+  location.cwd field from every card.
 - `~/projects/<slug>/` — workspace dirs (one per client + freeform).
   Bind-mounted into the container. Picked from the cwd dropdown.
 - `~/runn-data/cards/` — card JSON. Archived ones move to `cards/archive/`.
@@ -288,11 +305,15 @@ the bind mount and skip Step 3 (portability via convention only).
 
 ---
 
-# 🧩 TRACK B CARD — "WORKSPACE PICKER" — SHIPPED
+# 🧩 TRACK B CARD — "WORKSPACE PICKER" — RETIRED
 
-Landed in commit 57fb200. The spec below is preserved for reference; the
-shipped version differs only in storing paths absolutely (relative-to-$HOME
-storage was deferred — see ANCHOR CUTOVER step 2).
+Landed in 57fb200, then collapsed away in v5_cwd_collapse. The picker is
+gone; cwd is now derived from `root.client.workspace` at spawn time, no
+per-project override. The "one client = one workspace" simplification
+needed the inverse of HANDOFF.md's original "one client → many workspaces"
+flexibility — `RC` was split into separate `Runn`, `EFEM`, `EFITM` clients
+to give each its own workspace. The spec below is preserved for historical
+reference only.
 
 **Goal.** Stop free-typing a cwd in project/task settings. The directory becomes
 a pick from a known set, defaulted from the client, and every client gets a
