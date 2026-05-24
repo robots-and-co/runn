@@ -1,45 +1,43 @@
 'use strict';
 
-// Bump this version string whenever the shell changes meaningfully —
-// triggers a fresh fetch on the next install/activate cycle.
-const VERSION = 'runn-shell-v1';
-const SHELL = ['/', '/manifest.json', '/icon.svg'];
+// Killswitch SW — replaced the network-first shell cache after stale-content
+// pain during development. Once installed it:
+//   1. Claims every controlled tab immediately.
+//   2. Bypasses cache for every fetch (always fresh from the worker, which
+//      sends `cache-control: no-store`).
+//   3. Wipes all caches.
+//   4. Unregisters itself.
+//   5. Reloads every controlled tab.
+//
+// After one round-trip the browser has no SW, no caches, and the page is
+// loading directly from the worker. The page also no longer registers a SW,
+// so the killswitch never comes back.
+const VERSION = 'killswitch-2';
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)));
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
-    // Drop old caches
-    const names = await caches.keys();
-    await Promise.all(names.filter(n => n !== VERSION).map(n => caches.delete(n)));
-    await self.clients.claim();
+    try { await self.clients.claim(); } catch {}
+    try {
+      const names = await caches.keys();
+      await Promise.all(names.map(n => caches.delete(n)));
+    } catch {}
+    try { await self.registration.unregister(); } catch {}
+    try {
+      const cs = await self.clients.matchAll({ includeUncontrolled: true });
+      for (const c of cs) { try { c.navigate(c.url); } catch {} }
+    } catch {}
   })());
 });
 
+// During the brief window where this SW controls tabs but the activate handler
+// hasn't finished navigating them away, never serve from cache.
 self.addEventListener('fetch', (e) => {
-  const req = e.request;
-  if (req.method !== 'GET') return;
-
-  const url = new URL(req.url);
-  // Never intercept dynamic API or the WS upgrade.
-  if (url.pathname.startsWith('/cards') ||
-      url.pathname.startsWith('/sessions') ||
-      url.pathname === '/ws') return;
-
-  // Network-first for the shell so updates land immediately, cache as fallback for offline.
-  e.respondWith((async () => {
-    try {
-      const fresh = await fetch(req);
-      const copy = fresh.clone();
-      caches.open(VERSION).then(c => c.put(req, copy)).catch(() => {});
-      return fresh;
-    } catch {
-      const cached = await caches.match(req);
-      if (cached) return cached;
-      throw new Error('offline and no cache');
-    }
-  })());
+  if (e.request.method !== 'GET') return;
+  e.respondWith(fetch(e.request).catch(() =>
+    new Response('', { status: 504, statusText: 'sw-killswitch' })
+  ));
 });
