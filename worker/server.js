@@ -796,7 +796,11 @@ const server = http.createServer(async (req, res) => {
       }
 
       const fromParent = card.parent_id;
-      const merged = { ...card, parent_id: target.id, session_path: sessionPath, updated_at: nowIso() };
+      // Cross-project move: clear `due`. The drag-into-today bump (and any
+      // other due signal) was set in the old project's context — carrying it
+      // into the new project would silently float that project into the wrong
+      // bucket. New project = new context; user re-sets due if they want it.
+      const merged = { ...card, parent_id: target.id, due: null, session_path: sessionPath, updated_at: nowIso() };
       await atomicWriteJson(cardPath(card.id), merged); // cardsWatcher broadcasts card.changed
       // Tick both queues: a sibling left behind in the old project may now run,
       // and the task may slot into the new project's queue.

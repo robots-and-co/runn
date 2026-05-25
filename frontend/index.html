@@ -2373,10 +2373,34 @@
     padding: 8px 10px;
     overflow-x: auto;
     margin: 0.5em 0;
+    position: relative;
   }
   .turn-user pre code, .turn-text pre code {
     background: none; padding: 0; border-radius: 0;
     font-size: 0.88em; white-space: pre;
+  }
+  /* Copy-to-clipboard chip injected into assistant code blocks
+     (see attachCodeCopyButtons). Hidden until hover/focus so it
+     doesn't crowd the code; sticky inside the scroller so long lines
+     don't push it off-screen. */
+  .code-copy-btn {
+    position: sticky; float: right;
+    top: 0; right: 0; margin-left: 8px;
+    background: var(--paper); border: 1px solid var(--line);
+    color: var(--ink-2);
+    font: 500 11px/1 ui-sans-serif, system-ui, sans-serif;
+    padding: 3px 8px; border-radius: 4px;
+    cursor: pointer; opacity: 0;
+    transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease;
+  }
+  .turn-text pre:hover .code-copy-btn,
+  .code-copy-btn:focus-visible { opacity: 1; }
+  .code-copy-btn:hover { color: var(--ink); }
+  .code-copy-btn.copied {
+    opacity: 1; color: var(--accent); border-color: var(--accent-soft);
+  }
+  @media (hover: none) {
+    .code-copy-btn { opacity: 0.7; }
   }
   .turn-user h1, .turn-user h2, .turn-user h3,
   .turn-user h4, .turn-user h5, .turn-user h6,
@@ -2858,6 +2882,7 @@
           <textarea class="firstturn-input footer-input" id="firstturnInput" rows="1" placeholder="What's this task?" autocomplete="off"></textarea>
           <button type="button" class="footer-send" id="firstturnSend" title="Send (Enter)">↑</button>
         </div>
+        <div class="chat-error" id="firstturnMsg" hidden></div>
       </div>
     </div>
   </div>
@@ -2913,7 +2938,7 @@
         <div class="chat-permissions" id="chatPermissions"></div>
         <div class="chat-footer" id="chatFooter">
           <div class="footer-input-row" id="chatInputRow">
-            <input class="footer-input" id="chatInput" type="text" placeholder="Reply… (!stop to interrupt)" autocomplete="off">
+            <input class="footer-input" id="chatInput" type="text" placeholder="Reply… (type ! for commands)" autocomplete="off">
             <button class="footer-send" id="chatSend">↑</button>
           </div>
           <div class="chat-error" id="chatErrorMsg" hidden></div>
@@ -4346,11 +4371,21 @@ function renderProjectSteps() {
   }
   const totalCount = children.length;
   const doneCount = children.filter(c => statusRank(c.status) > 0).length;
-  // Sort: active group at the top (subdivided by due bucket, highest rank
-  // first), then 'invoice' (ready to bill) sinks, then completed/hidden
-  // states sink furthest. Within the active bucket the user's manual
-  // sort_order still applies; within sunk groups, newest-completed first.
+  // Sort: due bucket is primary — today-due cards sit together regardless of
+  // status (active or invoice). Within a bucket, active before invoice before
+  // hidden/completed; then sort_order (active) or recency (invoice/done).
+  // Hidden statuses (done/invoiced/paid) get bucket rank 0 ('none') so they
+  // settle at the bottom of the no-due group when the show-completed toggle
+  // is on — they're terminal, not scheduled work.
+  const bucketRankFor = c => HIDDEN_STATUSES.has(c.status)
+    ? 0
+    : dueBucketFromDate(c.due).rank;
+  const bucketKeyFor = c => HIDDEN_STATUSES.has(c.status)
+    ? 'none'
+    : dueBucketFromDate(c.due).key;
   children.sort((a, b) => {
+    const ba = bucketRankFor(a), bb = bucketRankFor(b);
+    if (ba !== bb) return bb - ba;
     const ra = statusRank(a.status), rb = statusRank(b.status);
     if (ra !== rb) return ra - rb;
     if (ra > 0) {
@@ -4359,36 +4394,35 @@ function renderProjectSteps() {
       if (ka !== kb) return ka < kb ? 1 : -1;
       return 0;
     }
-    // Active group: bucket-rank descending (overdue > today > … > no due),
-    // then sort_order ascending within each bucket.
-    const ba = dueBucketFromDate(a.due).rank;
-    const bb = dueBucketFromDate(b.due).rank;
-    if (ba !== bb) return bb - ba;
     return a.sort_order - b.sort_order;
   });
-  // Count distinct buckets among visible active tasks. We only render dividers
-  // when there's more than one — a lone "today" label above a homogeneous
-  // list adds noise without information (same rule as the board in pane 1).
-  const visibleActiveBuckets = new Set();
+  // Render dividers when there's more than one visible bucket OR when today /
+  // overdue is present. Urgency labels carry signal even alone — and the
+  // drag-to-today bump needs a today divider to drop onto. Bucketing now spans
+  // active + invoice, so today-due invoice cards share the TODAY label.
+  const visibleBuckets = new Set();
   for (const c of children) {
-    if (statusRank(c.status) !== 0) continue;
     if (!showDoneTasks && HIDDEN_STATUSES.has(c.status)) continue;
-    visibleActiveBuckets.add(dueBucketFromDate(c.due).key);
+    visibleBuckets.add(bucketKeyFor(c));
   }
-  const showActiveDividers = visibleActiveBuckets.size > 1;
-  let prevActiveBucket = null;
+  const showDividers = visibleBuckets.size > 1
+    || visibleBuckets.has('today')
+    || visibleBuckets.has('overdue');
+  let prevBucket = null;
   for (const step of children) {
     if (!showDoneTasks && HIDDEN_STATUSES.has(step.status)) continue;
-    // Active group only — emit a divider when the bucket changes.
-    if (showActiveDividers && statusRank(step.status) === 0) {
-      const b = dueBucketFromDate(step.due);
-      if (b.key !== prevActiveBucket) {
+    if (showDividers) {
+      const key = bucketKeyFor(step);
+      if (key !== prevBucket) {
+        const label = key === 'none'
+          ? 'no due'
+          : dueBucketFromDate(step.due).label;
         const sep = document.createElement('div');
         sep.className = 'board-divider';
-        sep.dataset.bucket = b.key;
-        sep.textContent = b.label;
+        sep.dataset.bucket = key;
+        sep.textContent = label;
         projectSteps.appendChild(sep);
-        prevActiveBucket = b.key;
+        prevBucket = key;
       }
     }
     const el = buildStepEl(step, 0);
@@ -4616,6 +4650,7 @@ const firstturnInput      = document.getElementById('firstturnInput');
 const firstturnBubbleWrap = document.getElementById('firstturnBubbleWrap');
 const firstturnBubble     = document.getElementById('firstturnBubble');
 const firstturnAi         = document.getElementById('firstturnAi');
+const firstturnMsg        = document.getElementById('firstturnMsg');
 let firstturnBubbleEdit   = null;
 const chatSectionTasksEl = document.getElementById('chatSectionTasks');
 const chatHeaderBillBtn = document.getElementById('chatHeaderBillBtn');
@@ -4712,12 +4747,21 @@ function autoGrowFirstturn(el) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 240) + 'px';
 }
-firstturnInput.addEventListener('input', () => autoGrowFirstturn(firstturnInput));
+firstturnInput.addEventListener('input', () => {
+  autoGrowFirstturn(firstturnInput);
+  const hint = commandHint(firstturnInput.value.trim());
+  if (hint) { firstturnMsg.textContent = hint; firstturnMsg.hidden = false; }
+  else if (!firstturnInput.value.startsWith('!')) firstturnMsg.hidden = true;
+});
 function submitFirstTurn() {
   const val = firstturnInput.value.trim();
   if (!val || !openCardId) return;
+  // `!commands` are intercepted here too — an un-run task has no session chat,
+  // but it can still be moved/reorganised from its first-turn input.
+  if (runChatCommand(val, firstturnCmdCtx)) { firstturnInput.value = ''; autoGrowFirstturn(firstturnInput); return; }
   firstturnInput.value = '';
   autoGrowFirstturn(firstturnInput);
+  firstturnMsg.hidden = true;
   const card = cards.get(openCardId);
   if (!card) return;
   const hasTitle = !!(card.title && card.title.trim());
@@ -5307,10 +5351,16 @@ function applyPanel(card) {
   // Toggle the "loud when set" treatment + colour-code by urgency.
   chatDueWrap.classList.toggle('has-due', !!card.due);
   chatDueWrap.dataset.dueStatus = card.due ? dueStatus(card.due) : '';
-  // done_at: shown only on done tasks. Falls back to updated_at's date if
-  // the card was completed before done_at existed, so historical entries
-  // get a sensible default the user can backdate from.
-  const showDone = isTask && card.status === 'done';
+  // done_at: shown on any "work completed" status — done, invoice, invoiced.
+  // (Paid is omitted: the invoice is issued; backdating the work date would
+  // mismatch the line item already on the invoice.) Server stamps done_at on
+  // entry to any of these; falls back to updated_at for historical entries
+  // that pre-date the field.
+  const showDone = isTask && (
+    card.status === 'done' ||
+    card.status === 'invoice' ||
+    card.status === 'invoiced'
+  );
   chatHeaderDoneSlot.hidden = !showDone;
   if (showDone && document.activeElement !== chatDoneAt) {
     const stamp = card.done_at || card.updated_at || '';
@@ -6051,6 +6101,39 @@ function renderMarkdown(text) {
   return DOMPurify.sanitize(marked.parse(src));
 }
 
+// Inject a `copy` chip into every fenced code block under `root`.
+// Idempotent — safe to call on a re-rendered transcript.
+function attachCodeCopyButtons(root) {
+  for (const pre of root.querySelectorAll('pre')) {
+    const code = pre.querySelector('code');
+    if (!code) continue;
+    if (pre.querySelector(':scope > .code-copy-btn')) continue;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'code-copy-btn';
+    btn.textContent = 'copy';
+    btn.title = 'Copy to clipboard';
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(code.textContent);
+        btn.textContent = 'copied ✓';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = 'copy';
+          btn.classList.remove('copied');
+        }, 1200);
+      } catch {
+        btn.textContent = 'copy failed';
+        setTimeout(() => { btn.textContent = 'copy'; }, 1500);
+      }
+    });
+    // Prepend so the sticky chip sits at the top-right corner before any code.
+    pre.insertBefore(btn, pre.firstChild);
+  }
+}
+
 function renderTurn(t) {
   if (t.kind === 'user') {
     const div = document.createElement('div');
@@ -6075,6 +6158,7 @@ function renderTurn(t) {
   const body = document.createElement('div');
   body.className = 'turn-text';
   body.innerHTML = renderMarkdown(t.text);
+  attachCodeCopyButtons(body);
   outer.appendChild(body);
   div.appendChild(outer);
   return div;
@@ -6147,29 +6231,132 @@ const chatErrorMsg = document.getElementById('chatErrorMsg');
 // hidden by an applyPanel() call that races with the card's status flip.
 let chatSending = false;
 
-// Runn chat commands use a `!` prefix, not `/` — the underlying Claude session
-// treats a leading `/` as one of its OWN slash commands, so `/stop` never
-// reaches Runn. `!` is ours to intercept here. Returns true if `val` was a
-// command (handled or rejected) and should NOT be sent to the session.
-function runChatCommand(val) {
+// ── Runn chat commands (the `!cmd` line) ─────────────────────
+// A `!` prefix, not `/`: the underlying Claude session treats a leading `/` as
+// one of its OWN slash commands, so `/stop` never reaches Runn. `!` is ours to
+// intercept. A command is NEVER sent to the session. Commands work from both
+// the live-session input (chatInput) and the first-turn input (firstturnInput),
+// so an un-run task can still be reorganised — each surface passes a `ctx` so
+// feedback lands in the right place.
+//
+// To add a command: push to CHAT_COMMANDS. `!help` and the typing hint are
+// generated from the table, so they stay in sync for free.
+
+let pendingConfirm = null; // { run(ctx) } — set by a command awaiting !yes/!no
+
+// Move the open task to another project. `!move` lists candidates; `!move
+// <name>` fuzzy-matches a top-level project by title; a cross-client move asks
+// for !yes/!no first (it relocates the task's session + re-attributes billing).
+async function moveCommand(args, ctx) {
+  const card = cards.get(openCardId);
+  if (!card) return;
+  if (!card.parent_id) { ctx.showMsg('This is a project, not a task — only tasks can be moved.'); return; }
+  // Candidate targets: top-level cards (no parent), excluding the current one.
+  const projects = [...cards.values()].filter(c => !c.parent_id && c.id !== card.parent_id);
+  if (!projects.length) { ctx.showMsg('No other projects to move to.'); return; }
+  const names = ps => ps.map(p => p.title || '(untitled)').join(' · ');
+  if (!args) { ctx.showMsg(`Move where? ${names(projects.slice(0, 12))} — type !move <name>`); return; }
+
+  const q = args.toLowerCase();
+  let matches = projects.filter(p => (p.title || '').toLowerCase().includes(q));
+  const exact = matches.find(p => (p.title || '').toLowerCase() === q);
+  if (exact) matches = [exact];
+  if (matches.length === 0) { ctx.showMsg(`No project matches "${args}". Try: ${names(projects.slice(0, 8))}`); return; }
+  if (matches.length > 1)  { ctx.showMsg(`"${args}" matches ${matches.length}: ${names(matches)} — be more specific.`); return; }
+  const target = matches[0];
+
+  const doMove = async (c2) => {
+    try { await moveTask(card.id, target.id); c2.showMsg(`Moved to "${target.title}".`); }
+    catch (err) { c2.showMsg(`Move failed: ${err.message}`); }
+  };
+  // Client lives on the project card; a cross-client move is the consequential
+  // one (session relocation + billing re-attribution), so confirm it.
+  const fromProject = cards.get(card.parent_id);
+  const crossClient = (fromProject && fromProject.client_id || null) !== (target.client_id || null);
+  if (crossClient) {
+    const cl = clients.get(target.client_id);
+    pendingConfirm = { run: doMove, cardId: card.id };
+    ctx.showMsg(`Move to "${target.title}"${cl ? ` (client ${cl.name})` : ''}? Relocates its session. !yes / !no`);
+    return;
+  }
+  doMove(ctx);
+}
+
+// POST the move and surface the server's error text (api() only carries the
+// status code, and the move endpoint's 409s are worth reading verbatim).
+async function moveTask(cardId, toId) {
+  const res = await fetch(`/cards/${cardId}/move`, {
+    method: 'POST', cache: 'no-store',
+    headers: { 'accept': 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ to: toId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `move failed (${res.status})`);
+  return data;
+}
+
+const CHAT_COMMANDS = [
+  { name: 'stop', hint: 'interrupt the running turn', run: (args, ctx) => {
+      const c = cards.get(openCardId);
+      if (!c || !c.session_id) { ctx.showMsg('Nothing to stop — this task has no running turn.'); return; }
+      stopCurrentTurn();
+    } },
+  { name: 'move', args: '<project>', hint: 'move this task to another project', run: moveCommand },
+  { name: 'help', hint: 'list commands', run: (args, ctx) =>
+      ctx.showMsg('Commands: ' + CHAT_COMMANDS.map(c => '!' + c.name + (c.args ? ' ' + c.args : '')).join('   ')) },
+];
+
+// Returns true if `val` was a command (handled or rejected) and must NOT be
+// sent to the session. `ctx.showMsg(text)` renders feedback for the surface.
+function runChatCommand(val, ctx) {
   if (val[0] !== '!') return false;
-  const cmd = val.slice(1).trim().toLowerCase();
-  if (cmd === 'stop') {
-    chatInput.value = '';
-    stopCurrentTurn();
+  const [name, ...rest] = val.slice(1).trim().split(/\s+/);
+  const lname = name.toLowerCase();
+  const args = rest.join(' ').trim();
+
+  // A pending confirm consumes !yes/!no first; any other command cancels it.
+  // It's bound to the card it was raised on — a card switch discards it so a
+  // stray !yes can't move the wrong task.
+  if (pendingConfirm && pendingConfirm.cardId !== openCardId) pendingConfirm = null;
+  if (pendingConfirm) {
+    if (lname === 'yes' || lname === 'y') { const p = pendingConfirm; pendingConfirm = null; p.run(ctx); return true; }
+    if (lname === 'no'  || lname === 'n') { pendingConfirm = null; ctx.showMsg('Cancelled.'); return true; }
+    pendingConfirm = null;
+  }
+
+  const cmd = CHAT_COMMANDS.find(c => c.name === lname);
+  if (!cmd) {
+    const near = CHAT_COMMANDS.find(c => c.name.startsWith(lname) || lname.startsWith(c.name));
+    ctx.showMsg(`Unknown command "!${name}".${near ? ` Did you mean !${near.name}?` : ''} Try !help.`);
     return true;
   }
-  chatInput.value = '';
-  chatErrorMsg.textContent = `Unknown command "${val}". Available: !stop`;
-  chatErrorMsg.hidden = false;
+  cmd.run(args, ctx);
   return true;
 }
+
+// Typing hint: while the input holds a `!token`, show matching commands (or the
+// active command's usage once past the name) so the command set is discoverable
+// without a menu. Returns the hint string, or null when not in command context.
+function commandHint(val) {
+  if (!val || val[0] !== '!') return null;
+  const token = val.slice(1).split(/\s+/)[0].toLowerCase();
+  if (/\s/.test(val)) {
+    const cmd = CHAT_COMMANDS.find(c => c.name === token);
+    return cmd ? `!${cmd.name}${cmd.args ? ' ' + cmd.args : ''} — ${cmd.hint}` : null;
+  }
+  const matches = CHAT_COMMANDS.filter(c => c.name.startsWith(token));
+  return matches.length ? matches.map(c => `!${c.name} — ${c.hint}`).join('    ') : null;
+}
+
+// Per-surface feedback sinks for runChatCommand / the typing hint.
+const chatCmdCtx      = { showMsg: m => { chatErrorMsg.textContent = m; chatErrorMsg.hidden = false; } };
+const firstturnCmdCtx = { showMsg: m => { firstturnMsg.textContent = m; firstturnMsg.hidden = false; } };
 
 async function handleChatSubmit() {
   if (!openCardId) return;
   const val = chatInput.value.trim();
   if (!val) return;
-  if (runChatCommand(val)) return;
+  if (runChatCommand(val, chatCmdCtx)) { chatInput.value = ''; return; }
   const card = cards.get(openCardId);
   // First-turn special case: AI task with no session yet. The /message
   // endpoint requires a session, so we instead patch the user's text onto
@@ -6217,6 +6404,11 @@ async function handleChatSubmit() {
 chatSend.addEventListener('click', handleChatSubmit);
 chatInput.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChatSubmit(); }
+});
+chatInput.addEventListener('input', () => {
+  const hint = commandHint(chatInput.value.trim());
+  if (hint) { chatErrorMsg.textContent = hint; chatErrorMsg.hidden = false; }
+  else if (!chatInput.value.startsWith('!')) chatErrorMsg.hidden = true;
 });
 
 // Interrupt the running turn (the `!stop` chat command). The server signals
