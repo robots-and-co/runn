@@ -26,7 +26,16 @@ const TAGS_DIR = path.join(DATA_ROOT, 'tags');
 const CLIENTS_DIR = path.join(DATA_ROOT, 'clients');
 const INVOICES_DIR = path.join(DATA_ROOT, 'invoices');
 const ASSETS_DIR = path.join(DATA_ROOT, 'assets');
+const ATTACHMENTS_DIR = path.join(DATA_ROOT, 'attachments');
 const SETTINGS_PATH = path.join(DATA_ROOT, 'settings.json');
+
+// Caps for the (now binary-bearing) /cards/:id/message JSON body. Attachments
+// are inline base64, so the body grows ~33% over raw — these are deliberately
+// generous so a screenshot burst comfortably fits while still bounding the
+// peak heap impact of a single decode.
+const MAX_BODY_BYTES = 50 * 1024 * 1024;
+const MAX_ATTACHMENTS_PER_MESSAGE = 8;
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
 const CLAUDE_PROJECTS = path.join(HOME, '.claude', 'projects');
 const WORKSPACES_ROOT = path.join(HOME, 'projects');
 const PORT = Number(process.env.PORT || 17777);
@@ -57,6 +66,97 @@ async function atomicWriteJson(p, data) {
   const tmp = `${p}.tmp`;
   await fsp.writeFile(tmp, JSON.stringify(data, null, 2));
   await fsp.rename(tmp, p);
+}
+
+// ── Chat attachments ─────────────────────────────────────────
+// Files dropped into the chat composer (image paste, drag-drop, picker) land
+// at ~/runn-data/attachments/<card_id>/<ts36>-<rand>-<safe-name> and are
+// referenced back to Claude by absolute path inside a <RUNN-ATTACHMENTS>
+// marker block prepended to the user's prompt text. Claude's own Read tool
+// then loads them — images/PDFs visually, text formats as text.
+// Permissive allow-list: anything we trust Claude can do something useful
+// with. EXT_TO_MIME is the fallback when the browser sends no Content-Type.
+const ATTACHMENT_MIME_ALLOW = new Set([
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+  'application/pdf',
+  'text/plain', 'text/markdown', 'text/csv',
+  'application/json',
+]);
+const EXT_TO_MIME = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.gif': 'image/gif',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv',
+  '.json': 'application/json',
+};
+
+function sanitiseAttachmentName(name) {
+  // Strip path separators, NUL, newlines, and any leading dots. Then collapse
+  // anything outside a conservative ASCII alphabet so we never produce a name
+  // the static route can't safely serve back. Cap length so the prefixed
+  // <ts>-<rand>-<name> stays well under any FS limit. Loses unicode; v1 trade.
+  const base = String(name || 'file').replace(/[\\/\0\r\n]/g, '_').replace(/^\.+/, '');
+  const cleaned = base.replace(/[^A-Za-z0-9._\- ]/g, '_').slice(0, 80) || 'file';
+  return cleaned;
+}
+
+async function saveAttachments(cardId, attachments) {
+  if (!Array.isArray(attachments) || !attachments.length) return [];
+  if (attachments.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+    const e = new Error(`too many attachments (max ${MAX_ATTACHMENTS_PER_MESSAGE})`);
+    e.code = 'ATTACH_TOO_MANY';
+    throw e;
+  }
+  const dir = path.join(ATTACHMENTS_DIR, cardId);
+  await fsp.mkdir(dir, { recursive: true });
+  const out = [];
+  for (const a of attachments) {
+    if (!a || typeof a.data !== 'string') {
+      const e = new Error('attachment.data required'); e.code = 'ATTACH_BAD'; throw e;
+    }
+    const buf = Buffer.from(a.data, 'base64');
+    if (!buf.length) { const e = new Error('attachment empty'); e.code = 'ATTACH_BAD'; throw e; }
+    if (buf.length > MAX_ATTACHMENT_BYTES) {
+      const e = new Error(`attachment "${a.name || ''}" exceeds ${MAX_ATTACHMENT_BYTES} bytes`);
+      e.code = 'ATTACH_TOO_BIG'; throw e;
+    }
+    const safeName = sanitiseAttachmentName(a.name);
+    const ext = path.extname(safeName).toLowerCase();
+    const mime = ATTACHMENT_MIME_ALLOW.has(a.mime) ? a.mime : (EXT_TO_MIME[ext] || null);
+    if (!mime) {
+      const e = new Error(`unsupported attachment type: ${a.mime || ext || 'unknown'}`);
+      e.code = 'ATTACH_UNSUPPORTED'; throw e;
+    }
+    const stamp = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+    const filename = `${stamp}-${safeName}`;
+    const full = path.join(dir, filename);
+    // Defence-in-depth path-traversal guard: re-verify after the join.
+    if (!path.normalize(full).startsWith(dir + path.sep)) {
+      const e = new Error('path traversal blocked'); e.code = 'ATTACH_BAD'; throw e;
+    }
+    // Atomic write so a half-written file is never read by Claude or served.
+    const tmp = full + '.tmp';
+    await fsp.writeFile(tmp, buf);
+    await fsp.rename(tmp, full);
+    out.push({ name: safeName, mime, bytes: buf.length, filename, absPath: full });
+  }
+  return out;
+}
+
+// The marker the frontend strips back out at render time. Chosen for
+// uniqueness — Claude essentially never emits this literal opener.
+function buildPromptWithAttachments(text, saved) {
+  if (!saved || !saved.length) return String(text || '').trim();
+  const lines = saved.map(s => `- ${s.absPath} (${s.mime})`).join('\n');
+  const header = `<RUNN-ATTACHMENTS>\n${lines}\n</RUNN-ATTACHMENTS>`;
+  const body = (text && text.trim()) ? text.trim() : 'Please analyse the attached file(s).';
+  return `${header}\n\n${body}`;
+}
+
+async function deleteCardAttachments(cardId) {
+  // Best-effort recursive remove; never throws into the calling route.
+  try { await fsp.rm(path.join(ATTACHMENTS_DIR, cardId), { recursive: true, force: true }); }
+  catch (err) { console.error('[runn] deleteCardAttachments failed', err); }
 }
 
 // ── Invoicing defaults + helpers ─────────────────────────────
@@ -93,12 +193,24 @@ async function createInvoice(body) {
   const settings = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
   const client = await readJson(clientPath(body.client_id));
 
-  // Mint id: {prefix}{seq}, bump seq, persist back to client file
-  const prefix = (client.invoice_prefix || (client.name || 'INV')).toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const seq = Number.isFinite(client.invoice_seq) ? client.invoice_seq : 1;
-  const id = `${prefix}${seq}`;
-  const updatedClient = { ...client, invoice_prefix: prefix, invoice_seq: seq + 1, updated_at: nowIso() };
-  await atomicWriteJson(clientPath(body.client_id), updatedClient);
+  // Invoice id. Two paths:
+  //  - Manual: caller supplies body.id (used as-is, client seq untouched). For
+  //    hand-numbered invoices until auto-numbering is wired up.
+  //  - Auto:   mint {prefix}{seq}, bump seq, persist back to the client file.
+  let id;
+  if (body.id != null && String(body.id).trim() !== '') {
+    id = String(body.id).trim();
+    // id becomes a filename — keep it to safe chars (no path traversal).
+    if (!/^[A-Za-z0-9._-]+$/.test(id)) throw new Error('invalid invoice id');
+    const exists = await fsp.access(invoicePath(id)).then(() => true, () => false);
+    if (exists) throw new Error(`invoice ${id} already exists`);
+  } else {
+    const prefix = (client.invoice_prefix || (client.name || 'INV')).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const seq = Number.isFinite(client.invoice_seq) ? client.invoice_seq : 1;
+    id = `${prefix}${seq}`;
+    const updatedClient = { ...client, invoice_prefix: prefix, invoice_seq: seq + 1, updated_at: nowIso() };
+    await atomicWriteJson(clientPath(body.client_id), updatedClient);
+  }
 
   const items = body.items.map(it => ({
     card_id:        it.card_id || null,
@@ -237,6 +349,8 @@ async function resolveCardSystemContext(card) {
     const label = project.title || project.id;
     parts.push(`# Project context: ${label}\n\n${String(project.notes_md).trim()}`);
   }
+  // The always-on TL;DR directive is appended in bridge.js (composeAppend) on
+  // every spawn AND resume, so it's not added here — this stays context-only.
   return parts.length ? parts.join('\n\n') : null;
 }
 
@@ -402,6 +516,33 @@ function formatAskQuestions(questions) {
   return parts.join('\n');
 }
 
+// One-line digest of a tool_use's input, for the ephemeral op chip the
+// frontend renders inline with the transcript. Keep it short — the chip is
+// visually subordinate to text bubbles, not a replacement for the raw event.
+function summarizeToolInput(name, input) {
+  if (!input || typeof input !== 'object') return '';
+  const trim = (s, n = 120) => {
+    s = String(s || '');
+    return s.length > n ? s.slice(0, n - 1) + '…' : s;
+  };
+  switch (name) {
+    case 'Read':
+    case 'Edit':
+    case 'Write':         return trim(input.file_path);
+    case 'NotebookEdit':  return trim(input.notebook_path);
+    case 'Bash':          return trim(String(input.command || '').split('\n')[0]);
+    case 'Grep':
+    case 'Glob':          return trim(input.pattern);
+    case 'WebFetch':      return trim(input.url);
+    case 'WebSearch':     return trim(input.query);
+    case 'TodoWrite':     return `${(input.todos || []).length} item(s)`;
+    case 'Task':          return trim(input.description || input.subagent_type);
+    default: {
+      try { return trim(JSON.stringify(input)); } catch { return ''; }
+    }
+  }
+}
+
 function formatAskAnswer(toolResultBlock, userEv) {
   const tur = userEv && userEv.toolUseResult;
   const answers = tur && tur.answers;
@@ -438,11 +579,27 @@ async function parseTranscript(jsonlPath) {
   const turns = [];
   // One bubble per assistant API response (one message.id). Claude Code writes
   // text/thinking/tool_use blocks of a single response as separate jsonl events
-  // that share message.id — those merge. A new message.id starts a new bubble,
-  // so each model turn renders chronologically instead of one wall of text.
-  // We deliberately drop `thinking` blocks (almost always redacted) and `tool_use` blocks (implementation noise).
+  // that share message.id — text from the same message.id is merged into one
+  // bubble, but tool_use *breaks* the bubble so the chronological flow is
+  // preserved (text → op chip → text). We still drop `thinking` blocks
+  // (almost always redacted).
   let openAssistant = null;
   let openAssistantId = null;
+  // Live "is anything happening?" signal for the chat pill: output tokens
+  // generated in the *current* turn (since the last real user message). Resets
+  // when a fresh user turn opens, so a new turn visibly climbs from zero rather
+  // than carrying the previous turn's total. Counted once per assistant
+  // message.id — Claude Code can split one API response across several jsonl
+  // lines sharing an id, and each repeats the same usage block.
+  let turnOutTokens = 0;
+  const countedUsageIds = new Set();
+  const addUsage = (ev) => {
+    const u = ev.message && ev.message.usage;
+    if (!u) return;
+    const id = ev.message && ev.message.id;
+    if (id) { if (countedUsageIds.has(id)) return; countedUsageIds.add(id); }
+    turnOutTokens += u.output_tokens || 0;
+  };
   const flushAssistant = () => {
     if (!openAssistant) return;
     if (openAssistant.text) turns.push(openAssistant);
@@ -456,27 +613,46 @@ async function parseTranscript(jsonlPath) {
   // the next assistant response merges into the previous one and looks
   // like the AI is answering itself.
   const askIds = new Set();
+  // tool_use.id → the tool turn object, so the matching tool_result (delivered
+  // later as a user event) can flip its `ok` flag from null → true/false.
+  const toolById = new Map();
 
   const SKIP = new Set(['ai-title', 'queue-operation', 'last-prompt', 'attachment', 'file-history-snapshot', 'permission-mode']);
   for (const ev of events) {
     if (SKIP.has(ev.type)) continue; // metadata — does not break turns
     const ts = ev.timestamp || ev.ts || null;
     if (ev.type === 'assistant') {
+      addUsage(ev);
       const c = ev.message?.content;
       if (!Array.isArray(c)) continue;
       const msgId = ev.message?.id || null;
       if (openAssistant && msgId && msgId !== openAssistantId) flushAssistant();
       for (const block of c) {
         if (block.type === 'text' && block.text) {
-          if (!openAssistant) { openAssistant = { kind: 'assistant', text: '', ts }; openAssistantId = msgId; }
+          if (!openAssistant) { openAssistant = { kind: 'assistant', text: '', ts, id: msgId }; openAssistantId = msgId; }
           openAssistant.text = openAssistant.text ? `${openAssistant.text}\n${block.text}` : block.text;
         } else if (block.type === 'tool_use' && block.name === 'AskUserQuestion' && block.id) {
           flushAssistant();
           const qText = formatAskQuestions(block.input && block.input.questions);
-          if (qText) turns.push({ kind: 'assistant', text: qText, ts });
+          if (qText) turns.push({ kind: 'assistant', text: qText, ts, id: block.id });
           askIds.add(block.id);
+        } else if (block.type === 'tool_use' && block.id) {
+          // Flush any in-progress text bubble so the chip lands in chronological
+          // order — the next text block from this same message.id will open a
+          // fresh bubble below the chip.
+          flushAssistant();
+          const turn = {
+            kind: 'tool',
+            name: block.name || 'tool',
+            summary: summarizeToolInput(block.name, block.input),
+            id: block.id,
+            ok: null, // pending until the paired tool_result arrives
+            ts,
+          };
+          turns.push(turn);
+          toolById.set(block.id, turn);
         }
-        // thinking + other tool_use blocks intentionally ignored
+        // thinking blocks intentionally ignored
       }
       continue;
     }
@@ -493,8 +669,19 @@ async function parseTranscript(jsonlPath) {
             if (ans) turns.push({ kind: 'user', text: ans, ts });
           }
         }
+        // Flip the matching tool chip from pending → ok/err. Done for *all*
+        // tool_result blocks (including ones whose chip we may not have, e.g.
+        // legacy transcripts), not just the AskUserQuestion subset above.
+        for (const b of c) {
+          if (askIds.has(b.tool_use_id)) continue;
+          const turn = toolById.get(b.tool_use_id);
+          if (turn) turn.ok = !b.is_error;
+        }
         continue; // generic tool_results stay paired into the open assistant turn
       }
+      // A real user message opens a new turn — restart the live token tally.
+      turnOutTokens = 0;
+      countedUsageIds.clear();
       flushAssistant();
       if (typeof c === 'string' && c.trim()) {
         turns.push({ kind: 'user', text: c, ts });
@@ -516,7 +703,7 @@ async function parseTranscript(jsonlPath) {
   }
   flushAssistant();
 
-  return { turns, total_events: events.length };
+  return { turns, total_events: events.length, turn_tokens: turnOutTokens };
 }
 
 // ── HTTP plumbing ────────────────────────────────────────────
@@ -531,9 +718,26 @@ function sendJson(res, code, body) {
 }
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let buf = '';
-    req.on('data', c => buf += c);
-    req.on('end', () => { try { resolve(buf ? JSON.parse(buf) : {}); } catch (e) { reject(e); } });
+    let bytes = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      bytes += c.length;
+      if (bytes > MAX_BODY_BYTES) {
+        const err = new Error('request body too large');
+        err.code = 'BODY_TOO_LARGE';
+        // Destroy first so we don't keep buffering after the cap; reject after.
+        try { req.destroy(err); } catch {}
+        reject(err);
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      try {
+        const buf = Buffer.concat(chunks).toString('utf8');
+        resolve(buf ? JSON.parse(buf) : {});
+      } catch (e) { reject(e); }
+    });
     req.on('error', reject);
   });
 }
@@ -546,6 +750,11 @@ function ctFor(p) {
        : p.endsWith('.png')       ? 'image/png'
        : p.endsWith('.jpg') || p.endsWith('.jpeg') ? 'image/jpeg'
        : p.endsWith('.webp')      ? 'image/webp'
+       : p.endsWith('.gif')       ? 'image/gif'
+       : p.endsWith('.pdf')       ? 'application/pdf'
+       : p.endsWith('.txt')       ? 'text/plain; charset=utf-8'
+       : p.endsWith('.md')        ? 'text/markdown; charset=utf-8'
+       : p.endsWith('.csv')       ? 'text/csv; charset=utf-8'
        : p.endsWith('.webmanifest') ? 'application/manifest+json'
        :                            'application/octet-stream';
 }
@@ -563,6 +772,29 @@ function serveStatic(req, res) {
     fs.readFile(full, (err, data) => {
       if (err) { res.writeHead(404); res.end('not found'); return; }
       res.writeHead(200, { 'content-type': ctFor(rel) });
+      res.end(data);
+    });
+    return;
+  }
+  // /attachments/<card_id>/<filename> served from ~/runn-data/attachments/.
+  // Files are immutable (timestamp + random prefix), so cache them hard. The
+  // path-traversal guard re-asserts the prefix after path.normalize collapses
+  // any "../" segments the client tried to smuggle through.
+  if (p.startsWith('/attachments/')) {
+    let rel;
+    try { rel = decodeURIComponent(p.slice('/attachments/'.length)); }
+    catch { res.writeHead(400); res.end('bad url'); return; }
+    const full = path.normalize(path.join(ATTACHMENTS_DIR, rel));
+    if (!full.startsWith(ATTACHMENTS_DIR + path.sep)) { res.writeHead(403); res.end(); return; }
+    fs.readFile(full, (err, data) => {
+      if (err) { res.writeHead(404); res.end('not found'); return; }
+      // Override .json from manifest+json → real application/json (ctFor's
+      // .json branch is geared to the PWA manifest, not arbitrary uploads).
+      const ct = rel.endsWith('.json') ? 'application/json; charset=utf-8' : ctFor(rel);
+      res.writeHead(200, {
+        'content-type': ct,
+        'cache-control': 'public, max-age=31536000, immutable',
+      });
       res.end(data);
     });
     return;
@@ -644,14 +876,29 @@ const server = http.createServer(async (req, res) => {
       const card = await readJson(cardPath(mm[1]));
       if (!card.session_id) return sendJson(res, 400, { error: 'card has no session_id' });
       const body = await readBody(req);
-      if (!body.text || !body.text.trim()) return sendJson(res, 400, { error: 'text required' });
+      const hasAttachments = Array.isArray(body.attachments) && body.attachments.length > 0;
+      if ((!body.text || !body.text.trim()) && !hasAttachments) {
+        return sendJson(res, 400, { error: 'text or attachments required' });
+      }
       const location = await resolveCardLocation(card);
       if (!location) return sendJson(res, 400, { error: 'card has no resolvable location' });
       const prevStatus = card.status;
-      const text = body.text.trim();
+      // Persist any inline attachments before composing the prompt — Claude
+      // will Read them by absolute path, so they must exist on disk by the
+      // time the subprocess starts.
+      let saved = [];
+      try { saved = await saveAttachments(card.id, body.attachments || []); }
+      catch (err) {
+        if (err && typeof err.code === 'string' && err.code.startsWith('ATTACH_')) {
+          return sendJson(res, 400, { error: err.message, code: err.code });
+        }
+        throw err;
+      }
+      const text = buildPromptWithAttachments(body.text || '', saved);
       const permissionToken = crypto.randomUUID();
       permissionTokens.set(permissionToken, card.id);
       const permissionMode = await resolveCardPermissionMode(card);
+      const systemPromptAppend = await resolveCardSystemContext(card);
       // Flip the card to `status` and persist with timer accounting. Re-reads
       // from disk first so we never clobber a concurrent write, and no-ops if
       // it's already there (so a redundant doing→doing won't restart the timer).
@@ -669,6 +916,7 @@ const server = http.createServer(async (req, res) => {
           location,
           permissionToken,
           permissionMode,
+          systemPromptAppend,
           holder: `card:${card.id}`,
           onExit: (code) => {
             queue.handleAiExit(card.id, code, queueDeps).catch(err =>
@@ -929,6 +1177,9 @@ const server = http.createServer(async (req, res) => {
     if (m === 'POST' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/archive$/))) {
       const id = mm[1];
       await fsp.rename(cardPath(id), archivePath(id));
+      // Reclaim disk; Claude's textual analysis lives in the transcript jsonl,
+      // the raw uploads are derivative. (Thumbnails will 404 after archive.)
+      await deleteCardAttachments(id);
       return sendJson(res, 200, { ok: true });
     }
     if (m === 'POST' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/unarchive$/))) {
@@ -1542,6 +1793,7 @@ sessionsWatcher.on('change', (p) => {
   await fsp.mkdir(CLIENTS_DIR, { recursive: true });
   await fsp.mkdir(INVOICES_DIR, { recursive: true });
   await fsp.mkdir(ASSETS_DIR, { recursive: true });
+  await fsp.mkdir(ATTACHMENTS_DIR, { recursive: true });
   await rebuildSessionIndex();
   await migrateClients.run({
     DATA_ROOT, CARDS_DIR, TAGS_DIR, CLIENTS_DIR, SETTINGS_PATH,

@@ -173,6 +173,38 @@ function dispatchPendingForCwd(cwd) {
 // init event arrives carrying the session_id; the child keeps running in
 // the background and writes to its session jsonl, which Runn picks up via
 // the discovery watcher.
+// Always-on response-format directive, appended to every spawn AND re-asserted
+// on every resume (claude --resume *replaces* the append, so the resume caller
+// must pass the full context+directive or it's lost — see composeAppend callers).
+// Runn collapses each reply to its trailing "TL;DR:" line in the transcript.
+const TLDR_DIRECTIVE = [
+  '# Response format',
+  '',
+  'Every message you send to the human must end with a one-line summary, on its',
+  'own final line, in exactly this form:',
+  '',
+  'TL;DR: <one plain-English sentence, 15 words or fewer>',
+  '',
+  'This applies to EVERY reply addressed to the human — answers, recommendations,',
+  'and messages that ask the human a question or propose next steps. When you are',
+  'asking the human something, the TL;DR states that question or the decision you',
+  'need (e.g. "TL;DR: Bare metal is simpler — want me to proceed?"). The ONLY',
+  'messages without a TL;DR are intermediate progress notes written between tool',
+  'calls while you are still working; the final message of your turn always has one.',
+  '',
+  'Runn collapses your reply to this single line (a chevron expands the rest), so',
+  'write it to stand on its own for a reader who never expands the detail.',
+].join('\n');
+
+// Combine the per-card context (client/project notes, or null) with the always-on
+// directive into one --append-system-prompt value.
+function composeAppend(systemPromptAppend) {
+  const parts = [];
+  if (systemPromptAppend && String(systemPromptAppend).trim()) parts.push(String(systemPromptAppend).trim());
+  parts.push(TLDR_DIRECTIVE);
+  return parts.join('\n\n');
+}
+
 function spawnSession({ title, notes, location, permissionToken, permissionMode, systemPromptAppend, onExit, holder }) {
   location = location || DEFAULT_LOCATION;
   if (location.type === 'ssh') {
@@ -198,9 +230,7 @@ function spawnSession({ title, notes, location, permissionToken, permissionMode,
     if (permissionMode && permissionMode !== 'default') {
       args.push('--permission-mode', permissionMode);
     }
-    if (systemPromptAppend && String(systemPromptAppend).trim()) {
-      args.push('--append-system-prompt', String(systemPromptAppend).trim());
-    }
+    args.push('--append-system-prompt', composeAppend(systemPromptAppend));
     const prompt = (notes && String(notes).trim()) ? `${title}\n\n${String(notes).trim()}` : title;
     args.push('--print', prompt);
     const child = spawn(CLAUDE_BIN, args, {
@@ -284,7 +314,7 @@ function spawnSession({ title, notes, location, permissionToken, permissionMode,
 // actually running and writing to the session jsonl), then lets it run
 // detached. The chokidar watcher catches the resulting jsonl writes and
 // broadcasts session.updated → the panel refreshes.
-function sendMessage({ sessionId, text, location, permissionToken, permissionMode, onExit, holder }) {
+function sendMessage({ sessionId, text, location, permissionToken, permissionMode, systemPromptAppend, onExit, holder }) {
   location = location || DEFAULT_LOCATION;
   if (location.type !== 'local') {
     return Promise.reject(new Error(`sendMessage: only local sessions supported (got ${location.type})`));
@@ -303,6 +333,9 @@ function sendMessage({ sessionId, text, location, permissionToken, permissionMod
     if (permissionMode && permissionMode !== 'default') {
       args.push('--permission-mode', permissionMode);
     }
+    // --resume *replaces* the appended system prompt, so re-assert the full
+    // context+directive here or the session would lose it on every follow-up.
+    args.push('--append-system-prompt', composeAppend(systemPromptAppend));
     args.push('--resume', sessionId, '--print', text);
     const child = spawn(CLAUDE_BIN, args, {
       cwd,

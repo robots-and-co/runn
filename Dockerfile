@@ -4,9 +4,10 @@ FROM node:20-bookworm-slim
 
 # bash for any shell behaviours Claude CLI invokes; openssh-client so spawned
 # sessions can ssh into clients; git so sessions (and the worker) can version
-# the data dir / app and run git-backed tooling.
+# the data dir / app and run git-backed tooling; curl for HTTP probing from
+# sessions and tooling.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash ca-certificates git openssh-client \
+ && apt-get install -y --no-install-recommends bash ca-certificates curl git openssh-client \
  && rm -rf /var/lib/apt/lists/*
 
 # Default git identity for the container (system-level, so it survives the
