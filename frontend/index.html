@@ -1397,6 +1397,12 @@
     box-sizing: border-box;
     /* Flex column so the totals block can be pushed to the page bottom */
     display: flex; flex-direction: column;
+    /* Don't let the flex parent (.invoice-page, also a column) shrink the
+       white sheet below its content — when squashed narrow the text wraps and
+       grows past the 297mm floor, and shrinking would leave content spilling
+       outside the white background. Grow with content; let the page scroll. */
+    flex-shrink: 0;
+    position: relative;   /* anchor for the draft watermark overlay */
   }
   .invoice-doc-header { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 28px; }
   .invoice-doc-logo {
@@ -1422,15 +1428,17 @@
     color: #8c8578; font-size: 12px;
     border-bottom: 1px solid #d5cdbb;
     padding: 8px 4px;
+    white-space: nowrap;   /* reserve column width so "Date" / "Amount ExGST" don't wrap */
   }
   .invoice-doc-table th.right { text-align: right; }
   .invoice-doc-table td {
     padding: 12px 4px;
     border-bottom: 1px solid #f1ece3;
     font-size: 13px;
+    overflow-wrap: anywhere;   /* long tokens wrap instead of widening the table */
   }
   .invoice-doc-table td.right { text-align: right; font-family: ui-monospace, monospace; }
-  .invoice-doc-table td.date  { color: #5a544a; }
+  .invoice-doc-table td.date  { color: #5a544a; white-space: nowrap; }
   .invoice-doc-footer {
     margin-top: auto;
     border: 1px solid #d5cdbb; border-radius: 4px;
@@ -1450,6 +1458,59 @@
     font-family: ui-monospace, monospace; min-width: 70px; text-align: right;
   }
   .invoice-doc-totals-row.balance .val.outstanding { color: var(--overdue); font-weight: 700; }
+  /* Editable invoice number (draft preview only). Sits inline in the title. */
+  .invoice-num-input {
+    font: inherit; font-weight: 700; color: var(--accent);
+    width: 9ch; max-width: 60%;
+    padding: 1px 6px; margin-left: 4px;
+    border: 1px dashed #c9bfa8; border-radius: 4px;
+    background: #fdfbf6; text-align: right;
+  }
+  .invoice-num-input:focus { outline: none; border-color: var(--accent); border-style: solid; }
+
+  /* Draft watermark — faint diagonal "DRAFT" across an un-issued invoice, so a
+     printed/PDF'd draft can't be mistaken for a real one. Translucent enough to
+     read the invoice through it; pointer-events:none keeps it click-through. */
+  .invoice-watermark {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%) rotate(-30deg);
+    font-size: 140px; font-weight: 800; letter-spacing: .08em;
+    text-transform: uppercase; white-space: nowrap;
+    color: rgba(193, 78, 58, .11);
+    pointer-events: none; z-index: 1;
+    user-select: none;
+  }
+
+  /* ── Invoice view on mobile ──────────────────────────────────
+     The doc is A4-sized for print/desktop; on a phone pane (100vw) it has to
+     drop the fixed mm widths, single-column the header/footer, and let the
+     action bar wrap so nothing overflows. */
+  @media (max-width: 700px) {
+    .invoice-page { padding: 10px; }
+    .invoice-doc-actions {
+      width: 100%; flex-wrap: wrap; gap: 6px;
+    }
+    /* Force everything after the back button onto its own wrapped row(s). */
+    .invoice-doc-actions .spacer { flex-basis: 100%; height: 0; }
+    .invoice-doc-actions .detail-btn { flex: 1 1 auto; }
+    .invoice-doc {
+      width: 100%; min-height: 0;
+      padding: 16px 14px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+    }
+    .invoice-doc-header {
+      grid-template-columns: 1fr; gap: 12px; margin-bottom: 16px;
+    }
+    .invoice-doc-right { text-align: left; }
+    .invoice-doc-title { font-size: 16px; margin-bottom: 8px; }
+    .invoice-num-input { max-width: 100%; text-align: left; }
+    .invoice-doc-table { margin: 12px 0; }
+    .invoice-doc-table th, .invoice-doc-table td { font-size: 12px; padding: 8px 2px; }
+    .invoice-doc-footer {
+      grid-template-columns: 1fr; gap: 14px; padding: 14px;
+    }
+    .invoice-doc-totals-row { justify-content: space-between; gap: 8px; }
+  }
 
   @page { size: A4; margin: 0; }
   @media print {
@@ -1470,9 +1531,33 @@
     body.invoice-printing #invoicePage { padding: 0 !important; overflow: visible !important; }
     .invoice-doc {
       box-shadow: none;
-      width: 210mm; min-height: 297mm;
+      /* Block flow paginates across pages; flexbox does not fragment cleanly.
+         Drop the fixed 297mm height too — it strands the pinned footer mid-page
+         and can spill a blank trailing page. */
+      display: block;
+      width: 210mm; min-height: 0;
       padding: 18mm 20mm;
       margin: 0;
+    }
+    /* Footer flows after the items instead of being pinned to the page bottom. */
+    .invoice-doc-footer { margin-top: 24px; }
+    /* Repeat column headers on every page; keep rows / blocks intact. */
+    .invoice-doc-table thead { display: table-header-group; }
+    .invoice-doc-table tr,
+    .invoice-doc-header,
+    .invoice-doc-footer { break-inside: avoid; }
+    /* Draft's editable invoice # prints as plain text, not a bordered field.
+       Keeps the base 9ch width — matches the ZIS+YYMMDD id length snugly. */
+    .invoice-num-input {
+      border: none; background: transparent; padding: 0;
+      color: inherit;
+      -webkit-appearance: none; appearance: none;
+    }
+    /* Fixed so the watermark repeats centred on every printed page, and ensure
+       it isn't stripped by background-graphics settings. */
+    .invoice-watermark {
+      position: fixed;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
     }
   }
   .chat-due-clear {
@@ -2262,6 +2347,14 @@
     background: var(--accent-soft);
   }
   .chat-thinking[hidden] { display: none; }
+  /* Live output-token tally — appended to both the pill and the active
+     thinking bubble's header. Tabular figures so the digits don't jitter
+     sideways as the count climbs. Empty until the turn produces tokens. */
+  .chat-thinking-tokens, .thinking-tokens {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.7;
+  }
+  .chat-thinking-tokens:empty, .thinking-tokens:empty { display: none; }
 
   .chat-permissions {
     flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;
@@ -2327,6 +2420,77 @@
     padding: 6px 4px 0; text-align: center;
   }
 
+  /* ── Chat attachments ──────────────────────────────────────
+     Composer-side chips (above the input row, before send) and
+     transcript-side thumbnails (rendered above the user bubble's text).
+     `.chat-attachments-row` and `.turn-user-attachments` need the explicit
+     `[hidden]` override per the HANDOFF.md convention — a class `display`
+     otherwise wins over the boolean attribute. */
+  .chat-attachments-row {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 6px 4px 8px;
+  }
+  .chat-attachments-row[hidden] { display: none; }
+  .chat-attachment-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 6px 4px 4px;
+    background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px;
+    font-size: 12px; line-height: 1.2; max-width: 220px;
+  }
+  .chat-attachment-chip img {
+    width: 40px; height: 40px; object-fit: cover; border-radius: 4px;
+    flex-shrink: 0; background: var(--paper-3);
+  }
+  .chat-attachment-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0; color: var(--ink-2);
+  }
+  .chat-attachment-x {
+    border: none; background: none; cursor: pointer;
+    color: var(--ink-3); font-size: 16px; line-height: 1; padding: 0 2px;
+    flex-shrink: 0;
+  }
+  .chat-attachment-x:hover { color: var(--ink); }
+
+  .footer-attach {
+    width: 30px; height: 30px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; border-radius: 8px; cursor: pointer;
+    font-size: 18px; line-height: 1; flex-shrink: 0;
+    background: transparent; color: var(--ink-3);
+    transition: background .12s, color .12s;
+  }
+  .footer-attach:hover { background: var(--paper-3); color: var(--ink); }
+  .footer-attach:disabled { opacity: .35; cursor: default; }
+
+  /* Drop-target outline for drag-drop onto the transcript. The dashed inset
+     ring uses outline-offset so it doesn't push the scroll content. */
+  .chat-transcript.drop-target {
+    outline: 2px dashed var(--accent); outline-offset: -6px;
+    background: rgba(107, 82, 184, 0.04);
+  }
+
+  /* Attachment row inside a user bubble (transcript display). */
+  .turn-user-attachments {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-bottom: 6px;
+  }
+  .turn-user-attachments[hidden] { display: none; }
+  .turn-user-attachment {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 8px 3px 3px;
+    background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px;
+    font-size: 12px; line-height: 1.2; color: var(--ink-2);
+    text-decoration: none; max-width: 220px;
+  }
+  .turn-user-attachment img {
+    width: 40px; height: 40px; object-fit: cover; border-radius: 4px;
+    flex-shrink: 0; background: var(--paper-3);
+  }
+  .turn-user-attachment .turn-user-attachment-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+  }
+
   .turn { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
   .turn-user {
     align-self: flex-end; max-width: 90%;
@@ -2343,6 +2507,30 @@
     font-size: 14px; line-height: 1.5;
     display: flex; flex-direction: column; gap: 8px;
   }
+  /* Collapsed assistant answer — the final addressing bubble renders as a
+     one-line TL;DR (parsed from the trailing "TL;DR:" line the AI is told to
+     emit) with the full reply folded behind a chevron. Native <details> so the
+     open/closed state survives transcript re-renders with zero JS wiring.
+     Bubbles with no TL;DR line fall back to the plain .turn-text render. */
+  .turn-collapsed { width: 100%; }
+  .turn-collapsed > summary {
+    list-style: none; cursor: pointer;
+    display: flex; align-items: baseline; gap: 8px;
+    font-size: 14px; line-height: 1.5; color: var(--ink);
+  }
+  .turn-collapsed > summary::-webkit-details-marker { display: none; }
+  .turn-collapsed > summary::marker { content: ''; }
+  .turn-chevron {
+    flex-shrink: 0; width: 10px;
+    font-size: 9px; color: var(--ink-3);
+    transition: transform .15s ease;
+  }
+  .turn-collapsed[open] > summary .turn-chevron { transform: rotate(90deg); }
+  .turn-summary-text { flex: 1; min-width: 0; }
+  .turn-collapsed > .turn-text {
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid var(--line);
+  }
   .turn-system {
     align-self: center;
     font-size: 12px; color: var(--ink-3); font-style: italic;
@@ -2350,8 +2538,104 @@
     padding: 6px 12px; border-radius: 6px;
     max-width: 90%; text-align: center;
   }
+  /* Ephemeral op chip — one per claude tool_use, paired with its tool_result.
+     Amber palette matches the permission card so "tool activity" reads as a
+     single visual family. Smaller + lower contrast than text bubbles so it
+     stays visually subordinate even when there are lots in a row. */
+  .turn-tool {
+    align-self: flex-start; max-width: 100%;
+    display: inline-flex; align-items: baseline; gap: 8px; flex-wrap: nowrap;
+    padding: 3px 10px; border-radius: 10px;
+    background: rgba(184, 92, 31, 0.08);
+    border: 1px solid rgba(184, 92, 31, 0.28);
+    color: #8a5a1f;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px; line-height: 1.5;
+    overflow: hidden;
+  }
+  .turn-tool-name { font-weight: 600; flex-shrink: 0; }
+  .turn-tool-summary {
+    color: var(--ink-2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .turn-tool.turn-tool-error {
+    background: rgba(168, 50, 50, 0.08);
+    border-color: rgba(168, 50, 50, 0.32);
+    color: #a83232;
+  }
+  .turn-tool.turn-tool-pending .turn-tool-name::after {
+    content: ''; display: inline-block; margin-left: 6px;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; opacity: 0.5;
+    animation: runn-pulse 0.9s ease-in-out infinite;
+    vertical-align: middle;
+  }
+  /* A chip turn is "stale" once a later non-chip turn (assistant text, user
+     message, system) has appeared — the AI has moved past those ops. The
+     user explicitly asked for these to disappear so the final text bubble
+     reads as the answer. See collapseStaleChips() for the policy. */
+  .turn.turn-stale { display: none; }
+
+  /* "Thinking" bubble — one per ops phase. Consecutive tool turns from the
+     server are grouped client-side (groupThinkingChips) into a single bubble
+     so the transcript reads as text → thinking → text → thinking → text
+     instead of a stack of loose chips. Disappears once the next text bubble
+     lands (same collapse rule as individual chips). Accent palette so it
+     reads as a distinct "AI cogitation" colour without clashing with the
+     amber permission family. */
+  .turn-thinking {
+    align-self: flex-start; max-width: 90%;
+    background: var(--accent-soft);
+    border: 1px solid rgba(47, 74, 107, 0.22);
+    border-radius: 12px 12px 12px 2px;
+    padding: 8px 12px;
+    color: var(--ink-2);
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .turn-thinking-header {
+    display: flex; align-items: center; gap: 8px;
+    color: var(--accent); font-weight: 500;
+    font-size: 12px;
+  }
+  .turn-thinking-list {
+    display: flex; flex-direction: column; gap: 2px;
+    padding-left: 2px;
+  }
+  .turn-thinking-op {
+    display: flex; align-items: center; gap: 8px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px; line-height: 1.5; min-width: 0;
+  }
+  .op-dot {
+    flex-shrink: 0; width: 6px; height: 6px;
+    border-radius: 50%; background: currentColor;
+  }
+  .op-pending .op-dot {
+    color: #b85c1f; opacity: 0.6;
+    animation: runn-pulse 0.9s ease-in-out infinite;
+  }
+  .op-done  .op-dot { color: #4a7c4a; opacity: 0.85; }
+  .op-error .op-dot { color: #a83232; opacity: 0.9; }
+  .op-name {
+    flex-shrink: 0; font-weight: 600; color: var(--ink-2);
+  }
+  .op-summary {
+    color: var(--ink-3);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0; flex: 1;
+  }
   .turn-text { word-wrap: break-word; }
   .turn-text:empty { display: none; }
+
+  /* While a live (non-stale) thinking bubble is on screen it already carries a
+     spinner + "thinking… N ops", so the bottom pill (#chatThinking) underneath
+     is redundant — hide it. In the gaps (no live bubble) the pill still shows
+     via applyPanel, so "stopping…" / "waiting" / fresh-send feedback survives.
+     The inline op bubble is untouched. */
+  .chat-transcript:has(.turn:not(.turn-stale) .turn-thinking) #chatThinking {
+    display: none;
+  }
 
   /* Markdown typography inside chat bubbles. */
   .turn-user > :first-child, .turn-text > :first-child { margin-top: 0; }
@@ -2603,9 +2887,11 @@
     <button class="detail-btn" onclick="closeInvoice()">← back</button>
     <span class="spacer"></span>
     <span id="invStatusBadge"></span>
+    <button class="detail-btn" id="invEditDraft" hidden>edit items</button>
     <button class="detail-btn" id="invMarkSent">mark sent</button>
     <button class="detail-btn" id="invMarkPaid">mark paid</button>
-    <button class="detail-btn primary" onclick="printInvoice()">print / pdf</button>
+    <button class="detail-btn" id="invPrintBtn" onclick="printInvoice()">print / pdf</button>
+    <button class="detail-btn primary" id="invIssueDraft" hidden>issue invoice</button>
   </div>
   <div class="invoice-doc" id="invoiceDoc"></div>
 </aside>
@@ -2932,14 +3218,19 @@
       </button>
       <div class="chat-section-body">
         <div class="chat-transcript" id="chatTranscript">
-          <div class="chat-thinking" id="chatThinking" hidden><span class="runn-spinner"></span><span id="chatThinkingLabel">thinking</span></div>
+          <div class="chat-thinking" id="chatThinking" hidden><span class="runn-spinner"></span><span id="chatThinkingLabel">thinking</span><span class="chat-thinking-tokens" id="chatThinkingTokens"></span></div>
         </div>
         <div class="chat-empty" id="chatEmpty" hidden>No turns yet — session hasn't received a message.</div>
         <div class="chat-permissions" id="chatPermissions"></div>
         <div class="chat-footer" id="chatFooter">
+          <div class="chat-attachments-row" id="chatAttachmentsRow" hidden></div>
           <div class="footer-input-row" id="chatInputRow">
+            <button type="button" class="footer-attach" id="chatAttach" title="Attach files (or drag/paste)">＋</button>
             <input class="footer-input" id="chatInput" type="text" placeholder="Reply… (type ! for commands)" autocomplete="off">
             <button class="footer-send" id="chatSend">↑</button>
+            <input type="file" id="chatFilePicker" multiple
+                   accept="image/*,application/pdf,text/plain,text/markdown,text/csv,application/json,.md"
+                   hidden>
           </div>
           <div class="chat-error" id="chatErrorMsg" hidden></div>
         </div>
@@ -3122,7 +3413,9 @@ async function api(method, path, body) {
 }
 const patchCard   = (id, patch) => api('PATCH', `/cards/${id}`, patch);
 const archiveCard = (id)        => api('POST',  `/cards/${id}/archive`);
-const sendMessage = (id, text)  => api('POST',  `/cards/${id}/message`, { text });
+const sendMessage = (id, text, attachments) =>
+  api('POST', `/cards/${id}/message`,
+    attachments && attachments.length ? { text, attachments } : { text });
 const aiifyCard   = (id)        => api('POST',  `/cards/${id}/ai-ify`);
 const runnCard    = (id, on)    => api('POST',  `/cards/${id}/runn`, { on });
 
@@ -4292,7 +4585,7 @@ function setPane3(mode, id) {
   billingPanel.setAttribute('aria-hidden', mode === 'billing' ? 'false' : 'true');
   invoicePage.hidden        = mode !== 'invoice';
   invoicePage.setAttribute('aria-hidden', mode === 'invoice' ? 'false' : 'true');
-  if (mode !== 'invoice') currentInvoiceId = null;
+  if (mode !== 'invoice') { currentInvoiceId = null; draftInvoice = null; }
   // Side effects per mode.
   if (mode === null) {
     openCardId = null;
@@ -4655,8 +4948,8 @@ let firstturnBubbleEdit   = null;
 const chatSectionTasksEl = document.getElementById('chatSectionTasks');
 const chatHeaderBillBtn = document.getElementById('chatHeaderBillBtn');
 chatHeaderBillBtn.addEventListener('click', () => {
-  // Project-scoped billing for whatever project is currently open in pane 2.
-  openBilling(openProjectId);
+  // Project-scoped billing → the project's live draft invoice.
+  openProjectInvoice(openProjectId);
 });
 // ── Pane 2 wiring ───────────────────────────────────────────
 projectTitle.addEventListener('blur', () => {
@@ -4672,9 +4965,9 @@ projectTitle.addEventListener('keydown', e => {
   if (e.key === 'Escape') { projectTitle.value = cards.get(openProjectId)?.title || ''; projectTitle.blur(); }
 });
 projectSettingsBtn.addEventListener('click', () => setSettingsView(true));
-// Project billing → pane 3 billing scoped to this project's subtree.
+// Project billing → pane 3 live draft invoice scoped to this project.
 projectBillBtn.addEventListener('click', () => {
-  if (openProjectId) openBilling(openProjectId);
+  if (openProjectId) openProjectInvoice(openProjectId);
 });
 // Pane 1 "all billing" → unscoped global view.
 paneAllBilling.addEventListener('click', () => openBilling(null));
@@ -4942,7 +5235,12 @@ const chatBlocking    = document.getElementById('chatBlocking');
 const projectRunn     = document.getElementById('projectRunn');
 const chatThinking    = document.getElementById('chatThinking');
 const chatThinkingLabel = document.getElementById('chatThinkingLabel');
+const chatThinkingTokens = document.getElementById('chatThinkingTokens');
 const chatSteps       = document.getElementById('chatSteps');
+// Output tokens generated in the open card's current turn, as last reported by
+// the transcript endpoint. Repainted onto the thinking pill + live bubble so
+// the user can see the count climb — proof the AI is actually producing.
+let chatTurnTokens = 0;
 // True between a `!stop` and the card leaving its thinking state, so the
 // spinner label reads "stopping…" and a repeat `!stop` is a no-op.
 let chatStopping = false;
@@ -5340,6 +5638,7 @@ function applyPanel(card) {
   // status flip to doing/waiting hasn't landed server-side yet.
   chatThinkingLabel.textContent = chatStopping ? 'stopping…'
     : (!chatSending && card.status === 'waiting') ? 'waiting' : 'thinking';
+  paintThinkingTokens();
   chatBadgeExt.hidden = card.origin !== 'external';
   if (document.activeElement !== chatNotes) chatNotes.value = card.notes_md || '';
   autoGrowNotes();
@@ -5474,7 +5773,15 @@ function applyPanel(card) {
   const hasSession = !!card.session_id;
   const showChat = isTask && taskAssignee === 'ai';
   chatSectionChat.hidden  = !showChat;
-  chatEmpty.hidden        = !(hasSession && showChat);
+  // Only when a session exists, chat is shown, no turns are on screen, AND the
+  // session isn't mid-flight. applyPanel re-runs on every card.changed WS tick
+  // (e.g. the status flip right after a send), so without these guards it
+  // flashes the empty banner back over a populated transcript — or worse, over
+  // the thinking pill, where "hasn't received a message" is plainly wrong since
+  // the session is busy answering one. renderTranscript owns the live toggle.
+  const hasTurns = chatTranscript.querySelector('.turn') !== null;
+  const live = isThinking || chatSending;
+  chatEmpty.hidden        = !(hasSession && showChat) || hasTurns || live;
   updateSectionSummaries();
   refreshClientSelector(card);
   startLiveTimers(); // self-stops if neither this card nor any visible row is on the clock
@@ -5547,10 +5854,12 @@ async function openChat(cardId) {
     // Start polling immediately — the chat is open on a session card, so we
     // want to catch any in-flight or future writes even if the user didn't
     // send anything themselves (e.g. reopening a card whose AI is still running).
+    chatTurnTokens = 0; // start fresh; the fetch below sets the real count
     startTranscriptPoll();
     try {
       const t = await api('GET', `/cards/${cardId}/transcript`);
       if (openCardId !== cardId) return;
+      chatTurnTokens = t.turn_tokens || 0;
       renderTranscript(t.turns);
     } catch (err) {
       chatTranscript.querySelectorAll('.turn').forEach(el => el.remove());
@@ -6101,6 +6410,29 @@ function renderMarkdown(text) {
   return DOMPurify.sanitize(marked.parse(src));
 }
 
+// Cross-context clipboard write. `navigator.clipboard` is only exposed on
+// secure contexts (https / localhost); when Runn is reached over a LAN IP
+// like http://192.168.x.x:17777 it falls through to a hidden-textarea +
+// execCommand('copy'), which still works inside a user-gesture handler.
+async function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); return true; }
+    catch { /* fall through to legacy path */ }
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+  document.body.appendChild(ta);
+  const prevActive = document.activeElement;
+  ta.focus(); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  document.body.removeChild(ta);
+  if (prevActive && typeof prevActive.focus === 'function') prevActive.focus();
+  return ok;
+}
+
 // Inject a `copy` chip into every fenced code block under `root`.
 // Idempotent — safe to call on a re-rendered transcript.
 function attachCodeCopyButtons(root) {
@@ -6116,15 +6448,15 @@ function attachCodeCopyButtons(root) {
     btn.addEventListener('click', async (e) => {
       e.preventDefault();
       e.stopPropagation();
-      try {
-        await navigator.clipboard.writeText(code.textContent);
+      const ok = await copyToClipboard(code.textContent);
+      if (ok) {
         btn.textContent = 'copied ✓';
         btn.classList.add('copied');
         setTimeout(() => {
           btn.textContent = 'copy';
           btn.classList.remove('copied');
         }, 1200);
-      } catch {
+      } else {
         btn.textContent = 'copy failed';
         setTimeout(() => { btn.textContent = 'copy'; }, 1500);
       }
@@ -6134,13 +6466,233 @@ function attachCodeCopyButtons(root) {
   }
 }
 
+// Pull a <RUNN-ATTACHMENTS>…</RUNN-ATTACHMENTS> block (written by the server
+// when the user attached files) off the front of a user-turn text. Returns
+// the surfaced body (with the marker stripped) and a list of {name, mime,
+// href} entries the renderer turns into thumbnails / chips. Absolute paths
+// look like /home/.../runn-data/attachments/<cardId>/<file>; we map those
+// back to the /attachments/<cardId>/<file> static route.
+function parseUserAttachments(text) {
+  const m = String(text || '').match(/^<RUNN-ATTACHMENTS>\n([\s\S]*?)\n<\/RUNN-ATTACHMENTS>\n\n([\s\S]*)$/);
+  if (!m) return { attachments: [], body: String(text || '') };
+  const list = [];
+  for (const ln of m[1].split('\n')) {
+    const lm = ln.match(/^- (\S.*?) \(([^)]+)\)\s*$/);
+    if (!lm) continue;
+    const absPath = lm[1];
+    const mime = lm[2];
+    const um = absPath.match(/\/attachments\/([^/]+)\/([^/]+)$/);
+    const href = um ? `/attachments/${encodeURIComponent(um[1])}/${encodeURIComponent(um[2])}` : null;
+    // Stripping the "<ts36>-<rand>-" prefix gives the user the original name back.
+    const stored = um ? um[2] : absPath.split('/').pop();
+    const name = stored.replace(/^[a-z0-9]+-[a-z0-9]+-/, '');
+    list.push({ name, mime, href });
+  }
+  return { attachments: list, body: m[2] };
+}
+
+// Split a trailing "TL;DR: …" line off an assistant reply. Returns
+// { summary, detail } when a marker line with content is present — `summary`
+// is the collapsed one-liner, `detail` is the rest of the reply (markdown) with
+// that line removed. Returns null when there's no marker so the caller renders
+// the message verbatim (legacy turns + intermediate between-tool notes). Matches
+// the LAST such line (the directive puts it at the very end); tolerant of bold
+// wrappers, "TLDR", and a missing colon.
+function splitTldr(text) {
+  if (!text) return null;
+  const lines = String(text).split('\n');
+  const re = /^\s*\*{0,2}\s*TL\s*;?\s*DR\s*:?\s*/i;
+  let idx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (re.test(lines[i]) && lines[i].replace(re, '').trim()) { idx = i; break; }
+  }
+  if (idx === -1) return null;
+  const summary = lines[idx].replace(re, '').replace(/\s*\*{0,2}\s*$/, '').trim();
+  if (!summary) return null;
+  const detail = lines.slice(0, idx).concat(lines.slice(idx + 1)).join('\n').trim();
+  return { summary, detail: detail || summary };
+}
+
+// Derive a rough one-line summary when the model didn't emit a TL;DR. Prefers a
+// trailing question (usually the actual ask), else the first sentence. Strips
+// markdown/code so the line stays clean. This is a preview, not a real summary —
+// the model's TL;DR is the good one; this just keeps every completed reply to a
+// single collapsed bubble even when adherence slips.
+function fallbackSummary(text) {
+  const lines = String(text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/^[#>\-*\s]+/gm, '')
+    .replace(/[*_]/g, '')
+    .split('\n').map(s => s.trim()).filter(Boolean);
+  if (!lines.length) return 'Response';
+  const last = lines[lines.length - 1];
+  let s;
+  if (/\?$/.test(last) && last.length <= 160) {
+    s = last;                                  // ends on a question → that's the ask
+  } else {
+    const joined = lines.join(' ').replace(/\s+/g, ' ').trim();
+    const m = joined.match(/^.*?[.!?](\s|$)/);
+    s = (m ? m[0] : joined).trim();
+  }
+  if (s.length > 150) s = s.slice(0, 149).replace(/\s+\S*$/, '') + '…';
+  return s || 'Response';
+}
+
+// Build the collapsed answer bubble: a one-line TL;DR summary with the full
+// reply (one or more markdown blocks, in order) folded behind a chevron. Native
+// <details> so open/closed state survives transcript re-renders with zero JS
+// wiring. Shared by the per-turn fallback and the phase-grouped renderer.
+function buildCollapsedBubble(summary, bodies) {
+  const div = document.createElement('div');
+  div.className = 'turn';
+  const outer = document.createElement('div');
+  outer.className = 'turn-assistant';
+  const details = document.createElement('details');
+  details.className = 'turn-collapsed';
+  const sm = document.createElement('summary');
+  sm.className = 'turn-summary';
+  const chev = document.createElement('span');
+  chev.className = 'turn-chevron';
+  chev.textContent = '▶';
+  const st = document.createElement('span');
+  st.className = 'turn-summary-text';
+  st.textContent = summary;
+  sm.appendChild(chev);
+  sm.appendChild(st);
+  details.appendChild(sm);
+  for (const md of bodies) {
+    if (!md || !String(md).trim()) continue;
+    const body = document.createElement('div');
+    body.className = 'turn-text';
+    body.innerHTML = renderMarkdown(md);
+    attachCodeCopyButtons(body);
+    details.appendChild(body);
+  }
+  outer.appendChild(details);
+  div.appendChild(outer);
+  return div;
+}
+
+// Build the live "thinking" ops bubble (spinner + one row per tool_use with a
+// status dot). Returned bare so it can stand alone as a turn OR be embedded
+// inside an in-flight phase bubble. See [[project_thinking_indicators]].
+function buildThinkingInner(t) {
+  const bubble = document.createElement('div');
+  bubble.className = 'turn-thinking';
+  const header = document.createElement('div');
+  header.className = 'turn-thinking-header';
+  const spinner = document.createElement('span');
+  spinner.className = 'runn-spinner';
+  header.appendChild(spinner);
+  const label = document.createElement('span');
+  const n = t.ops.length;
+  const allDone = t.ops.every(o => o.ok === true || o.ok === false);
+  label.textContent = allDone
+    ? `thinking… ${n} op${n === 1 ? '' : 's'} ✓`
+    : `thinking… ${n} op${n === 1 ? '' : 's'}`;
+  header.appendChild(label);
+  bubble.appendChild(header);
+  const list = document.createElement('div');
+  list.className = 'turn-thinking-list';
+  for (const op of t.ops) {
+    const row = document.createElement('div');
+    let cls = 'turn-thinking-op ';
+    cls += (op.ok === false) ? 'op-error'
+         : (op.ok === true)  ? 'op-done'
+         : 'op-pending';
+    row.className = cls;
+    const dot = document.createElement('span');
+    dot.className = 'op-dot';
+    row.appendChild(dot);
+    const nameEl = document.createElement('span');
+    nameEl.className = 'op-name';
+    nameEl.textContent = op.name || 'tool';
+    row.appendChild(nameEl);
+    if (op.summary) {
+      const sum = document.createElement('span');
+      sum.className = 'op-summary';
+      sum.textContent = op.summary;
+      sum.title = op.summary;
+      row.appendChild(sum);
+    }
+    list.appendChild(row);
+  }
+  bubble.appendChild(list);
+  return bubble;
+}
+
+// Render one response phase as a single bubble. Completed (carries a TL;DR) →
+// collapsed to the one-liner with the narrative folded inside. In-flight → the
+// same bubble shown open and growing: the running notes so far plus the live
+// ops indicator. When the answer + TL;DR lands it re-renders as the collapsed
+// form — so it's one continuous bubble, never a stack that collates at the end.
+function buildPhaseBubble(p) {
+  if (!p.pending) return buildCollapsedBubble(p.summary, p.bodyTexts);
+  const div = document.createElement('div');
+  div.className = 'turn';
+  const outer = document.createElement('div');
+  outer.className = 'turn-assistant';
+  for (const md of p.bodyTexts) {
+    if (!md || !String(md).trim()) continue;
+    const body = document.createElement('div');
+    body.className = 'turn-text';
+    body.innerHTML = renderMarkdown(md);
+    attachCodeCopyButtons(body);
+    outer.appendChild(body);
+  }
+  if (p.thinking) outer.appendChild(buildThinkingInner(p.thinking));
+  div.appendChild(outer);
+  return div;
+}
+
 function renderTurn(t) {
   if (t.kind === 'user') {
     const div = document.createElement('div');
     div.className = 'turn';
     const body = document.createElement('div');
     body.className = 'turn-user';
-    body.innerHTML = renderMarkdown(t.text);
+
+    // Two attachment sources: parsed-from-text (server-written) or the
+    // _localAttachments hint (optimistic — passed in by handleChatSubmit so
+    // thumbnails appear before the file is on disk via dataUrl). Local wins
+    // if present so the optimistic bubble shows real previews immediately.
+    const parsed = parseUserAttachments(t.text);
+    const local = Array.isArray(t._localAttachments) ? t._localAttachments : null;
+    const items = local && local.length
+      ? local.map(a => ({ name: a.name, mime: a.mime, href: a.dataUrl || null }))
+      : parsed.attachments;
+
+    if (items.length) {
+      const row = document.createElement('div');
+      row.className = 'turn-user-attachments';
+      for (const a of items) {
+        const chip = document.createElement('a');
+        chip.className = 'turn-user-attachment';
+        chip.href = a.href || '#';
+        if (a.href) { chip.target = '_blank'; chip.rel = 'noopener noreferrer'; }
+        else chip.addEventListener('click', e => e.preventDefault());
+        chip.title = a.name || 'attachment';
+        if ((a.mime || '').startsWith('image/') && a.href) {
+          const img = document.createElement('img');
+          img.src = a.href; img.alt = a.name || '';
+          chip.appendChild(img);
+        }
+        const nameEl = document.createElement('span');
+        nameEl.className = 'turn-user-attachment-name';
+        nameEl.textContent = a.name || 'attachment';
+        chip.appendChild(nameEl);
+        row.appendChild(chip);
+      }
+      body.appendChild(row);
+    }
+
+    const bodyText = local ? (t._bodyText || '') : parsed.body;
+    if (bodyText && bodyText.trim()) {
+      const txt = document.createElement('div');
+      txt.innerHTML = renderMarkdown(bodyText);
+      body.appendChild(txt);
+    }
     div.appendChild(body);
     return div;
   }
@@ -6150,7 +6702,50 @@ function renderTurn(t) {
     div.innerHTML = `<div class="turn-system">${escapeHtml(t.text)}</div>`;
     return div;
   }
-  // assistant
+  if (t.kind === 'thinking') {
+    // Standalone ops bubble (also embedded inside an in-flight phase bubble —
+    // see buildThinkingInner / buildPhaseBubble). Collapses to display:none once
+    // a later assistant turn lands — see collapseStaleChips().
+    const div = document.createElement('div');
+    div.className = 'turn';
+    div.appendChild(buildThinkingInner(t));
+    return div;
+  }
+  if (t.kind === 'tool') {
+    // Defensive fallback — normally tool turns are grouped into a single
+    // 'thinking' bubble by groupThinkingChips() before reaching renderTurn.
+    // Kept so a future flow that bypasses the grouping still renders something.
+    const div = document.createElement('div');
+    div.className = 'turn';
+    const chip = document.createElement('div');
+    let cls = 'turn-tool';
+    if (t.ok === false) cls += ' turn-tool-error';
+    else if (t.ok === null || t.ok === undefined) cls += ' turn-tool-pending';
+    chip.className = cls;
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'turn-tool-name';
+    nameSpan.textContent = t.name || 'tool';
+    chip.appendChild(nameSpan);
+    if (t.summary) {
+      const sumSpan = document.createElement('span');
+      sumSpan.className = 'turn-tool-summary';
+      sumSpan.textContent = t.summary;
+      sumSpan.title = t.summary; // full text on hover when truncated
+      chip.appendChild(sumSpan);
+    }
+    div.appendChild(chip);
+    return div;
+  }
+  if (t.kind === 'phase') {
+    // A whole response phase rolled into one bubble (see groupAssistantPhases):
+    // collapsed TL;DR when done, or the open growing bubble while in-flight.
+    return buildPhaseBubble(t);
+  }
+  // assistant — a lone turn that escaped phase-grouping (a run with no TL;DR, or
+  // an intermediate note). The split path is a defensive fallback so a stray
+  // marker never renders as a raw "TL;DR:" line; normally phase-grouping owns it.
+  const split = splitTldr(t.text);
+  if (split) return buildCollapsedBubble(split.summary, [split.detail]);
   const div = document.createElement('div');
   div.className = 'turn';
   const outer = document.createElement('div');
@@ -6164,27 +6759,220 @@ function renderTurn(t) {
   return div;
 }
 
+// Group consecutive tool turns from the server into one synthetic `thinking`
+// turn so the transcript reads as one tidy bubble per ops phase. Pure client-
+// side preprocessing — the server still emits one turn per tool_use.
+function groupThinkingChips(turns) {
+  const out = [];
+  let group = null;
+  for (const t of turns) {
+    if (t.kind === 'tool') {
+      if (!group) {
+        group = { kind: 'thinking', ops: [], ts: t.ts };
+        out.push(group);
+      }
+      group.ops.push(t);
+    } else {
+      group = null;
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+// Roll a whole assistant response phase into one collapsed bubble. A "phase" is
+// a run of consecutive non-user/non-system turns (intermediate "let me check…"
+// text + the grouped thinking bubble) that ends with an addressing turn carrying
+// a TL;DR line. Net result: one user question → one AI bubble (TL;DR + chevron)
+// with the full narrative folded inside. Runs with no TL;DR yet — a live in-flight
+// reply, or an AskUserQuestion the AI is waiting on — are left as individual turns
+// so progress and questions stay visible. Runs after groupThinkingChips.
+function groupAssistantPhases(turns, live) {
+  // Start index of the final run (last contiguous block of non-user/system
+  // turns). Only that run, and only while the session is live, renders as the
+  // in-flight growing bubble; everything else is a completed phase or (legacy /
+  // AskUserQuestion / unmarked-done) left as individual turns.
+  let lastRunStart = -1;
+  for (let k = 0; k < turns.length; k++) {
+    const isUS = turns[k].kind === 'user' || turns[k].kind === 'system';
+    const atBoundary = k === 0 || turns[k - 1].kind === 'user' || turns[k - 1].kind === 'system';
+    if (!isUS && atBoundary) lastRunStart = k;
+  }
+  const out = [];
+  let i = 0;
+  while (i < turns.length) {
+    const t = turns[i];
+    if (t.kind === 'user' || t.kind === 'system') { out.push(t); i++; continue; }
+    const runStart = i;
+    let j = i;
+    const run = [];
+    while (j < turns.length && turns[j].kind !== 'user' && turns[j].kind !== 'system') {
+      run.push(turns[j]); j++;
+    }
+    i = j;
+    // The final addressing turn is the last assistant text turn in the run; its
+    // TL;DR (if present) is the summary, otherwise we derive a fallback one-liner.
+    let lastA = -1;
+    for (let k = run.length - 1; k >= 0; k--) { if (run[k].kind === 'assistant') { lastA = k; break; } }
+    const split = lastA >= 0 ? splitTldr(run[lastA].text) : null;
+    const first = run[0];
+    const idBase = (first && (first.id || first.ts)) || '';
+    const ts = (first && first.ts) || '';
+    if (live && runStart === lastRunStart && !split) {
+      // In-flight: one bubble that grows — running notes + the trailing live ops
+      // indicator — until the answer lands and it collapses in place.
+      const bodyTexts = [];
+      let thinking = null;
+      for (const r of run) {
+        if (r.kind === 'assistant') bodyTexts.push(r.text);
+        else if (r.kind === 'thinking') thinking = r;          // trailing one = current ops
+      }
+      out.push({ kind: 'phase', pending: true, summary: null, bodyTexts, thinking, id: idBase, ts });
+    } else if (lastA >= 0) {
+      // Completed → one collapsed bubble. TL;DR summary when the model emitted
+      // one; otherwise a derived fallback so every reply still folds to one line.
+      const bodyTexts = [];
+      for (let k = 0; k < run.length; k++) {
+        if (run[k].kind !== 'assistant') continue;             // drop thinking/tool chips
+        bodyTexts.push(k === lastA && split ? split.detail : run[k].text);
+      }
+      const summary = split ? split.summary : fallbackSummary(run[lastA].text);
+      out.push({ kind: 'phase', pending: false, summary, bodyTexts, thinking: null, id: idBase, ts });
+    } else {
+      for (const r of run) out.push(r);                        // orphaned ops, no text
+    }
+  }
+  return out;
+}
+
+// Stable identity for a turn — drives incremental rendering. Any turn whose
+// signature is the same as a previously-rendered one keeps its existing DOM
+// node (no markdown re-parse, no flash, no lost text selection). A thinking
+// bubble's signature changes whenever an op is added or an `ok` flag flips,
+// so the bubble re-renders in place; everything else is stable.
+function signatureFor(t) {
+  if (t.kind === 'thinking') {
+    const k = t.ops.map(o => `${o.id || ''}:${o.ok === true ? '1' : o.ok === false ? '0' : '?'}`).join(',');
+    return `thinking|${k}`;
+  }
+  if (t.kind === 'tool')      return `tool|${t.id || ''}|${t.ok === true ? '1' : t.ok === false ? '0' : ''}`;
+  if (t.kind === 'phase') {
+    const blen = t.bodyTexts.reduce((n, b) => n + (b ? b.length : 0), 0);
+    if (t.pending) {
+      const ops = t.thinking ? t.thinking.ops.map(o => `${o.id || ''}:${o.ok === true ? '1' : o.ok === false ? '0' : '?'}`).join(',') : '';
+      return `phase|live|${t.id || ''}|${blen}|${ops}`;
+    }
+    return `phase|done|${t.id || ''}|${t.ts || ''}|${blen}`;
+  }
+  if (t.kind === 'assistant') return `assistant|${t.id || ''}|${t.ts || ''}`;
+  if (t.kind === 'user') {
+    // Marker-bearing turns vary by attachment count too; include both so an
+    // edit-in-place (e.g. server caches an upload after the optimistic bubble)
+    // doesn't reuse the wrong DOM node.
+    const m = String(t.text || '').match(/^<RUNN-ATTACHMENTS>\n([\s\S]*?)\n<\/RUNN-ATTACHMENTS>/);
+    const ac = m ? m[1].split('\n').filter(Boolean).length : 0;
+    return `user|${t.ts || ''}|${(t.text || '').length}|${ac}`;
+  }
+  if (t.kind === 'system')    return `system|${t.ts || ''}|${(t.text || '').length}`;
+  return 'unknown|' + Math.random();
+}
+
+// Hide a thinking bubble (or loose chip) once a later non-thinking turn has
+// appeared — the AI has moved past those ops, the next text bubble is the
+// answer. The trailing thinking bubble (if any) stays visible — that's the
+// "happening right now" indicator. When the next text bubble lands, it also
+// becomes stale and collapses.
+function collapseStaleChips() {
+  const turnEls = [...chatTranscript.querySelectorAll('.turn')];
+  const isThinkingEl = el =>
+    !!(el.querySelector('.turn-thinking') || el.querySelector('.turn-tool'));
+  let lastTextIdx = -1;
+  for (let i = turnEls.length - 1; i >= 0; i--) {
+    if (!isThinkingEl(turnEls[i])) { lastTextIdx = i; break; }
+  }
+  for (let i = 0; i < turnEls.length; i++) {
+    if (isThinkingEl(turnEls[i]) && i < lastTextIdx) turnEls[i].classList.add('turn-stale');
+    else turnEls[i].classList.remove('turn-stale');
+  }
+}
+
 function renderTranscript(turns) {
+  // Collapse consecutive tool turns into a single 'thinking' bubble before
+  // diffing — the user wants one tidy bubble per ops phase, not a stack of
+  // chips. Then roll each completed assistant response phase (intermediate
+  // notes + thinking + final answer) into one collapsed TL;DR bubble.
+  turns = groupThinkingChips(turns);
+  // Only the live, in-flight run grows as a single open bubble; a finished
+  // (or unmarked) session must not show a perpetual spinner. Mirror the pill's
+  // liveness test (taskIsThinking) plus the just-submitted optimistic window.
+  const liveCard = cards.get(openCardId);
+  const live = chatSending || taskIsThinking(liveCard);
+  turns = groupAssistantPhases(turns, live);
+
   // In transcript mode, .chat-body is overflow:hidden and .chat-transcript is
   // the actual scroll container — measure and scroll the transcript itself.
   const nearBottom = chatTranscript.scrollHeight - chatTranscript.scrollTop - chatTranscript.clientHeight < 80;
+  const prevScrollTop = chatTranscript.scrollTop;
   // Preserve optimistic user turns whose text hasn't yet appeared in the
   // server transcript — otherwise the ack flashes away the moment Claude
   // emits its first session.updated, before the user message has landed in
-  // the JSONL.
+  // the JSONL. We also build a parallel "body-only" set: when the user
+  // attached files, the server prepends a <RUNN-ATTACHMENTS> block whose
+  // absolute paths the optimistic side never knew, so a full-string match
+  // would never fire. Comparing post-marker bodies lets the optimistic
+  // bubble retire as soon as the server text lands.
   const serverUserTexts = new Set(turns.filter(t => t.kind === 'user').map(t => t.text));
+  const serverUserBodies = new Set(turns
+    .filter(t => t.kind === 'user')
+    .map(t => parseUserAttachments(t.text).body));
   const survivingOptimistic = [];
-  chatTranscript.querySelectorAll('.turn').forEach(el => {
-    if (el.dataset.optimistic === '1' && !serverUserTexts.has(el.dataset.optimisticText)) {
-      survivingOptimistic.push(el);
+
+  // Index existing DOM nodes by signature so unchanged turns can be reused
+  // verbatim. Optimistic placeholders are tracked separately (they have no
+  // server-side identity yet).
+  const existingBySig = new Map();
+  for (const el of chatTranscript.querySelectorAll('.turn')) {
+    if (el.dataset.optimistic === '1') {
+      // Attachment-bearing optimistic turns match on body only (see comment
+      // above on serverUserBodies). Plain text turns keep the original
+      // exact-string check.
+      const hasAttach = el.dataset.optimisticHasAttachments === '1';
+      const matchedBody = hasAttach && serverUserBodies.has(el.dataset.optimisticText);
+      const matchedText = serverUserTexts.has(el.dataset.optimisticText);
+      if (!matchedBody && !matchedText) survivingOptimistic.push(el);
+      el.remove();
+      continue;
     }
+    const sig = el.dataset.sig;
+    if (sig && !existingBySig.has(sig)) existingBySig.set(sig, el);
     el.remove();
-  });
-  chatEmpty.hidden = turns.length > 0 || survivingOptimistic.length > 0;
-  for (const t of turns) chatTranscript.insertBefore(renderTurn(t), chatThinking);
-  for (const el of survivingOptimistic) chatTranscript.insertBefore(el, chatThinking);
+  }
+
+  // Rebuild the transcript in order, reusing nodes where the signature matches.
+  // Net effect: an unchanged assistant bubble keeps the same DOM node across
+  // every session.updated tick — no flicker, no re-flow, no markdown re-parse.
+  const frag = document.createDocumentFragment();
+  for (const t of turns) {
+    const sig = signatureFor(t);
+    let el = existingBySig.get(sig);
+    if (el) existingBySig.delete(sig);
+    else { el = renderTurn(t); el.dataset.sig = sig; }
+    frag.appendChild(el);
+  }
+  for (const el of survivingOptimistic) frag.appendChild(el);
+  chatTranscript.insertBefore(frag, chatThinking);
+
+  collapseStaleChips();
+
+  chatEmpty.hidden = turns.length > 0 || survivingOptimistic.length > 0 || live;
+  // The rebuild above (remove-all → re-insert) collapses scrollHeight to ~0
+  // mid-pass, so scrollTop would snap to the top on every poll/session tick
+  // whenever the user has scrolled up — e.g. to expand a collapsed answer's
+  // chevron. Follow the bottom when already there; otherwise pin the prior offset.
   if (nearBottom) chatTranscript.scrollTop = chatTranscript.scrollHeight;
+  else chatTranscript.scrollTop = prevScrollTop;
   updateSectionSummaries();
+  paintThinkingTokens(); // after collapseStaleChips so the live bubble is known
 }
 
 async function refreshOpenTranscript() {
@@ -6192,6 +6980,7 @@ async function refreshOpenTranscript() {
   try {
     const t = await api('GET', `/cards/${openCardId}/transcript`);
     if (!openCardId) return;
+    chatTurnTokens = t.turn_tokens || 0;
     renderTranscript(t.turns);
   } catch {}
 }
@@ -6352,11 +7141,167 @@ function commandHint(val) {
 const chatCmdCtx      = { showMsg: m => { chatErrorMsg.textContent = m; chatErrorMsg.hidden = false; } };
 const firstturnCmdCtx = { showMsg: m => { firstturnMsg.textContent = m; firstturnMsg.hidden = false; } };
 
+// ── Chat attachments — composer state + handlers ──────────────
+// Files queued for the next send. Each entry is read as base64 once when
+// added (cheaper than re-reading at send time) and wired into the request
+// body as { name, mime, data } so the server can stash to disk and reference
+// the absolute path inside the marker block it prepends to the prompt.
+const ATTACH_MAX_FILES = 8;
+const ATTACH_MAX_BYTES = 15 * 1024 * 1024;
+const ATTACH_MIME_ALLOW = new Set([
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+  'application/pdf',
+  'text/plain', 'text/markdown', 'text/csv', 'application/json',
+]);
+const pendingAttachments = [];
+const chatAttachmentsRow = document.getElementById('chatAttachmentsRow');
+const chatAttach         = document.getElementById('chatAttach');
+const chatFilePicker     = document.getElementById('chatFilePicker');
+
+function showAttachError(msg) {
+  chatErrorMsg.textContent = msg;
+  chatErrorMsg.hidden = false;
+  // Auto-clear after 4s so the error doesn't shadow the typing hint forever.
+  // The textContent-equality guard makes sure a newer error isn't wiped.
+  setTimeout(() => { if (chatErrorMsg.textContent === msg) chatErrorMsg.hidden = true; }, 4000);
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(r.error || new Error('read failed'));
+    r.onload = () => {
+      // FileReader returns a data: URL — strip the "data:<mime>;base64," prefix.
+      const s = String(r.result || '');
+      const comma = s.indexOf(',');
+      resolve(comma >= 0 ? s.slice(comma + 1) : s);
+    };
+    r.readAsDataURL(file);
+  });
+}
+
+async function addAttachments(files) {
+  for (const f of files) {
+    if (pendingAttachments.length >= ATTACH_MAX_FILES) {
+      showAttachError(`Max ${ATTACH_MAX_FILES} attachments per message.`);
+      break;
+    }
+    if (f.size > ATTACH_MAX_BYTES) {
+      showAttachError(`"${f.name}" is too large (${Math.round(f.size / 1024 / 1024)} MB > ${Math.round(ATTACH_MAX_BYTES / 1024 / 1024)} MB).`);
+      continue;
+    }
+    const mime = f.type || '';
+    // Browsers don't always set a useful mime (e.g. some screenshot pastes).
+    // Server has the authoritative ext→mime fallback; we only reject obvious
+    // mismatches client-side to fail fast on the common bad cases.
+    if (mime && !ATTACH_MIME_ALLOW.has(mime) && !mime.startsWith('image/')) {
+      showAttachError(`Unsupported type: ${mime}`);
+      continue;
+    }
+    try {
+      const b64 = await fileToBase64(f);
+      pendingAttachments.push({
+        id: 'a_' + Math.random().toString(36).slice(2, 8),
+        name: f.name || 'file',
+        mime,
+        bytes: f.size,
+        base64: b64,
+        // dataUrl only for images so the chip + optimistic bubble show a
+        // real thumbnail without a server round-trip.
+        dataUrl: mime.startsWith('image/') ? `data:${mime};base64,${b64}` : null,
+      });
+    } catch (err) {
+      showAttachError(`Couldn't read ${f.name}: ${err.message}`);
+    }
+  }
+  renderAttachmentChips();
+}
+
+function removeAttachment(id) {
+  const i = pendingAttachments.findIndex(a => a.id === id);
+  if (i >= 0) { pendingAttachments.splice(i, 1); renderAttachmentChips(); }
+}
+
+function clearAttachments() {
+  pendingAttachments.length = 0;
+  renderAttachmentChips();
+}
+
+function renderAttachmentChips() {
+  chatAttachmentsRow.innerHTML = '';
+  if (!pendingAttachments.length) { chatAttachmentsRow.hidden = true; return; }
+  chatAttachmentsRow.hidden = false;
+  for (const a of pendingAttachments) {
+    const chip = document.createElement('div');
+    chip.className = 'chat-attachment-chip';
+    if (a.dataUrl) {
+      const img = document.createElement('img');
+      img.src = a.dataUrl; img.alt = '';
+      chip.appendChild(img);
+    }
+    const name = document.createElement('span');
+    name.className = 'chat-attachment-name';
+    name.textContent = a.name;
+    name.title = `${a.name} · ${Math.max(1, Math.round(a.bytes / 1024))} KB`;
+    chip.appendChild(name);
+    const x = document.createElement('button');
+    x.type = 'button'; x.className = 'chat-attachment-x'; x.textContent = '×';
+    x.title = 'Remove';
+    x.addEventListener('click', () => removeAttachment(a.id));
+    chip.appendChild(x);
+    chatAttachmentsRow.appendChild(chip);
+  }
+}
+
+// Picker — the visible ＋ button proxies to the hidden <input type=file>.
+chatAttach.addEventListener('click', () => chatFilePicker.click());
+chatFilePicker.addEventListener('change', () => {
+  addAttachments([...chatFilePicker.files]);
+  chatFilePicker.value = ''; // allow re-picking the same file
+});
+
+// Paste — Ctrl/Cmd+V of a clipboard image (or any DataTransferItem with files
+// like a screenshot) is the fastest path. preventDefault only when we
+// actually consume a file so plain-text paste keeps working.
+chatInput.addEventListener('paste', (e) => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  const files = [];
+  for (const it of items) {
+    if (it.kind === 'file') { const f = it.getAsFile(); if (f) files.push(f); }
+  }
+  if (files.length) { e.preventDefault(); addAttachments(files); }
+});
+
+// Drag-drop — over the whole transcript area. Only react when the drag
+// actually carries files (the .types check skips text drags), and toggle
+// the .drop-target outline for feedback.
+(function wireChatDrop() {
+  const zone = document.getElementById('chatTranscript');
+  const hasFiles = (e) => !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
+  ['dragenter', 'dragover'].forEach(ev =>
+    zone.addEventListener(ev, (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      zone.classList.add('drop-target');
+    }));
+  ['dragleave', 'drop'].forEach(ev =>
+    zone.addEventListener(ev, () => zone.classList.remove('drop-target')));
+  zone.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    addAttachments([...e.dataTransfer.files]);
+  });
+})();
+
 async function handleChatSubmit() {
   if (!openCardId) return;
   const val = chatInput.value.trim();
-  if (!val) return;
-  if (runChatCommand(val, chatCmdCtx)) { chatInput.value = ''; return; }
+  // Send is allowed when the user has either typed text OR attached files.
+  if (!val && !pendingAttachments.length) return;
+  // Slash-style ! commands are intercepted before any file upload so e.g.
+  // `!stop` doesn't accidentally ship a queued screenshot.
+  if (val && runChatCommand(val, chatCmdCtx)) { chatInput.value = ''; return; }
   const card = cards.get(openCardId);
   // First-turn special case: AI task with no session yet. The /message
   // endpoint requires a session, so we instead patch the user's text onto
@@ -6376,19 +7321,38 @@ async function handleChatSubmit() {
   chatInputRow.classList.add('busy');
   chatInput.disabled = true;
   chatSend.disabled = true;
+  chatAttach.disabled = true;
   chatErrorMsg.hidden = true;
   chatEmpty.hidden = true;
-  const optimisticTurn = renderTurn({ kind: 'user', text: val });
+  // Snapshot the queue so the in-flight bubble keeps the right thumbnails
+  // even if the user starts attaching the next batch before this one acks.
+  const snapshot = pendingAttachments.slice();
+  const wire = snapshot.map(a => ({ name: a.name, mime: a.mime, data: a.base64 }));
+  const bodyText = val || (snapshot.length ? 'Please analyse the attached file(s).' : '');
+  // Optimistic turn — text body lives in _bodyText (renderer reads that when
+  // _localAttachments is set), thumbnails in _localAttachments. optimisticText
+  // is body-only so the body-only survival check in renderTranscript can
+  // match against the marker-stripped server text.
+  const optimisticTurn = renderTurn({
+    kind: 'user',
+    text: '',
+    _bodyText: bodyText,
+    _localAttachments: snapshot,
+  });
   optimisticTurn.dataset.optimistic = '1';
-  optimisticTurn.dataset.optimisticText = val;
+  optimisticTurn.dataset.optimisticText = snapshot.length ? bodyText : val;
+  if (snapshot.length) optimisticTurn.dataset.optimisticHasAttachments = '1';
   chatTranscript.insertBefore(optimisticTurn, chatThinking);
   chatSending = true;
+  chatTurnTokens = 0; // new turn — the count climbs from zero
   chatThinkingLabel.textContent = 'thinking';
   chatThinking.hidden = false;
+  paintThinkingTokens();
   chatTranscript.scrollTop = chatTranscript.scrollHeight;
   try {
-    await sendMessage(openCardId, val);
+    await sendMessage(openCardId, val, wire);
     chatInput.value = '';
+    clearAttachments();
     startTranscriptPoll();
   } catch (err) {
     chatErrorMsg.textContent = `Send failed: ${err.message}`;
@@ -6398,7 +7362,11 @@ async function handleChatSubmit() {
     chatInputRow.classList.remove('busy');
     chatInput.disabled = false;
     chatSend.disabled = false;
-    chatInput.focus();
+    chatAttach.disabled = false;
+    // Refocus keeps the input ready for the next message on desktop. On mobile
+    // it re-summons the on-screen keyboard right after it dismissed itself on
+    // send — a jarring bounce — so skip it there.
+    if (!isMobileLayout()) chatInput.focus();
   }
 }
 chatSend.addEventListener('click', handleChatSubmit);
@@ -6437,16 +7405,46 @@ async function stopCurrentTurn() {
 
 // ── WebSocket ────────────────────────────────────────────────
 const wsDot = document.getElementById('wsDot');
-let ws;
-function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen = () => wsDot.classList.add('live');
-  ws.onclose = () => {
+let ws = null;
+let wsReconnectTimer = null;
+
+function setWsLive(live) {
+  if (live) {
+    wsDot.classList.add('live');
+    wsDot.title = 'WS connected';
+  } else {
     wsDot.classList.remove('live');
-    setTimeout(connectWS, 1000);
+    wsDot.title = 'WS disconnected — reconnecting…';
+  }
+}
+function scheduleWsReconnect(delayMs = 1000) {
+  if (wsReconnectTimer) return; // already pending — don't pile on
+  wsReconnectTimer = setTimeout(() => { wsReconnectTimer = null; connectWS(); }, delayMs);
+}
+
+function connectWS() {
+  // Skip if we already have a socket connecting (0) or open (1) — without
+  // this guard, fast reconnect storms (e.g., during a docker restart) stack
+  // shadow sockets whose onopen/onclose handlers fight over the indicator.
+  if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const myWs = new WebSocket(`${proto}://${location.host}/ws`);
+  ws = myWs;
+  myWs.onopen = () => {
+    if (ws !== myWs) return; // a newer socket has taken over
+    setWsLive(true);
   };
-  ws.onmessage = (e) => {
+  myWs.onclose = () => {
+    if (ws !== myWs) return; // ignore close from a superseded shadow socket
+    setWsLive(false);
+    scheduleWsReconnect(1000);
+  };
+  myWs.onerror = () => { /* browsers always fire close after error; handled above */ };
+  myWs.onmessage = (e) => {
+    if (ws !== myWs) return; // ignore messages from a superseded shadow socket
+    // Any received message is proof-of-life — flip the dot on even if onopen
+    // was somehow missed (rare but possible under flaky reconnect chains).
+    if (!wsDot.classList.contains('live')) setWsLive(true);
     const msg = JSON.parse(e.data);
     if (msg.type === 'card.added') {
       cards.set(msg.card.id, msg.card);
@@ -6542,6 +7540,35 @@ function connectWS() {
   };
 }
 
+// "1.2k tok" / "640 tok" — compact so it fits the pill without wrapping.
+function fmtTokens(n) {
+  if (!n || n < 1) return '';
+  if (n < 1000) return `${n} tok`;
+  if (n < 10000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k tok`;
+  return `${Math.round(n / 1000)}k tok`;
+}
+
+// Paint chatTurnTokens onto the thinking pill and, when one is on screen, the
+// active (non-stale) thinking bubble's header. Idempotent — safe to call after
+// every transcript render and whenever the pill is shown. The bubble span is
+// created lazily so node reuse across renders keeps working.
+function paintThinkingTokens() {
+  const label = chatTurnTokens > 0 ? ` · ${fmtTokens(chatTurnTokens)}` : '';
+  if (chatThinkingTokens) chatThinkingTokens.textContent = label;
+  const bubbles = chatTranscript.querySelectorAll('.turn:not(.turn-stale) .turn-thinking');
+  const live = bubbles.length ? bubbles[bubbles.length - 1] : null;
+  if (!live) return;
+  const header = live.querySelector('.turn-thinking-header');
+  if (!header) return;
+  let span = header.querySelector('.thinking-tokens');
+  if (!span) {
+    span = document.createElement('span');
+    span.className = 'thinking-tokens';
+    header.appendChild(span);
+  }
+  span.textContent = label;
+}
+
 // Briefly pulse every visible spinner in the chat panel — fires on each
 // session.updated WS event so the user can see when new tokens land.
 function pulseThinkingSpinners() {
@@ -6574,19 +7601,15 @@ function flash(id) {
   el.classList.add('flash');
 }
 
-// ── Service worker cleanup ──────────────────────────────────
-// We used to register a shell-caching SW; it caused too much "but I hard
-// refreshed and the change isn't showing" pain during dev. The page no longer
-// registers one. The /sw.js file itself is a killswitch that, when reached by
-// any browser that still has the old SW registered, clears caches, unregisters
-// itself, and reloads the tab — one transition, then no SW at all.
+// ── Service worker registration ─────────────────────────────
+// Registers /sw.js so Android Chrome treats the app as installable (standalone,
+// no address bar). The SW is a pure network passthrough — no caching — so this
+// does NOT bring back the "hard-refreshed and the change isn't showing" pain
+// that made us rip out the old shell-caching SW. See frontend/sw.js.
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations()
-    .then(regs => regs.forEach(r => r.unregister().catch(() => {})))
-    .catch(() => {});
-  if (window.caches && caches.keys) {
-    caches.keys().then(names => names.forEach(n => caches.delete(n).catch(() => {}))).catch(() => {});
-  }
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
 }
 
 // ── Invoicing: modals, composer, preview page, list ─────────
@@ -6598,6 +7621,10 @@ const invoiceDoc     = document.getElementById('invoiceDoc');
 const invStatusBadge = document.getElementById('invStatusBadge');
 
 let currentInvoiceId = null;       // when on invoice route
+// Live draft preview: when set, pane 3's invoice view shows an un-issued
+// invoice synthesised from a project's billable cards rather than a persisted
+// one. Cleared on issue, on close, and by setPane3 when leaving invoice mode.
+let draftInvoice = null;
 let composerCtx = null;            // { client_id, items: mutable, gstRate, currencySymbol }
 let currentBillingTab = 'outstanding';
 
@@ -6787,17 +7814,19 @@ chatClientEdit.addEventListener('click', () => {
 });
 
 // ── Invoice composer ──────────────────────────────────────
-async function openComposer(clientId) {
+async function openComposer(clientId, scopeProjectId) {
   const client = clients.get(clientId) || await api('GET', `/clients/${encodeURIComponent(clientId)}`).catch(() => null);
   if (!client) { alert(`Client not found: ${clientId}`); return; }
   const s = await api('GET', '/settings');
   const rate = (client.rate_per_hour != null) ? client.rate_per_hour : (s.default_rate_per_hour || 0);
   // Collect this client's billable cards (status 'invoice' = ready to bill),
-  // across any project owned by the client.
+  // across any project owned by the client — or, when scopeProjectId is set,
+  // only that project's subtree (so the composer matches the draft preview).
   const items = [];
   for (const c of cards.values()) {
     if (c.status !== 'invoice') continue;
     if (resolveClientId(c) !== clientId) continue;
+    if (scopeProjectId && !descendsFrom(c, scopeProjectId)) continue;
     const hours = (typeof c.hours === 'number') ? c.hours : 0;
     const amount = round2(hours * rate);
     items.push({
@@ -6881,9 +7910,10 @@ document.getElementById('compIssue').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = 'issuing…';
   try {
+    // The server flips each line item's card to 'invoiced' (+ records invoice_id).
     const inv = await api('POST', '/invoices', {
       client_id: composerCtx.client_id,
-      items: composerCtx.items,
+      items: composerCtx.items.filter(it => Number(it.amount_ex_gst) > 0),   // drop $0 rows
       issued_at: document.getElementById('compIssued').value,
       due_at:    document.getElementById('compDue').value,
       notes:     document.getElementById('compNotes').value,
@@ -6978,19 +8008,164 @@ async function renderInvoicesTab() {
 // button in the invoice header takes the user back to billing with the same
 // scope they came from.
 function openInvoice(id) {
+  draftInvoice = null;
   currentInvoiceId = id;
   setPane3('invoice', id);
   if (isMobileLayout()) goPane(3);
   renderInvoicePage(id);
 }
+
+// Synthesise an invoice-shaped object from a client's billable ('invoice'-
+// status) cards. Mirrors the server's createInvoice snapshot so the preview
+// matches what issuing will produce. `scopeProjectId` (optional) restricts the
+// line items to that project's subtree — the pane-2 bill button passes it so a
+// project shows "its" invoice; the totals still roll up at the client's rate.
+function buildDraftInvoice(clientId, scopeProjectId) {
+  const client = clients.get(clientId);
+  if (!client) return null;
+  const s = globalSettings;
+  const rate    = (client.rate_per_hour != null) ? client.rate_per_hour : (s.default_rate_per_hour || 0);
+  const gstRate = (client.gst_rate != null)       ? client.gst_rate       : (s.default_gst_rate || 0.10);
+  const items = [];
+  for (const c of cards.values()) {
+    if (c.status !== 'invoice') continue;            // 'invoice' = ready to bill
+    if (resolveClientId(c) !== clientId) continue;
+    if (scopeProjectId && !descendsFrom(c, scopeProjectId)) continue;
+    const hours = (typeof c.hours === 'number') ? c.hours : 0;
+    if (!(hours > 0)) continue;   // can't bill zero hours — card stays 'invoice', off the draft
+    items.push({
+      card_id: c.id,
+      description: c.title,
+      date: (c.done_at || c.updated_at || '').slice(0, 10) || todayISOC(),
+      amount_ex_gst: round2(hours * rate),
+    });
+  }
+  items.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const subtotal = round2(items.reduce((t, it) => t + (Number(it.amount_ex_gst) || 0), 0));
+  const gst      = round2(subtotal * gstRate);
+  const total    = round2(subtotal + gst);
+  // Predicted id only when the client carries a running seq (future auto-
+  // numbering). With no seq the id is blank — the draft prompts for a manual
+  // number, which the user types before issuing.
+  const prefix = (client.invoice_prefix || client.name || 'INV').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const id     = Number.isFinite(client.invoice_seq) ? `${prefix}${client.invoice_seq}` : '';
+  const issued = todayISOC();
+  return {
+    _draft: true,
+    id,                                               // '' ⇒ enter manually in the draft header
+    client_id: clientId,
+    issued_at: issued,
+    due_at: addDaysISO(issued, s.default_due_days || 14),
+    items,
+    subtotal_ex_gst: subtotal,
+    gst_rate: gstRate,
+    gst,
+    total_inc_gst: total,
+    paid: 0,
+    balance: total,
+    status: 'draft',
+    notes: '',
+    snapshot: {
+      from: {
+        name: s.business_name || '',
+        address_lines: s.business_address_lines || [],
+        abn_acn: s.business_abn_acn || '',
+        logo_path: s.logo_path || '',
+      },
+      to: {
+        company: client.company || client.name || '',
+        contact: client.contact || '',
+        address_lines: client.address_lines || [],
+        abn: client.abn || '',
+      },
+      bank: s.bank || { bank: '', name: '', bsb: '', acc: '' },
+      currency: client.currency || s.currency || 'AUD',
+      currency_symbol: s.currency_symbol || '$',
+      date_format: s.date_format || 'DD/MM/YYYY',
+    },
+  };
+}
+
+// Pane-2 bill button entry point: show the project's live draft invoice. Falls
+// back to the billing list for projects with no billable client (shouldn't
+// happen — the button is hidden for those — but keeps the click safe).
+function openProjectInvoice(projectId) {
+  const clientId = projectId ? resolveClientId(cards.get(projectId)) : null;
+  const cl = clientId ? clients.get(clientId) : null;
+  if (!clientId || (cl && cl.non_billable)) { openBilling(projectId); return; }
+  billingScopeProjectId = projectId || null;
+  draftInvoice = buildDraftInvoice(clientId, billingScopeProjectId);
+  if (!draftInvoice) { openBilling(projectId); return; }
+  currentInvoiceId = null;
+  setPane3('invoice', draftInvoice.id);
+  if (isMobileLayout()) goPane(3);
+  if (history.state?.runnPane !== 3) {
+    history.pushState({ runnPane: 3, mode: 'invoice', projectId: billingScopeProjectId }, '');
+  }
+  renderInvoiceDoc(draftInvoice, { draft: true });
+}
+
 function closeInvoice() {
-  // Reopen billing in whatever scope was active before.
+  // From a draft preview, step back to the project (pane 2) — there's no list
+  // behind it. From a persisted invoice, reopen billing in the prior scope.
+  if (draftInvoice) {
+    draftInvoice = null;
+    setPane3(null);
+    if (isMobileLayout()) goPane(2);
+    if (history.state?.runnPane === 3) history.back();
+    return;
+  }
   openBilling(billingScopeProjectId);
 }
+
+// ── Draft action handlers ─────────────────────────────────
+document.getElementById('invEditDraft').addEventListener('click', () => {
+  if (!draftInvoice) return;
+  // Open the existing composer scoped to the same project so its rows match
+  // the draft the user is looking at.
+  openComposer(draftInvoice.client_id, billingScopeProjectId);
+});
+document.getElementById('invIssueDraft').addEventListener('click', async () => {
+  if (!draftInvoice || !draftInvoice.items.length) return;
+  const invNum = (draftInvoice.id || '').trim();
+  if (!invNum) { alert('Enter an invoice number first.'); return; }
+  const btn = document.getElementById('invIssueDraft');
+  btn.disabled = true; btn.textContent = 'issuing…';
+  try {
+    // The server flips each line item's card to 'invoiced' (+ records invoice_id).
+    const inv = await api('POST', '/invoices', {
+      id:        invNum,                              // manual number; server uses it as-is
+      client_id: draftInvoice.client_id,
+      items: draftInvoice.items
+        .filter(it => Number(it.amount_ex_gst) > 0)   // never put a $0 line on the invoice
+        .map(it => ({
+          card_id: it.card_id, description: it.description,
+          date: it.date, amount_ex_gst: it.amount_ex_gst,
+        })),
+      issued_at: draftInvoice.issued_at,
+      due_at:    draftInvoice.due_at,
+      notes:     draftInvoice.notes || '',
+      gst_rate:  draftInvoice.gst_rate,
+    });
+    openInvoice(inv.id);
+  } catch (err) {
+    alert(`Issue failed: ${err.message}`);
+    btn.disabled = false; btn.textContent = 'issue invoice';
+  }
+});
 function printInvoice() {
+  // Chrome's "Save as PDF" derives the default filename from document.title, so
+  // set it to just the invoice number (→ "ZIS260526.pdf") for the print, then
+  // restore. Falls back to 'draft' for an un-numbered draft.
+  const invNum = draftInvoice
+    ? ((draftInvoice.id || '').trim() || 'draft')
+    : (currentInvoiceId || 'invoice');
+  const prevTitle = document.title;
+  document.title = invNum;
   document.body.classList.add('invoice-printing');
   const off = () => {
     document.body.classList.remove('invoice-printing');
+    document.title = prevTitle;
     window.removeEventListener('afterprint', off);
   };
   window.addEventListener('afterprint', off);
@@ -7005,7 +8180,18 @@ async function renderInvoicePage(id) {
     invoiceDoc.innerHTML = `<div style="text-align:center;padding:40px;color:var(--overdue);">Invoice not found: ${escapeHtml(err.message)}</div>`;
     return;
   }
-  document.title = `Tax Invoice ${inv.id} — Runn`;
+  renderInvoiceDoc(inv, { draft: false });
+}
+
+// Pure renderer for an invoice-shaped object into pane 3's invoice doc. Used
+// both for persisted invoices (renderInvoicePage) and the live draft preview
+// (openProjectInvoice → buildDraftInvoice). `opts.draft` swaps the action row
+// from sent/paid/print to edit-items/issue.
+function renderInvoiceDoc(inv, opts) {
+  const isDraft = !!(opts && opts.draft);
+  document.title = isDraft
+    ? `Draft invoice ${inv.id} — Runn`
+    : `Tax Invoice ${inv.id} — Runn`;
   const snap = inv.snapshot || {};
   const from = snap.from || {};
   const to   = snap.to   || {};
@@ -7019,13 +8205,17 @@ async function renderInvoicePage(id) {
     return `${d}/${m}/${y}`;
   }
 
-  const itemsHtml = inv.items.map(it => `
-    <tr>
-      <td>${escapeHtml(it.description || '')}</td>
-      <td class="date">${fmtAUDate(it.date)}</td>
-      <td class="right">${fmt$(it.amount_ex_gst)}</td>
-    </tr>
-  `).join('');
+  const itemsHtml = inv.items.length
+    ? inv.items.map(it => `
+        <tr>
+          <td>${escapeHtml(it.description || '')}</td>
+          <td class="date">${fmtAUDate(it.date)}</td>
+          <td class="right">${fmt$(it.amount_ex_gst)}</td>
+        </tr>
+      `).join('')
+    : `<tr><td colspan="3" style="text-align:center;color:#8c8578;padding:24px;">
+         No billable items. Mark done tasks as “invoice” (ready to bill) to populate this invoice.
+       </td></tr>`;
 
   const logoHtml = from.logo_path
     ? `<img class="invoice-doc-logo" src="${escapeHtml(from.logo_path)}" alt="logo" onerror="this.style.display='none'">`
@@ -7035,6 +8225,7 @@ async function renderInvoicePage(id) {
   const balanceClass = balance > 0 ? 'outstanding' : '';
 
   invoiceDoc.innerHTML = `
+    ${isDraft ? '<div class="invoice-watermark">Draft</div>' : ''}
     <div class="invoice-doc-header">
       <div>
         ${logoHtml}
@@ -7044,7 +8235,10 @@ async function renderInvoicePage(id) {
         </div>
       </div>
       <div class="invoice-doc-right">
-        <div class="invoice-doc-title">Tax Invoice ${escapeHtml(inv.id)}</div>
+        <div class="invoice-doc-title">Tax Invoice ${isDraft
+          ? `<input id="invNumInput" class="invoice-num-input" type="text" placeholder="invoice #"
+                    value="${escapeHtml(inv.id || '')}" autocomplete="off" spellcheck="false">`
+          : escapeHtml(inv.id)}</div>
         <div class="invoice-doc-to">
           ${to.contact ? 'Att:<br>' + escapeHtml(to.contact) + '<br>' : ''}
           ${to.company ? escapeHtml(to.company) + '<br>' : ''}
@@ -7082,9 +8276,40 @@ async function renderInvoicePage(id) {
 
   // Status badge + action buttons
   const status = inv.status || 'draft';
+  const markSent  = document.getElementById('invMarkSent');
+  const markPaid  = document.getElementById('invMarkPaid');
+  const printBtn  = document.getElementById('invPrintBtn');
+  const editDraft = document.getElementById('invEditDraft');
+  const issueBtn  = document.getElementById('invIssueDraft');
+
+  // Draft preview: not persisted yet — sent/paid don't apply, but print/PDF
+  // does (lets you save a draft to PDF without issuing first).
+  markSent.hidden = isDraft;
+  markPaid.hidden = isDraft;
+  printBtn.hidden = false;
+  editDraft.hidden = !isDraft;
+  issueBtn.hidden  = !isDraft;
+
+  if (isDraft) {
+    invStatusBadge.innerHTML = `<span class="billing-invoice-status draft">draft · preview</span>`;
+    issueBtn.textContent = 'issue invoice';
+    const numInput = document.getElementById('invNumInput');
+    // Issue needs at least one line item AND an invoice number.
+    const refreshIssuable = () => {
+      const hasNum = !!(draftInvoice && (draftInvoice.id || '').trim());
+      issueBtn.disabled = !(inv.items.length > 0 && hasNum);
+    };
+    if (numInput) {
+      numInput.addEventListener('input', () => {
+        if (draftInvoice) draftInvoice.id = numInput.value;
+        refreshIssuable();
+      });
+    }
+    refreshIssuable();
+    return;
+  }
+
   invStatusBadge.innerHTML = `<span class="billing-invoice-status ${status}">${status}</span>`;
-  const markSent = document.getElementById('invMarkSent');
-  const markPaid = document.getElementById('invMarkPaid');
   markSent.disabled = (status !== 'draft');
   markPaid.disabled = (status === 'paid');
   markSent.onclick = async () => {
@@ -7116,6 +8341,12 @@ async function renderInvoicePage(id) {
   renderAll();
   refreshOutstanding();
   connectWS();
+  // Safety net — every 5s, if the socket isn't connecting or open, kick
+  // a reconnect. Recovers from any state the close-then-reconnect chain
+  // somehow fails to recover from on its own.
+  setInterval(() => {
+    if (!ws || (ws.readyState !== 0 && ws.readyState !== 1)) connectWS();
+  }, 5000);
 })().catch(err => {
   document.getElementById('boardName').textContent = 'failed to load';
   console.error(err);
