@@ -14,6 +14,7 @@ const queue = require('./queue');
 const migrateClients = require('./migrate-clients');
 const migratePaths = require('./migrate-paths');
 const migrateCwdCollapse = require('./migrate-cwd-collapse');
+const migrateSessionPath = require('./migrate-session-path');
 const { applyTimerTransition } = require('./timer');
 
 // ── Config ───────────────────────────────────────────────────
@@ -326,6 +327,46 @@ function locationFromSessionPath(sessionPath) {
   return { type: 'local', cwd: slugToCwd(m[1]) };
 }
 
+// Walk a card's parent chain to the root project and return its client_id (or
+// null). A task's client is its project's client — moving a task changes its
+// client transitively, which is what the move endpoint's billing guard checks.
+async function rootClientId(card) {
+  let c = card, n = 0;
+  while (c && c.parent_id && n++ < 16) {
+    try { c = await readJson(cardPath(c.parent_id)); } catch { return null; }
+  }
+  return c ? (c.client_id || null) : null;
+}
+
+// Find a session's jsonl on disk by scanning every ~/.claude/projects/<slug>/
+// dir. Used as a fallback when a card's stored session_path is stale/missing.
+async function findJsonlBySessionId(sessionId) {
+  if (!sessionId) return null;
+  const file = `${sessionId}.jsonl`;
+  for (const slug of await fsp.readdir(CLAUDE_PROJECTS).catch(() => [])) {
+    const p = path.join(CLAUDE_PROJECTS, slug, file);
+    try { await fsp.access(p); return p; } catch {}
+  }
+  return null;
+}
+
+// Relocate a card's session jsonl into the slug dir for `toCwd` and return the
+// new absolute path (the transcript read site trusts session_path verbatim, so
+// it must follow the file — omitting this was the bug v6_session_path cleaned
+// up). No-ops if the file is already there or can't be found on disk.
+async function relocateSessionJsonl(card, toCwd) {
+  const dest = bridge.sessionPathFor(toCwd, card.session_id);
+  let src = card.session_path || null;
+  try { if (src) await fsp.access(src); else src = null; } catch { src = null; }
+  if (!src) src = await findJsonlBySessionId(card.session_id);
+  if (!src) return card.session_path || null; // nothing on disk — leave as-is
+  if (src === dest) return dest;
+  await fsp.mkdir(path.dirname(dest), { recursive: true });
+  await fsp.rename(src, dest);
+  console.log(`[runn] mv session ${card.session_id.slice(0, 8)}… → ${path.basename(path.dirname(dest))}/`);
+  return dest;
+}
+
 // Stream-read jsonl, return latest user-set title (custom-title from CC Desktop renames),
 // falling back to the latest auto-generated ai-title if no rename has happened.
 async function readLatestAiTitle(jsonlPath) {
@@ -592,9 +633,12 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, await readJson(cardPath(mm[1])));
     }
     if (m === 'GET' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/transcript$/))) {
-      const card = await readJson(cardPath(mm[1]));
-      if (!card.session_path) return sendJson(res, 200, { turns: [], total_events: 0 });
-      return sendJson(res, 200, await parseTranscript(card.session_path));
+      // Look in archive too — an archived card still has a viewable chat
+      // history; reading only the live dir 500s once a card is archived.
+      const found = await cardReadAnywhere(mm[1]);
+      if (!found) return sendJson(res, 404, { error: 'card not found' });
+      if (!found.card.session_path) return sendJson(res, 200, { turns: [], total_events: 0 });
+      return sendJson(res, 200, await parseTranscript(found.card.session_path));
     }
     if (m === 'POST' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/message$/))) {
       const card = await readJson(cardPath(mm[1]));
@@ -701,6 +745,67 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, reconciled: true, cleared });
       }
       return sendJson(res, 200, { ok: true, reconciled: false, cleared, note: result.reason });
+    }
+    if (m === 'POST' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/move$/))) {
+      // Move a task to another project. The task's project is its top-level
+      // ancestor; cwd/client/billing are all derived from that root, so the
+      // move is a parent_id repatch — except when it crosses clients, where the
+      // session jsonl must be relocated to the new client's workspace slug or
+      // the next --resume orphans. v1: tasks only (top-level projects can't move).
+      const card = await readJson(cardPath(mm[1])).catch(() => null);
+      if (!card) return sendJson(res, 404, { error: 'card not found' });
+      if (!card.parent_id) return sendJson(res, 400, { error: 'only tasks can be moved; this is a top-level project' });
+      const body = await readBody(req);
+      const toId = body.to;
+      if (!toId) return sendJson(res, 400, { error: 'missing target project (to)' });
+      if (toId === card.id) return sendJson(res, 400, { error: 'cannot move a task into itself' });
+      const target = await readJson(cardPath(toId)).catch(() => null);
+      if (!target) return sendJson(res, 404, { error: 'target project not found' });
+      if (target.parent_id) return sendJson(res, 400, { error: 'target must be a top-level project' });
+      if (target.id === card.parent_id) return sendJson(res, 200, card); // already there — no-op
+
+      // Does the move cross working trees? cwd is derived from root.client.workspace.
+      const oldCwd = (await resolveCardLocation(card)).cwd;
+      const newCwd = (await resolveCardLocation({ ...card, parent_id: target.id })).cwd;
+      const crossCwd = oldCwd !== newCwd;
+
+      // Billing guard: a task on an issued invoice can't change client, or we'd
+      // mis-attribute billed hours. (The PATCH freeze guards client_id directly;
+      // a move changes it transitively, so it's enforced here instead.)
+      if (card.status === 'invoiced' || card.status === 'paid') {
+        const oldClient = await rootClientId(card);
+        const newClient = target.client_id || null;
+        if (oldClient !== newClient) {
+          return sendJson(res, 409, {
+            error: `task is on invoice ${card.invoice_id || '(unknown)'}; cannot move it to a different client until the invoice is voided`,
+            invoice_id: card.invoice_id || null,
+          });
+        }
+      }
+
+      // Live-turn guard: relocating a jsonl out from under a running turn would
+      // break its resume. Make the user stop it first.
+      if (crossCwd && card.session_id && bridge.isSessionLive(card.session_id)) {
+        return sendJson(res, 409, { error: 'task is running — !stop it first, then move' });
+      }
+
+      let sessionPath = card.session_path || null;
+      if (crossCwd && card.session_id) {
+        try { sessionPath = await relocateSessionJsonl(card, newCwd); }
+        catch (err) { return sendJson(res, 500, { error: `failed to relocate session: ${err.message}` }); }
+      }
+
+      const fromParent = card.parent_id;
+      const merged = { ...card, parent_id: target.id, session_path: sessionPath, updated_at: nowIso() };
+      await atomicWriteJson(cardPath(card.id), merged); // cardsWatcher broadcasts card.changed
+      // Tick both queues: a sibling left behind in the old project may now run,
+      // and the task may slot into the new project's queue.
+      queue.maybeAdvanceQueue(fromParent, queueDeps).catch(err =>
+        console.error('[runn] queue advance (old parent) after move failed', err));
+      queue.maybeAdvanceQueue(target.id, queueDeps).catch(err =>
+        console.error('[runn] queue advance (new parent) after move failed', err));
+      console.log(`[runn] moved ${card.id} (${(card.title || '').slice(0, 40)}) → project ${target.id}${crossCwd ? ' [cross-cwd, session relocated]' : ''}`);
+      return sendJson(res, 200, merged);
     }
     if (m === 'POST' && url.pathname === '/cards') {
       const body = await readBody(req);
@@ -1451,6 +1556,13 @@ sessionsWatcher.on('change', (p) => {
     readJson, readJsonOr, atomicWriteJson,
     ensureWorkspace, DEFAULT_SETTINGS, nowIso,
   }).catch(err => console.error('[runn] migration v5_cwd_collapse failed', err));
+
+  // Repair stale card.session_path left behind by v5's jsonl relocation (the
+  // transcript read site trusts that absolute path). See migrate-session-path.js.
+  await migrateSessionPath.run({
+    HOME, CARDS_DIR, ARCHIVE_DIR, SETTINGS_PATH,
+    readJson, readJsonOr, atomicWriteJson, DEFAULT_SETTINGS, nowIso,
+  }).catch(err => console.error('[runn] migration v6_session_path failed', err));
 
   // One-time: fold the retired `billing` field into the status conveyor.
   //   billing 'paid'                              → status 'paid'

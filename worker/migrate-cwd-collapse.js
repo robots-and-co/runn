@@ -187,6 +187,15 @@ async function run(deps) {
     await fsp.mkdir(targetDir, { recursive: true });
     const dest = path.join(targetDir, `${c.session_id}.jsonl`);
     await fsp.rename(sf.fullPath, dest);
+    // Repoint the card's stored session_path at the file's new home — the
+    // transcript read site trusts this absolute path verbatim. (Omitting this
+    // was the bug that v6_session_path had to clean up.) Mutate the in-memory
+    // copy too so Phase 6's rewrite keeps the corrected value.
+    if (c.session_path && c.session_path !== dest) {
+      c.session_path = dest;
+      const { _dir, _file, ...rest } = c;
+      await atomicWriteJson(path.join(_dir, _file), { ...rest, updated_at: nowIso() });
+    }
     console.log(`[runn] mv ${sf.slug}/${c.session_id.slice(0,8)}… → ${targetSlug}/`);
     moved++;
   }

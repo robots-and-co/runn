@@ -168,6 +168,27 @@ Backend endpoints:
 - `~/runn-data/settings.json` — global settings.
 - `~/runn-data/CLAUDE.md` — schema docs.
 
+## Chat commands (`!cmd`)
+
+- The chat input parses a leading `!` as a Runn command, intercepted client-side
+  in `runChatCommand(val, ctx)` — **never** sent to the Claude session. `!` not
+  `/` because the session eats a leading `/` as one of its own slash commands.
+- Commands live in the `CHAT_COMMANDS` registry (`{name, args, hint, run}`);
+  `!help` and the typing hint (`commandHint()`) are generated from it. Add a
+  command by pushing to the table. Current: `!stop`, `!move`, `!help`.
+- Both surfaces route through the registry: the live-session input (`chatInput`)
+  and the first-turn input (`firstturnInput`, shown for un-run tasks). So `!move`
+  works whether or not the task has a session.
+- Two-step confirms use `pendingConfirm = {run, cardId}`; the next `!yes`/`!no`
+  resolves it. Bound to `cardId` so a card switch discards a stale confirm.
+- **`!move <project>`** → `POST /cards/:id/move {to}`. Move = repatch `parent_id`
+  (cwd/client/billing are all *derived* from the root project). Server handles
+  the hard case: a cross-**client** move relocates the session jsonl to the new
+  workspace slug + repoints `session_path` (same logic as `migrate-cwd-collapse`),
+  else the next `--resume` orphans. Guards: tasks only (not top-level projects);
+  rejects invoiced/paid tasks changing client; rejects a live turn (`!stop`
+  first, via `bridge.isSessionLive`). Frontend confirms cross-client moves.
+
 ## Conventions worth knowing
 
 - **No build step**. Vanilla JS. One file. Reactive via direct DOM mutation

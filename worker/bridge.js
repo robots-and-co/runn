@@ -91,6 +91,14 @@ function clearPending(sessionId) {
   return n;
 }
 
+// True while a claude child is actually running for this session — i.e. a turn
+// is in flight. Used to refuse mutations (e.g. moving a task across cwds, which
+// relocates its jsonl) that would yank the working tree out from under a live
+// turn. Buffered-but-not-yet-dispatched follow-ups don't count as live here.
+function isSessionLive(sessionId) {
+  return !!sessionId && runningChildren.has(sessionId);
+}
+
 function claimCwd(cwd, holder) {
   if (activeCwds.has(cwd)) {
     const cur = activeCwds.get(cwd);
@@ -372,4 +380,5 @@ module.exports = {
   pendingMessageCount,
   killSession,
   clearPending,
+  isSessionLive,
 };
