@@ -440,6 +440,18 @@
     margin-left: auto;
   }
   .review-badge[hidden] { display: none; }
+  /* Top-right blocked badge — same shape as .review-badge but in the blocked
+     red (matches the .chip-blocked status pill), so a project holding a blocked
+     task reads as stuck at a board glance. Sits beside the review badge; when
+     it's the only badge present, margin-left:auto floats it to the right edge. */
+  .blocked-badge {
+    font-size: 11px; font-weight: 600;
+    padding: 2px 7px; border-radius: 3px;
+    background: var(--overdue-soft); color: var(--overdue);
+    white-space: nowrap; flex-shrink: 0;
+    margin-left: auto;
+  }
+  .blocked-badge[hidden] { display: none; }
 
   .card-title {
     flex: 1; font-size: 15px; color: var(--ink); line-height: 1.35;
@@ -501,6 +513,11 @@
     border-radius: 4px; cursor: pointer; font-family: inherit;
     font-size: 13px; color: var(--ink); text-align: left; width: 100%;
   }
+  /* The base rule is display:flex, which beats the default [hidden] behaviour —
+     so the conveyor-tail filter (refreshChipMenuCurrent hides billable-only
+     statuses on non-billable projects, and vice-versa) needs this explicit
+     override or the hidden items would still render. */
+  .chip-menu-item[hidden] { display: none; }
   .chip-menu-item:hover { background: var(--paper-3); }
   .chip-menu-item .chip { pointer-events: none; }
   .chip-menu-item.is-current { background: var(--paper-3); font-weight: 600; }
@@ -2321,6 +2338,13 @@
   .chat-settings-danger-btn:hover {
     background: #f4dfd0; color: #8a3a2a;
   }
+  /* Permanent delete reads louder than archive — filled, not outlined. */
+  .chat-settings-danger-btn.destructive {
+    background: #c0392b; border-color: #c0392b; color: #fff;
+  }
+  .chat-settings-danger-btn.destructive:hover {
+    background: #a93226; color: #fff;
+  }
   /* No Chat section on projects — projects never spawn a session, but this is
      a defensive belt to make sure the section never sneaks in. */
   .chat-panel.is-project .chat-section[data-section="chat"] { display: none; }
@@ -2852,9 +2876,10 @@
 
   /* ── Notes mode (the "sieve") ──────────────────────────────
      A 📝 toggle turns the chat input into a note: the text is stashed in the
-     card's note_buf — the AI never sees it — instead of dispatching a turn.
-     Each stashed note renders as a distinct warm bubble above the input with
-     a per-note "→ chat" send button and a batch "Send all" header. */
+     card's note_buf — passively visible to the AI as background context, but
+     not acted on unless asked — instead of dispatching a turn. Each stashed
+     note renders as a distinct warm bubble above the input with a per-note
+     "→ chat" send button and a batch "Send all" header. */
   .footer-note-toggle {
     width: 36px; height: 36px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
@@ -3355,7 +3380,7 @@
         <div class="chat-footer" id="chatFooter">
           <div class="chat-attachments-row" id="chatAttachmentsRow" hidden></div>
           <div class="footer-input-row" id="chatInputRow">
-            <button type="button" class="footer-note-toggle" id="chatNoteToggle" aria-pressed="false" title="Notes mode — jot a note the AI won't see until you send it">📝</button>
+            <button type="button" class="footer-note-toggle" id="chatNoteToggle" aria-pressed="false" title="Notes mode — jot a note the AI can see but won't act on unless you ask">📝</button>
             <button type="button" class="footer-attach" id="chatAttach" title="Attach files (or drag/paste)">＋</button>
             <textarea class="footer-input" id="chatInput" rows="1" placeholder="Reply… (type ! for commands)" autocomplete="off"></textarea>
             <button class="footer-send" id="chatSend">↑</button>
@@ -3416,6 +3441,8 @@
     <div class="chat-settings-field chat-settings-danger">
       <button type="button" class="chat-settings-danger-btn" id="chatSettingsArchive">Archive project</button>
       <span class="chat-settings-hint">Archived projects are hidden from the board until you toggle them back on.</span>
+      <button type="button" class="chat-settings-danger-btn destructive" id="chatSettingsDelete" hidden>Delete permanently</button>
+      <span class="chat-settings-hint" id="chatSettingsDeleteHint" hidden>Removes this project and all its tasks for good. Only possible while archived.</span>
     </div>
   </div>
 </div>
@@ -3712,6 +3739,7 @@ function renderCard(card) {
         <span class="runn-spinner card-spinner" hidden></span>
         <span class="pulse"></span>
         <span class="review-badge" hidden></span>
+        <span class="blocked-badge" hidden></span>
       </div>
       <div class="card-row2">
         <span class="card-meta-left"></span>
@@ -3833,6 +3861,21 @@ function applyCard(el, card) {
       reviewBadge.hidden = true;
     }
   }
+  // Top-right blocked badge — the red status chip surfaced at the project level
+  // so a stuck task is visible on the board without opening the project. Counted
+  // the same way as reviews; rendered as its own chip rather than buried in the
+  // task-summary text.
+  const blockedBadge = el.querySelector('.blocked-badge');
+  if (blockedBadge) {
+    const blockedCount = countProjectBlocked(card.id);
+    if (blockedCount > 0) {
+      blockedBadge.hidden = false;
+      blockedBadge.textContent = `${blockedCount} blocked`;
+      blockedBadge.title = `${blockedCount} task${blockedCount === 1 ? '' : 's'} blocked`;
+    } else {
+      blockedBadge.hidden = true;
+    }
+  }
   // Row1 liveness indicator: a steady spinner when a task is actively running,
   // or a pause glyph when the project's only in-flight tasks are queued
   // (waiting behind a busy cwd — nothing actually moving). The at-a-glance
@@ -3923,7 +3966,7 @@ function projectBillingRollup(projectId) {
 
 
 function projectTaskSummary(projectId) {
-  let total = 0, done = 0, doing = 0, blocked = 0;
+  let total = 0, done = 0, doing = 0;
   for (const c of cards.values()) {
     if (c.parent_id !== projectId) continue;
     if (c._archived) continue; // archived tasks shouldn't count toward live state
@@ -3932,19 +3975,18 @@ function projectTaskSummary(projectId) {
     // fully-invoiced project still reads as N/N done on its tile.
     if (statusRank(c.status) > 0) done++;
     else if (c.status === 'doing') doing++;
-    else if (c.status === 'blocked') blocked++;
   }
   // Empty projects show nothing. The earlier "▶ Runn" autonomous-mode token
   // was removed — Runn mode is set/read in the project pane header, the card
-  // surface stays quiet. Review count was also lifted out and now drives the
-  // top-right .review-badge instead of sitting in this line.
+  // surface stays quiet. Review AND blocked counts were lifted out and now
+  // drive the top-right .review-badge / red .blocked-badge instead of sitting
+  // in this line.
   if (!total) return '';
   const bits = [];
   // Hide X/Y when fully complete — a card reading "8/8 tasks" is just visual
   // noise. Once there's outstanding work, the ratio comes back.
   if (done < total) bits.push(`${done}/${total} tasks`);
   if (doing) bits.push(`${doing} running`);
-  if (blocked) bits.push(`${blocked} blocked`);
   return bits.join(' · ');
 }
 
@@ -3957,6 +3999,18 @@ function countProjectReviews(projectId) {
     if (c.parent_id !== projectId) continue;
     if (c._archived) continue;
     if (c.status === 'review') n++;
+  }
+  return n;
+}
+
+// Count of `blocked`-status tasks under a project (direct children only — same
+// scope as countProjectReviews). Drives the top-right red .blocked-badge.
+function countProjectBlocked(projectId) {
+  let n = 0;
+  for (const c of cards.values()) {
+    if (c.parent_id !== projectId) continue;
+    if (c._archived) continue;
+    if (c.status === 'blocked') n++;
   }
   return n;
 }
@@ -5381,6 +5435,8 @@ firstturnAi.addEventListener('click', async () => {
 const chatSettings       = document.getElementById('chatSettings');
 const chatSettingsBtn    = document.getElementById('chatSettingsBtn');
 const chatSettingsArchive = document.getElementById('chatSettingsArchive');
+const chatSettingsDelete = document.getElementById('chatSettingsDelete');
+const chatSettingsDeleteHint = document.getElementById('chatSettingsDeleteHint');
 const chatPermMode       = document.getElementById('chatPermMode');
 const chatBilling        = document.getElementById('chatBilling');
 const chatNotesWrap          = document.getElementById('chatNotesWrap');
@@ -5775,6 +5831,11 @@ function applyPanel(card) {
   // Archive: lives inside the project settings page. Tasks can't be archived
   // directly — they ride along with their project — so no button shows for tasks.
   chatSettingsArchive.textContent = card._archived ? 'Unarchive project' : 'Archive project';
+  // Permanent delete is offered only on archived projects — it's a cleanup tool
+  // for things you've already filed away, never a shortcut past archiving.
+  const canDelete = !!card._archived && !card.parent_id;
+  chatSettingsDelete.hidden = !canDelete;
+  chatSettingsDeleteHint.hidden = !canDelete;
   // Per-task ▶ Run was removed: spawning is now controlled exclusively by the
   // project's Runn switch + the queue walker. To start a single task, flip
   // Runn on (move the task to the top of the list first if needed) and Runn
@@ -6432,6 +6493,48 @@ async function handleArchiveClick() {
   } catch (e) { console.error(e); }
 }
 chatSettingsArchive.addEventListener('click', handleArchiveClick);
+
+// Permanently delete an archived project + its tasks. Uses fetch directly (not
+// api()) so we can read the 409 invoice-linked body and offer a force-confirm.
+async function deleteProjectRequest(id, force) {
+  const res = await fetch(`/cards/${id}${force ? '?force=1' : ''}`, {
+    method: 'DELETE',
+    cache: 'no-store',
+    headers: { accept: 'application/json' },
+  });
+  let data = {};
+  try { data = await res.json(); } catch {}
+  return { ok: res.ok, status: res.status, data };
+}
+async function handleDeleteProjectClick() {
+  if (!openCardId) return;
+  const card = cards.get(openCardId);
+  if (!card || card.parent_id) return;
+  const descendants = [...cards.values()].filter(c => c.id !== card.id && descendsFrom(c, card.id));
+  const n = descendants.length;
+  const tasksPhrase = n ? ` and its ${n} task${n === 1 ? '' : 's'}` : '';
+  if (!confirm(`Permanently delete "${card.title || 'this project'}"${tasksPhrase}?\n\nThis cannot be undone.`)) return;
+  const finish = () => {
+    for (const c of descendants) cards.delete(c.id);
+    cards.delete(card.id);
+    dismissPanel();
+    renderAll();
+  };
+  try {
+    let r = await deleteProjectRequest(openCardId, false);
+    if (!r.ok && r.status === 409) {
+      // Some tasks are on an invoice — name them and ask for explicit override.
+      if (!confirm(`${r.data.message || 'Some tasks are on an invoice.'}\n\nDelete anyway?`)) return;
+      r = await deleteProjectRequest(openCardId, true);
+    }
+    if (!r.ok) throw new Error(r.data.error || `HTTP ${r.status}`);
+    finish();
+  } catch (err) {
+    console.error('Failed to delete project:', err);
+    alert(`Delete failed: ${err.message}`);
+  }
+}
+chatSettingsDelete.addEventListener('click', handleDeleteProjectClick);
 
 // Sidebar tag editor — lives inside the project settings page.
 const chatTags         = document.getElementById('chatTags');
@@ -7211,11 +7314,11 @@ let chatSending = false;
 
 // ── Notes mode (the "sieve") ─────────────────────────────────
 // A 📝 toggle stashes the typed line into the open card's note_buf instead of
-// dispatching a Claude turn. Notes live only on the card (never in the spawn
-// prompt or a /message body), so the AI can't see them until the user hits a
-// note's "↑ chat" button (sends that one) or "↑ Send all" (batches them into
-// one turn). Per the agreed design, sending a note promotes it into a normal
-// turn and removes it from the buffer.
+// dispatching a Claude turn. Notes are passively visible to the AI: the worker
+// folds the current note_buf into the system-prompt context every turn, so the
+// AI can SEE them as background but is told not to act on them unless the user
+// refers to one. The "↑ chat" / "↑ Send all" buttons promote a note into a
+// real turn (the explicit "act on this now"), removing it from the buffer.
 const chatNoteToggle = document.getElementById('chatNoteToggle');
 const chatNoteStack  = document.getElementById('chatNoteStack');
 let notesMode = false;
@@ -7225,7 +7328,7 @@ function setNotesMode(on) {
   chatNoteToggle.setAttribute('aria-pressed', notesMode ? 'true' : 'false');
   chatInputRow.classList.toggle('note-mode', notesMode);
   chatInput.placeholder = notesMode
-    ? "Note — the AI won't see this until you send it…"
+    ? "Note — the AI can see this but won't act on it unless you ask…"
     : 'Reply… (type ! for commands)';
 }
 chatNoteToggle.addEventListener('click', () => {

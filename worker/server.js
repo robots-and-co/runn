@@ -354,6 +354,26 @@ async function resolveCardSystemContext(card) {
     const label = project.title || project.id;
     parts.push(`# Project context: ${label}\n\n${String(project.notes_md).trim()}`);
   }
+  // Pinned notes (the "sieve"): freeform lines the user has stashed on THIS
+  // card via the 📝 toggle. Passively visible — the AI should be aware of them
+  // as background but must NOT act on them unless the user explicitly refers to
+  // them in a turn. Re-read every turn from the card's current note_buf, so
+  // editing/clearing a note updates what the AI sees without leaving stale
+  // copies behind in the transcript.
+  if (Array.isArray(card.note_buf) && card.note_buf.length) {
+    const lines = card.note_buf
+      .map(n => (n && typeof n.text === 'string') ? n.text.trim() : '')
+      .filter(Boolean)
+      .map(t => `- ${t}`);
+    if (lines.length) {
+      parts.push(
+        `# Pinned notes (background — do not act on unless asked)\n\n` +
+        `The user has jotted these notes on this task. Treat them as background ` +
+        `context only: be aware of them, but do not act on them or raise them ` +
+        `unless the user explicitly refers to them.\n\n${lines.join('\n')}`
+      );
+    }
+  }
   // The always-on TL;DR directive is appended in bridge.js (composeAppend) on
   // every spawn AND resume, so it's not added here — this stays context-only.
   return parts.length ? parts.join('\n\n') : null;
@@ -1194,6 +1214,57 @@ const server = http.createServer(async (req, res) => {
       const id = mm[1];
       await fsp.rename(archivePath(id), cardPath(id));
       return sendJson(res, 200, { ok: true });
+    }
+    // Permanently delete an archived project and its whole subtree. Hard delete
+    // is deliberately narrow: only top-level cards (parent_id === null) that are
+    // already archived (live in cards/archive/) qualify — it's a cleanup tool,
+    // not a general remove. Children are gathered across both the active and
+    // archive dirs (a project can be archived while its tasks stay active, e.g.
+    // invoiced ones). Tasks on an invoice block the delete unless ?force=1, so
+    // you don't silently sever an invoice from its source work.
+    if (m === 'DELETE' && (mm = url.pathname.match(/^\/cards\/([^/]+)$/))) {
+      const id = mm[1];
+      const force = ['1', 'true'].includes(url.searchParams.get('force'));
+      let proj;
+      try { proj = await readJson(archivePath(id)); }
+      catch { return sendJson(res, 404, { error: 'no archived card with that id — only archived projects can be deleted' }); }
+      if (proj.parent_id) return sendJson(res, 400, { error: 'only whole projects can be deleted, not individual tasks' });
+
+      // Build a parent→children index over every card, then BFS the subtree.
+      const byParent = new Map();
+      for (const c of [...await listCards(), ...await listArchived()]) {
+        if (!byParent.has(c.parent_id)) byParent.set(c.parent_id, []);
+        byParent.get(c.parent_id).push(c);
+      }
+      const toDelete = [];
+      const seen = new Set();
+      const stack = [proj];
+      while (stack.length) {
+        const c = stack.pop();
+        if (seen.has(c.id)) continue;
+        seen.add(c.id);
+        toDelete.push(c);
+        for (const ch of (byParent.get(c.id) || [])) stack.push(ch);
+      }
+
+      const invoiceLinked = toDelete.filter(c => c.invoice_id || c.status === 'invoiced' || c.status === 'paid');
+      if (invoiceLinked.length && !force) {
+        const invoices = [...new Set(invoiceLinked.map(c => c.invoice_id).filter(Boolean))];
+        return sendJson(res, 409, {
+          error: 'invoice_linked',
+          message: `${invoiceLinked.length} task(s) are on invoice${invoices.length === 1 ? '' : 's'} ${invoices.join(', ') || '(unknown)'}. Re-send with force to delete anyway.`,
+          invoices,
+          count: invoiceLinked.length,
+        });
+      }
+
+      for (const c of toDelete) {
+        await fsp.unlink(cardPath(c.id)).catch(() => {});
+        await fsp.unlink(archivePath(c.id)).catch(() => {});
+        await deleteCardAttachments(c.id).catch(() => {});
+      }
+      console.log(`[runn] deleted archived project ${id} (+${toDelete.length - 1} descendant card(s))`);
+      return sendJson(res, 200, { ok: true, deleted: toDelete.length });
     }
     if (m === 'POST' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/ai-ify$/))) {
       const card = await readJson(cardPath(mm[1]));
