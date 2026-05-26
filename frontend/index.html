@@ -7891,6 +7891,9 @@ async function stopCurrentTurn() {
 const wsDot = document.getElementById('wsDot');
 let ws = null;
 let wsReconnectTimer = null;
+// Set when a live socket closes; tells the NEXT successful open that it's a
+// reconnect (not the boot connect) and so the board must be re-pulled.
+let wsNeedsResync = false;
 
 function setWsLive(live) {
   if (live) {
@@ -7906,6 +7909,48 @@ function scheduleWsReconnect(delayMs = 1000) {
   wsReconnectTimer = setTimeout(() => { wsReconnectTimer = null; connectWS(); }, delayMs);
 }
 
+// After a dropped-and-reopened socket, re-pull the full board. The live stream
+// only carries deltas and never replays history, so any card.added/changed/
+// removed that fired while we were offline (a worker restart, the PWA being
+// backgrounded, a network blip) was lost — that's the "spinner still spinning
+// after the turn finished, fixed only by a hard refresh" bug. Rebuild the maps
+// from scratch (not a merge) so cards deleted while offline actually vanish.
+async function resyncAfterReconnect() {
+  let nextCards, nextClients, nextPerms;
+  try {
+    [nextCards, nextClients, nextPerms] = await Promise.all([
+      api('GET', '/cards'),
+      api('GET', '/clients').catch(() => null),
+      api('GET', '/permissions/pending').catch(() => null),
+    ]);
+  } catch (err) {
+    // Worker unreachable — keep current state; the 5s heartbeat will reconnect
+    // again and re-arm wsNeedsResync, so we'll retry on the next open.
+    console.warn('[runn] resync after reconnect failed:', err);
+    wsNeedsResync = true;
+    return;
+  }
+  cards.clear();
+  for (const c of nextCards) cards.set(c.id, c);
+  if (nextClients) { clients.clear(); for (const cl of nextClients) clients.set(cl.id, cl); }
+  if (nextPerms)   { pendingPerms.clear(); for (const p of nextPerms) pendingPerms.set(p.request_id, p); }
+
+  renderAll();
+  refreshOutstanding();
+  renderPendingPermissions();
+  // Redraw whatever's open in panes 2/3 against the refreshed cards.
+  if (openProjectId && cards.has(openProjectId)) {
+    renderProjectSteps();
+    refreshProjectRunnBtn(cards.get(openProjectId));
+  }
+  if (openCardId && cards.has(openCardId)) {
+    const oc = cards.get(openCardId);
+    applyPanel(oc);
+    if (oc.session_id) refreshOpenTranscript();
+  }
+  if (!billingPanel.hidden) renderBillingPanel();
+}
+
 function connectWS() {
   // Skip if we already have a socket connecting (0) or open (1) — without
   // this guard, fast reconnect storms (e.g., during a docker restart) stack
@@ -7917,10 +7962,14 @@ function connectWS() {
   myWs.onopen = () => {
     if (ws !== myWs) return; // a newer socket has taken over
     setWsLive(true);
+    // If this open follows a drop, the live stream missed every delta that
+    // fired while we were offline — re-pull the full board to catch up.
+    if (wsNeedsResync) { wsNeedsResync = false; resyncAfterReconnect(); }
   };
   myWs.onclose = () => {
     if (ws !== myWs) return; // ignore close from a superseded shadow socket
     setWsLive(false);
+    wsNeedsResync = true; // next successful open must re-sync
     scheduleWsReconnect(1000);
   };
   myWs.onerror = () => { /* browsers always fire close after error; handled above */ };
