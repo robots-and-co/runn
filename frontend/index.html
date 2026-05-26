@@ -755,9 +755,11 @@
       display: flex;
       align-items: stretch; align-self: stretch;
     }
-    /* Title input shrinks/hides on mobile to make room for breadcrumbs. */
-    .project-pane-header .chat-title-input,
-    .chat-header .chat-title-input { display: none; }
+    /* Pane 2 hides its title input on mobile — the project name already shows
+       as the bc-current chip in the breadcrumb. Pane 3 (task) keeps its title
+       visible: the task name is NOT in the breadcrumb, so the breadcrumb
+       instead gets its own row (see the .chat-header mobile block below). */
+    .project-pane-header .chat-title-input { display: none; }
     /* Breadcrumb chips sized for a comfortable tap target without stretching
        full header height. */
     .pane-breadcrumb { align-items: center; align-self: center; }
@@ -823,6 +825,13 @@
     margin-left: auto; gap: 4px;
   }
   .chat-header-due-slot:empty { display: none; margin-left: 0; }
+  /* Hours slot — sits just after due in the header cluster (tasks only). The
+     reparented .chat-hours-wrap brings its own styling; this just makes the
+     slot a flex cell that collapses when empty (projects). */
+  .chat-header-hours-slot {
+    flex-shrink: 0; display: inline-flex; align-items: center;
+  }
+  .chat-header-hours-slot:empty { display: none; }
   .chat-header-due-slot .chat-due-wrap {
     display: inline-flex; align-items: center; gap: 2px;
     font-size: 11px; color: var(--ink-3);
@@ -927,10 +936,15 @@
     .chat-header-due-slot,
     .chat-header-done-slot {
       margin-left: 0;
-      flex-basis: 100%;
       order: 99;
     }
-    .chat-header-done-slot { order: 100; padding: 6px 10px; }
+    /* Due gets its own full-width row (flex-basis:100% forces a wrap both before
+       and after it), so the date+time controls never compete for width with
+       hours or the status chip. Hours + status share the next row down; done
+       keeps its own full-width row below that. */
+    .chat-header-due-slot { flex: 1 1 100%; min-width: 0; }
+    .chat-header-hours-slot { order: 99; flex: 0 0 auto; margin-left: 0; }
+    .chat-header-done-slot { flex-basis: 100%; order: 100; padding: 6px 10px; }
     /* Inputs grow to fill the full-width row instead of clipping at their
        desktop fixed widths (where on mobile the native picker chrome was
        overflowing into the next input). */
@@ -964,7 +978,9 @@
       font-size: 14px; padding: 8px 8px;
     }
     .chat-header-due-slot .chat-due-time {
-      flex: 0 0 auto; width: auto; min-width: 100px;
+      /* Due owns its row now, so the time control gets its comfortable width
+         back instead of being squeezed to share a line with hours + status. */
+      flex: 0 1 auto; width: auto; min-width: 100px;
       font-size: 14px; padding: 8px 8px;
     }
     .chat-header-due-slot .chat-due-wrap.has-due .chat-due,
@@ -978,6 +994,12 @@
       flex: 1 1 auto; width: auto; min-width: 0;
       font-size: 14px; padding: 6px 4px;
     }
+    /* Hours control sized to sit comfortably on the shared row 3 (compact
+       input so due keeps the most width). */
+    .chat-header-hours-slot .chat-hours-wrap { font-size: 13px; gap: 5px; }
+    .chat-header-hours-slot .chat-hours {
+      width: 48px; padding: 7px 6px; text-align: center;
+    }
     /* Beef up the status chip so it's a real tap target — fills nearly the
        full header height. */
     .chat-header-chip-slot { align-self: stretch; }
@@ -986,6 +1008,25 @@
       display: inline-flex; align-items: center;
       padding: 0 14px;
     }
+    /* ── Pane 3 (task) header rows ────────────────────────────────
+       The task name is NOT carried in the breadcrumb (unlike pane 2, where the
+       project shows as the bc-current chip), and the header title input is
+       hidden on tasks globally (redundant with the first-turn bubble — see the
+       `.chat-panel.is-task .chat-title-input` rule far below). But on mobile
+       pane 3 is the only visible pane, so reveal the title here on its own full
+       row and lift the Client › Project breadcrumb onto a full-width row above
+       it. The is-task + .chat-header scope out-specifies the global hide.
+       Row order: breadcrumb / title / due / hours + status / done. (bill-btn +
+       ⚙ are display:none in task mode, so they need no ordering.) */
+    .chat-header .pane-breadcrumb { flex-basis: 100%; order: -1; }
+    .chat-panel.is-task .chat-header .chat-title-input {
+      display: block; order: 1; flex: 1 1 100%; min-width: 0;
+    }
+    /* Status chip is pinned hard-right on its row via margin-left:auto, so it
+       hugs the far edge no matter how wide the hours control beside it is.
+       flex:0 0 auto stops the chip stretching. (Due now lives on its own row
+       above; hours shares this row, sitting on the left.) */
+    .chat-header .chat-header-chip-slot { order: 99; flex: 0 0 auto; margin-left: auto; }
   }
 
   /* Status chip slot in the header — for tasks the chatChip + dropdown menu
@@ -1012,13 +1053,16 @@
     /* keep the dropdown caret muted vs. the bold label */
     opacity: .65;
   }
-  .chat-header-chip-slot .chip-doing {
-    /* Active task = primary call-out, fully-saturated bg. */
-    background: var(--accent); color: #fff;
-  }
-  .chat-header-chip-slot .chip-doing .runn-spinner {
-    border-top-color: #fff; border-right-color: #fff;
-  }
+  /* Per-status colour now comes straight from the shared card palette
+     (.chip-{status} above), so the header chip — and its dropdown options, which
+     are reparented inside this slot — read the same soft tones as the chips on
+     the cards. Only the size / weight / inset ring from the .chat-header-chip-slot
+     .chip rule above set it apart as a louder tap target. (Previously this block
+     repainted each status as a saturated fill with white text; that's what made
+     the header diverge from the nicer card colours.)
+     Two states keep header-specific rules because they aren't selectable card
+     statuses: `waiting` is a live-session-only indicator, and `hold` suppresses
+     the inset ring so it doesn't double up with the dashed border it inherits. */
   .chat-header-chip-slot .chip-waiting {
     /* Buffered turn: accent outline, not filled — "queued to run", not running. */
     background: var(--accent-soft); color: var(--accent);
@@ -1027,23 +1071,7 @@
   .chat-header-chip-slot .chip-waiting .runn-spinner {
     border-top-color: var(--accent); border-right-color: var(--accent);
   }
-  .chat-header-chip-slot .chip-done {
-    background: #3a7d44; color: #fff;
-  }
-  .chat-header-chip-slot .chip-blocked {
-    background: var(--overdue); color: #fff;
-  }
-  .chat-header-chip-slot .chip-review {
-    background: #c08a00; color: #fff;
-  }
-  .chat-header-chip-slot .chip-hold {
-    background: var(--paper-3); color: var(--ink-2);
-    border: 1.5px dashed var(--ink-3);
-    box-shadow: none;
-  }
-  .chat-header-chip-slot .chip-queued {
-    background: var(--paper-3); color: var(--ink-2);
-  }
+  .chat-header-chip-slot .chip-hold { box-shadow: none; }
   .chat-toolbar {
     flex-shrink: 0; display: flex; flex-direction: column; gap: 6px;
     padding: 10px 14px; background: var(--paper);
@@ -1468,6 +1496,27 @@
   }
   .invoice-num-input:focus { outline: none; border-color: var(--accent); border-style: solid; }
 
+  /* Editable pre-tax discount in the draft totals. */
+  .invoice-discount-input {
+    font: inherit; font-family: ui-monospace, monospace;
+    width: 8ch; text-align: right; padding: 0 4px; margin-left: 2px;
+    border: 1px dashed #c9bfa8; border-radius: 4px; background: #fdfbf6;
+  }
+  .invoice-discount-input:focus { outline: none; border-color: var(--accent); border-style: solid; }
+  .discount-print-only { display: none; }   /* the formatted "−$X" shown only when printing */
+
+  /* Invoice notes — editable on a draft, static otherwise. */
+  .invoice-doc-notes { margin-top: 18px; font-size: 12px; color: #5a544a; line-height: 1.5; }
+  .invoice-doc-notes-label { font-style: italic; color: #8c8578; margin-bottom: 4px; }
+  .invoice-notes-input {
+    width: 100%; box-sizing: border-box; resize: vertical;
+    font: inherit; font-size: 12px; color: #2a2620;
+    padding: 6px 8px;
+    border: 1px dashed #c9bfa8; border-radius: 4px; background: #fdfbf6;
+  }
+  .invoice-notes-input:focus { outline: none; border-color: var(--accent); border-style: solid; }
+  .invoice-doc-notes-print { display: none; }   /* static notes text, shown only when printing */
+
   /* Draft watermark — faint diagonal "DRAFT" across an un-issued invoice, so a
      printed/PDF'd draft can't be mistaken for a real one. Translucent enough to
      read the invoice through it; pointer-events:none keeps it click-through. */
@@ -1559,6 +1608,15 @@
       position: fixed;
       -webkit-print-color-adjust: exact; print-color-adjust: exact;
     }
+    /* Discount on the printed page: show the formatted "−$X" text, hide the
+       editable field, and drop the row entirely when there's no discount. */
+    .discount-print-only { display: inline; }
+    .discount-edit { display: none; }
+    .invoice-doc-totals-row.is-empty { display: none; }
+    /* Notes on the printed page: static text, no textarea, hidden when empty. */
+    .invoice-doc-notes-print { display: block; }
+    .invoice-notes-input { display: none; }
+    .invoice-doc-notes.is-empty { display: none; }
   }
   .chat-due-clear {
     background: none; border: none; cursor: pointer;
@@ -2759,6 +2817,17 @@
   }
   .footer-input::placeholder { color: var(--ink-3); }
 
+  /* The chat reply input is a textarea (multi-line: Shift+Enter / mobile Enter).
+     JS auto-grows it up to 160px, then it scrolls. resize off so the only way
+     it grows is the content. */
+  textarea#chatInput {
+    resize: none; overflow-y: auto; line-height: 1.4;
+    padding: 4px 0; min-height: 24px; max-height: 160px;
+  }
+  /* Buttons stick to the bottom edge so they don't drift up when the textarea
+     grows to several lines. */
+  #chatInputRow { align-items: flex-end; }
+
   .footer-send {
     width: 36px; height: 36px;
     display: flex; align-items: center; justify-content: center;
@@ -2780,6 +2849,61 @@
     font-size: 12px; color: var(--accent);
     padding: 6px 4px 0; text-align: center;
   }
+
+  /* ── Notes mode (the "sieve") ──────────────────────────────
+     A 📝 toggle turns the chat input into a note: the text is stashed in the
+     card's note_buf — the AI never sees it — instead of dispatching a turn.
+     Each stashed note renders as a distinct warm bubble above the input with
+     a per-note "→ chat" send button and a batch "Send all" header. */
+  .footer-note-toggle {
+    width: 36px; height: 36px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--line); border-radius: 9px; cursor: pointer;
+    background: transparent; font-size: 15px; opacity: .55;
+    transition: opacity .12s, background .12s, border-color .12s;
+  }
+  .footer-note-toggle:hover { opacity: 1; }
+  .footer-note-toggle[aria-pressed="true"] {
+    opacity: 1; background: var(--warn-bg); border-color: #d8b94a;
+  }
+  .footer-input-row.note-mode { border-color: #d8b94a; background: #fdf8e8; }
+  .footer-input-row.note-mode:focus-within { border-color: var(--warn-fg); }
+  .footer-input-row.note-mode .footer-send { background: var(--warn-fg); }
+
+  .chat-note-stack {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 4px 0; max-height: 40vh; overflow-y: auto;
+  }
+  .chat-note-stack[hidden] { display: none; }
+  .chat-note-stack-head {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--ink-3); padding: 0 2px 2px;
+  }
+  .chat-note-stack-spacer { flex: 1; }
+  .chat-note-stack-head button {
+    border: 1px solid var(--line); background: var(--paper);
+    cursor: pointer; font-size: 11px; color: var(--warn-fg);
+    padding: 2px 8px; border-radius: 7px;
+  }
+  .chat-note-stack-head button:hover { background: var(--warn-bg); border-color: #d8b94a; }
+  .chat-note {
+    display: flex; align-items: flex-start; gap: 8px;
+    background: #fdf8e8; border: 1px solid #ecdca0;
+    border-left: 3px solid #d8b94a; border-radius: 8px;
+    padding: 7px 9px;
+  }
+  .chat-note-text {
+    flex: 1; font-size: 13.5px; line-height: 1.4;
+    white-space: pre-wrap; word-break: break-word; color: var(--ink);
+  }
+  .chat-note-actions { display: flex; gap: 2px; flex-shrink: 0; }
+  .chat-note-actions button {
+    border: none; background: none; cursor: pointer;
+    border-radius: 6px; padding: 2px 6px; font-size: 13px;
+    color: var(--ink-3); line-height: 1;
+  }
+  .chat-note-actions button:hover { background: rgba(0,0,0,.06); color: var(--ink); }
+  .chat-note-send { color: var(--warn-fg) !important; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -3075,6 +3199,10 @@
       <div class="composer-items" id="compItems"></div>
       <button class="detail-btn" id="compAddRow" style="align-self:flex-start;margin-top:6px;">+ add line</button>
     </div>
+    <div class="form-field" style="max-width:220px;">
+      <label>Discount (ex GST, optional)</label>
+      <input type="number" id="compDiscount" step="0.01" min="0" placeholder="0.00">
+    </div>
     <div class="composer-totals" id="compTotals"></div>
     <div class="form-field">
       <label>Notes (shown on invoice — optional)</label>
@@ -3094,6 +3222,7 @@
     <input class="chat-title-input" id="chatTitle" type="text" placeholder="Title" autocomplete="off">
     <span class="chat-header-client-slot" id="chatHeaderClientSlot"></span>
     <span class="chat-header-due-slot" id="chatHeaderDueSlot"></span>
+    <span class="chat-header-hours-slot" id="chatHeaderHoursSlot"></span>
     <span class="chat-header-done-slot" id="chatHeaderDoneSlot" hidden>
       <label class="chat-header-done-label" title="When was this work performed?">done</label>
       <input type="date" class="chat-header-done-input" id="chatDoneAt">
@@ -3135,7 +3264,7 @@
       </span>
     </div>
     <div class="chat-toolbar-row" id="chatTaskBillingRow">
-      <span class="chat-hours-wrap">
+      <span class="chat-hours-wrap" id="chatHoursWrap">
         <span>hrs</span>
         <input type="number" class="chat-hours" id="chatHours" step="0.25" min="0" placeholder="—" inputmode="decimal">
       </span>
@@ -3222,11 +3351,13 @@
         </div>
         <div class="chat-empty" id="chatEmpty" hidden>No turns yet — session hasn't received a message.</div>
         <div class="chat-permissions" id="chatPermissions"></div>
+        <div class="chat-note-stack" id="chatNoteStack" hidden></div>
         <div class="chat-footer" id="chatFooter">
           <div class="chat-attachments-row" id="chatAttachmentsRow" hidden></div>
           <div class="footer-input-row" id="chatInputRow">
+            <button type="button" class="footer-note-toggle" id="chatNoteToggle" aria-pressed="false" title="Notes mode — jot a note the AI won't see until you send it">📝</button>
             <button type="button" class="footer-attach" id="chatAttach" title="Attach files (or drag/paste)">＋</button>
-            <input class="footer-input" id="chatInput" type="text" placeholder="Reply… (type ! for commands)" autocomplete="off">
+            <textarea class="footer-input" id="chatInput" rows="1" placeholder="Reply… (type ! for commands)" autocomplete="off"></textarea>
             <button class="footer-send" id="chatSend">↑</button>
             <input type="file" id="chatFilePicker" multiple
                    accept="image/*,application/pdf,text/plain,text/markdown,text/csv,application/json,.md"
@@ -3255,6 +3386,15 @@
       <select class="chat-client" id="chatClient"></select>
       <button type="button" class="chat-settings-edit-btn" id="chatClientEdit">Edit selected client</button>
       <span class="chat-settings-hint">Used for invoicing and the hours rollup. Pick "+ new client…" to add one.</span>
+    </div>
+    <div class="chat-settings-field">
+      <label class="chat-settings-label" for="chatBilling">💵 Billing</label>
+      <select class="chat-permmode" id="chatBilling">
+        <option value="">Default (from client)</option>
+        <option value="no">Billable</option>
+        <option value="yes">Non-billable</option>
+      </select>
+      <span class="chat-settings-hint" id="chatBillingHint">Overrides the client's billing setting for just this project.</span>
     </div>
     <div class="chat-settings-field">
       <label class="chat-settings-label" for="chatPermMode">🔐 Permission mode</label>
@@ -3459,8 +3599,24 @@ function resolveClientId(card) {
 function isBillableCard(card) {
   const cid = resolveClientId(card);
   if (!cid) return false;
-  const cl = clients.get(cid);
-  return !(cl && cl.non_billable);
+  return !cardNonBillable(card);
+}
+// Effective non-billable for a *project* (top-level card). The project's own
+// override wins when set; otherwise it inherits the client's flag.
+//   non_billable === true  → force non-billable (don't bill this project)
+//   non_billable === false → force billable (even under an internal client)
+//   null / undefined       → inherit from the client (the default)
+function projectNonBillable(project) {
+  if (!project) return false;
+  if (project.non_billable === true) return true;
+  if (project.non_billable === false) return false;
+  const cl = project.client_id ? clients.get(project.client_id) : null;
+  return !!(cl && cl.non_billable);
+}
+// Same, resolved from any card by walking up to its project root.
+function cardNonBillable(card) {
+  const pid = resolveProjectId(card);
+  return projectNonBillable(pid ? cards.get(pid) : null);
 }
 function resolveProjectId(card) {
   // The "project" is simply the top-level card a task lives under. Walk to the
@@ -3508,10 +3664,10 @@ function billingGroups() {
     if (billingScopeProjectId && !descendsFrom(c, billingScopeProjectId)) continue;
     const clientId = resolveClientId(c);
     if (!clientId) continue;
-    // Skip non-billable clients (internal/own-org). Hours still tracked,
-    // they just never roll up into a billable group.
-    const cl = clients.get(clientId);
-    if (cl && cl.non_billable) continue;
+    // Skip non-billable work — either an internal/own-org client, or a
+    // per-project override. Hours still tracked, they just never roll up
+    // into a billable group.
+    if (cardNonBillable(c)) continue;
     if (!groups.has(clientId)) groups.set(clientId, { unbilled: [], invoiced: [], hours: { unbilled: 0, invoiced: 0 } });
     const g = groups.get(clientId);
     g[bucket].push(c);
@@ -3710,9 +3866,9 @@ function projectOutstandingDollars(projectId) {
   const clientId = project.client_id;
   if (!clientId) return null;
   const client = clients.get(clientId);
-  // Internal clients (e.g. the user's own org) track time but don't roll
-  // into billing — treat like a personal project for $$ purposes.
-  if (client && client.non_billable) return null;
+  // Non-billable work (internal client, or a per-project override) tracks
+  // time but doesn't roll into billing — treat like a personal project for $$.
+  if (projectNonBillable(project)) return null;
   // Prefer the client's per-hour rate; fall back to the global default so
   // the user doesn't have to set a rate per client when they only have one.
   const rate = (client && typeof client.rate_per_hour === 'number')
@@ -4850,11 +5006,13 @@ const chatDueClear    = document.getElementById('chatDueClear');
 const chatDueWrap            = document.getElementById('chatDueWrap');
 const chatToolbarDueRow      = document.getElementById('chatToolbarDueRow');
 const chatHours       = document.getElementById('chatHours');
+const chatHoursWrap   = document.getElementById('chatHoursWrap');
 const chatStatusRow      = document.getElementById('chatStatusRow');
 const chatTaskBillingRow = document.getElementById('chatTaskBillingRow');
 const chatHeaderChipSlot   = document.getElementById('chatHeaderChipSlot');
 const chatHeaderClientSlot = document.getElementById('chatHeaderClientSlot');
 const chatHeaderDueSlot    = document.getElementById('chatHeaderDueSlot');
+const chatHeaderHoursSlot  = document.getElementById('chatHeaderHoursSlot');
 const chatHeaderDoneSlot   = document.getElementById('chatHeaderDoneSlot');
 const chatDoneAt           = document.getElementById('chatDoneAt');
 // Populate a mobile breadcrumb nav with chips reflecting where the user is
@@ -5224,6 +5382,7 @@ const chatSettings       = document.getElementById('chatSettings');
 const chatSettingsBtn    = document.getElementById('chatSettingsBtn');
 const chatSettingsArchive = document.getElementById('chatSettingsArchive');
 const chatPermMode       = document.getElementById('chatPermMode');
+const chatBilling        = document.getElementById('chatBilling');
 const chatNotesWrap          = document.getElementById('chatNotesWrap');
 const chatNotesAccordionSlot = document.getElementById('chatNotesAccordionSlot');
 const chatDescriptionSlot    = document.getElementById('chatDescriptionSlot');
@@ -5737,10 +5896,17 @@ function applyPanel(card) {
   }
   chatDueWrap.hidden = isProject;
   chatToolbarDueRow.hidden = true;
+  // Hours rides the same header row as due + status for tasks (reparented out
+  // of the now-mostly-empty billing toolbar row). Projects have no hours.
+  if (!isProject && chatHoursWrap.parentElement !== chatHeaderHoursSlot) {
+    chatHeaderHoursSlot.appendChild(chatHoursWrap);
+  }
+  chatHoursWrap.hidden = isProject;
   if (isProject) {
     const mode = card.permission_mode || 'default';
     chatPermMode.value = mode;
     chatPermMode.dataset.mode = mode;
+    syncBillingOverrideUI(card);
   }
   if (!isProject) {
     if (document.activeElement !== chatHours) {
@@ -5764,7 +5930,6 @@ function applyPanel(card) {
   // so used to make the FAB vanish the moment a task opened in pane 3.
   renderPanelTags(card);
   const meta = [];
-  if (card.session_id) meta.push(`session ${card.session_id.slice(0, 8)}`);
   if (card.location && card.location.cwd) meta.push(card.location.cwd);
   chatMetaText.textContent = meta.join(' · ');
   // Chat section is visible whenever this is an AI task (with or without a
@@ -5773,6 +5938,8 @@ function applyPanel(card) {
   const hasSession = !!card.session_id;
   const showChat = isTask && taskAssignee === 'ai';
   chatSectionChat.hidden  = !showChat;
+  // Pending notes (the "sieve") live above the input on the live chat.
+  renderNoteStack(card);
   // Only when a session exists, chat is shown, no turns are on screen, AND the
   // session isn't mid-flight. applyPanel re-runs on every card.changed WS tick
   // (e.g. the status flip right after a send), so without these guards it
@@ -5829,6 +5996,7 @@ async function openChat(cardId) {
     firstturnInput.value = '';
     autoGrowFirstturn(firstturnInput);
     if (chatChipMenu) chatChipMenu.hidden = true;
+    setNotesMode(false);  // notes mode is a per-session toggle, not sticky across tasks
     openSection(null);
   }
   setPane3('task', cardId);
@@ -6095,6 +6263,27 @@ chatPermMode.addEventListener('change', () => {
   chatPermMode.dataset.mode = next;
   const value = next === 'default' ? null : next;
   patchCard(openCardId, { permission_mode: value }).catch(console.error);
+});
+
+// Per-project billing override. Tri-state select: '' inherit, 'no' force
+// billable, 'yes' force non-billable. The "Default" label spells out what the
+// inherited (client) setting resolves to so the effective state is visible.
+function syncBillingOverrideUI(card) {
+  chatBilling.value = card.non_billable === true ? 'yes'
+                    : card.non_billable === false ? 'no' : '';
+  const cl = card.client_id ? clients.get(card.client_id) : null;
+  const inherited = cl ? (cl.non_billable ? 'non-billable' : 'billable')
+                       : 'non-billable (no client)';
+  const def = chatBilling.querySelector('option[value=""]');
+  if (def) def.textContent = `Default — ${inherited}`;
+}
+chatBilling.addEventListener('change', () => {
+  if (!openCardId) return;
+  const card = cards.get(openCardId);
+  if (!card || card.parent_id) return; // projects only
+  const v = chatBilling.value;
+  const non_billable = v === 'yes' ? true : v === 'no' ? false : null;
+  patchCard(openCardId, { non_billable }).catch(console.error);
 });
 
 // Status chip → dropdown menu (replaces the old cycle-on-click). Each item
@@ -7020,6 +7209,177 @@ const chatErrorMsg = document.getElementById('chatErrorMsg');
 // hidden by an applyPanel() call that races with the card's status flip.
 let chatSending = false;
 
+// ── Notes mode (the "sieve") ─────────────────────────────────
+// A 📝 toggle stashes the typed line into the open card's note_buf instead of
+// dispatching a Claude turn. Notes live only on the card (never in the spawn
+// prompt or a /message body), so the AI can't see them until the user hits a
+// note's "↑ chat" button (sends that one) or "↑ Send all" (batches them into
+// one turn). Per the agreed design, sending a note promotes it into a normal
+// turn and removes it from the buffer.
+const chatNoteToggle = document.getElementById('chatNoteToggle');
+const chatNoteStack  = document.getElementById('chatNoteStack');
+let notesMode = false;
+
+function setNotesMode(on) {
+  notesMode = !!on;
+  chatNoteToggle.setAttribute('aria-pressed', notesMode ? 'true' : 'false');
+  chatInputRow.classList.toggle('note-mode', notesMode);
+  chatInput.placeholder = notesMode
+    ? "Note — the AI won't see this until you send it…"
+    : 'Reply… (type ! for commands)';
+}
+chatNoteToggle.addEventListener('click', () => {
+  setNotesMode(!notesMode);
+  if (!isMobileLayout()) chatInput.focus();
+});
+
+function getNoteBuf(card) {
+  return Array.isArray(card && card.note_buf) ? card.note_buf : [];
+}
+// Optimistic local mutation + PATCH. The server merges note_buf like any other
+// field and broadcasts card.changed → applyPanel → renderNoteStack; the
+// optimistic copy keeps the UI instant until that round-trips.
+function persistNoteBuf(card, next) {
+  card.note_buf = next;
+  renderNoteStack(card);
+  patchCard(card.id, { note_buf: next }).catch(console.error);
+}
+function addNote(text) {
+  const card = cards.get(openCardId);
+  if (!card) return;
+  const note = {
+    id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    text,
+    ts: Date.now(),
+  };
+  persistNoteBuf(card, [...getNoteBuf(card), note]);
+}
+function removeNote(card, id) {
+  if (!card) return;
+  persistNoteBuf(card, getNoteBuf(card).filter(n => n.id !== id));
+}
+
+function renderNoteStack(card) {
+  if (!chatNoteStack) return;
+  const notes = getNoteBuf(card);
+  if (!notes.length) { chatNoteStack.hidden = true; chatNoteStack.replaceChildren(); return; }
+  chatNoteStack.hidden = false;
+  const frag = document.createDocumentFragment();
+  const head = document.createElement('div');
+  head.className = 'chat-note-stack-head';
+  const label = document.createElement('span');
+  label.textContent = notes.length === 1 ? '1 note' : `${notes.length} notes`;
+  head.appendChild(label);
+  const spacer = document.createElement('span');
+  spacer.className = 'chat-note-stack-spacer';
+  head.appendChild(spacer);
+  // Batch send only earns its button once there's more than one note.
+  if (notes.length > 1) {
+    const sendAll = document.createElement('button');
+    sendAll.type = 'button';
+    sendAll.textContent = '↑ Send all';
+    sendAll.title = 'Send every note as one chat turn';
+    sendAll.addEventListener('click', () => sendAllNotes(card.id));
+    head.appendChild(sendAll);
+  }
+  frag.appendChild(head);
+  for (const n of notes) {
+    const row = document.createElement('div');
+    row.className = 'chat-note';
+    const txt = document.createElement('div');
+    txt.className = 'chat-note-text';
+    txt.textContent = n.text;
+    row.appendChild(txt);
+    const actions = document.createElement('div');
+    actions.className = 'chat-note-actions';
+    const send = document.createElement('button');
+    send.type = 'button';
+    send.className = 'chat-note-send';
+    send.textContent = '↑ chat';
+    send.title = 'Send this note to the chat now';
+    send.addEventListener('click', () => sendNoteToChat(card.id, n.id));
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.textContent = '✕';
+    del.title = 'Delete note';
+    del.addEventListener('click', () => removeNote(cards.get(card.id), n.id));
+    actions.appendChild(send);
+    actions.appendChild(del);
+    row.appendChild(actions);
+    frag.appendChild(row);
+  }
+  chatNoteStack.replaceChildren(frag);
+}
+
+// Promote text into a real chat turn. A lean mirror of handleChatSubmit's send
+// core (no attachments path) so the working file-upload flow stays untouched.
+// Resolves true on a clean dispatch, false on failure (caller restores the note).
+async function sendNoteAsTurn(cardId, text) {
+  const card = cards.get(cardId);
+  if (!card || !card.session_id) {
+    chatErrorMsg.textContent = 'No active session — flip the project Runn switch on to start this task.';
+    chatErrorMsg.hidden = false;
+    return false;
+  }
+  const optimisticTurn = renderTurn({ kind: 'user', text });
+  optimisticTurn.dataset.optimistic = '1';
+  optimisticTurn.dataset.optimisticText = text;
+  chatTranscript.insertBefore(optimisticTurn, chatThinking);
+  chatSending = true;
+  chatTurnTokens = 0;
+  chatErrorMsg.hidden = true;
+  chatEmpty.hidden = true;
+  chatThinkingLabel.textContent = 'thinking';
+  chatThinking.hidden = false;
+  paintThinkingTokens();
+  chatInputRow.classList.add('busy');
+  chatInput.disabled = true; chatSend.disabled = true; chatAttach.disabled = true;
+  chatTranscript.scrollTop = chatTranscript.scrollHeight;
+  try {
+    await sendMessage(cardId, text, []);
+    startTranscriptPoll();
+    return true;
+  } catch (err) {
+    chatErrorMsg.textContent = `Send failed: ${err.message}`;
+    chatErrorMsg.hidden = false;
+    optimisticTurn.remove();
+    return false;
+  } finally {
+    chatSending = false;
+    chatInputRow.classList.remove('busy');
+    chatInput.disabled = false; chatSend.disabled = false; chatAttach.disabled = false;
+  }
+}
+
+async function sendNoteToChat(cardId, noteId) {
+  const card = cards.get(cardId);
+  if (!card) return;
+  const note = getNoteBuf(card).find(n => n.id === noteId);
+  if (!note) return;
+  // Drop it first (sending converts a note into a normal turn); restore on
+  // failure so a send error never silently loses the note.
+  removeNote(card, noteId);
+  const ok = await sendNoteAsTurn(cardId, note.text);
+  if (!ok) {
+    const c = cards.get(cardId);
+    if (c) persistNoteBuf(c, [note, ...getNoteBuf(c)]);
+  }
+}
+
+async function sendAllNotes(cardId) {
+  const card = cards.get(cardId);
+  if (!card) return;
+  const notes = getNoteBuf(card);
+  if (!notes.length) return;
+  const combined = notes.map(n => n.text).join('\n\n');
+  persistNoteBuf(card, []);
+  const ok = await sendNoteAsTurn(cardId, combined);
+  if (!ok) {
+    const c = cards.get(cardId);
+    if (c) persistNoteBuf(c, notes);
+  }
+}
+
 // ── Runn chat commands (the `!cmd` line) ─────────────────────
 // A `!` prefix, not `/`: the underlying Claude session treats a leading `/` as
 // one of its OWN slash commands, so `/stop` never reaches Runn. `!` is ours to
@@ -7301,7 +7661,16 @@ async function handleChatSubmit() {
   if (!val && !pendingAttachments.length) return;
   // Slash-style ! commands are intercepted before any file upload so e.g.
   // `!stop` doesn't accidentally ship a queued screenshot.
-  if (val && runChatCommand(val, chatCmdCtx)) { chatInput.value = ''; return; }
+  if (val && runChatCommand(val, chatCmdCtx)) { chatInput.value = ''; autoGrowChatInput(); return; }
+  // Notes mode: stash the line on the card instead of sending it to the AI.
+  // Attachments aren't notes — if files are queued, fall through to a normal
+  // send even while notes mode is on.
+  if (notesMode && val && !pendingAttachments.length) {
+    addNote(val);
+    chatInput.value = '';
+    autoGrowChatInput();
+    return;
+  }
   const card = cards.get(openCardId);
   // First-turn special case: AI task with no session yet. The /message
   // endpoint requires a session, so we instead patch the user's text onto
@@ -7352,6 +7721,7 @@ async function handleChatSubmit() {
   try {
     await sendMessage(openCardId, val, wire);
     chatInput.value = '';
+    autoGrowChatInput();
     clearAttachments();
     startTranscriptPoll();
   } catch (err) {
@@ -7370,10 +7740,21 @@ async function handleChatSubmit() {
   }
 }
 chatSend.addEventListener('click', handleChatSubmit);
+// Auto-grow the reply textarea up to the CSS max-height (then it scrolls).
+function autoGrowChatInput() {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 160) + 'px';
+}
 chatInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChatSubmit(); }
+  if (e.key !== 'Enter' || e.isComposing) return;
+  // Desktop: Enter sends, Shift+Enter inserts a newline. Mobile has no handy
+  // modifier, so Enter is always a newline and send is button-only.
+  if (e.shiftKey || isMobileLayout()) return;
+  e.preventDefault();
+  handleChatSubmit();
 });
 chatInput.addEventListener('input', () => {
+  autoGrowChatInput();
   const hint = commandHint(chatInput.value.trim());
   if (hint) { chatErrorMsg.textContent = hint; chatErrorMsg.hidden = false; }
   else if (!chatInput.value.startsWith('!')) chatErrorMsg.hidden = true;
@@ -7814,7 +8195,7 @@ chatClientEdit.addEventListener('click', () => {
 });
 
 // ── Invoice composer ──────────────────────────────────────
-async function openComposer(clientId, scopeProjectId) {
+async function openComposer(clientId, scopeProjectId, discount, notes) {
   const client = clients.get(clientId) || await api('GET', `/clients/${encodeURIComponent(clientId)}`).catch(() => null);
   if (!client) { alert(`Client not found: ${clientId}`); return; }
   const s = await api('GET', '/settings');
@@ -7840,13 +8221,15 @@ async function openComposer(clientId, scopeProjectId) {
     });
   }
   const gstRate = (client.gst_rate != null) ? client.gst_rate : (s.default_gst_rate || 0.10);
-  composerCtx = { client_id: clientId, items, gstRate, currencySymbol: s.currency_symbol || '$' };
+  const disc = Math.max(0, Number(discount) || 0);
+  composerCtx = { client_id: clientId, items, gstRate, currencySymbol: s.currency_symbol || '$', discount: disc };
+  document.getElementById('compDiscount').value = disc > 0 ? disc : '';
   document.getElementById('compTitle').textContent = `New invoice for ${client.name || client.id}`;
   document.getElementById('compClientHint').textContent =
     client.company ? `To: ${client.company}` : `(No company set — click ⚙ to add details)`;
   document.getElementById('compIssued').value = todayISOC();
   document.getElementById('compDue').value    = addDaysISO(todayISOC(), s.default_due_days || 14);
-  document.getElementById('compNotes').value  = '';
+  document.getElementById('compNotes').value  = notes || '';
   renderComposerItems();
   openModal(modalComposer);
 }
@@ -7892,10 +8275,13 @@ function renderComposerItems() {
 function renderComposerTotals() {
   const sym = composerCtx.currencySymbol;
   const subtotal = round2(composerCtx.items.reduce((s, it) => s + (Number(it.amount_ex_gst) || 0), 0));
-  const gst      = round2(subtotal * composerCtx.gstRate);
-  const total    = round2(subtotal + gst);
+  const discount = Math.max(0, Number(composerCtx.discount) || 0);
+  const taxable  = round2(Math.max(0, subtotal - discount));
+  const gst      = round2(taxable * composerCtx.gstRate);
+  const total    = round2(taxable + gst);
   document.getElementById('compTotals').innerHTML = `
     <div class="composer-totals-row"><span class="composer-totals-label">Subtotal ex GST:</span><span>${sym}${subtotal.toFixed(2)}</span></div>
+    ${discount > 0 ? `<div class="composer-totals-row"><span class="composer-totals-label">Discount:</span><span>−${sym}${discount.toFixed(2)}</span></div>` : ''}
     <div class="composer-totals-row"><span class="composer-totals-label">GST (${(composerCtx.gstRate*100).toFixed(0)}%):</span><span>${sym}${gst.toFixed(2)}</span></div>
     <div class="composer-totals-row total"><span class="composer-totals-label">Total inc GST:</span><span>${sym}${total.toFixed(2)}</span></div>
   `;
@@ -7903,6 +8289,11 @@ function renderComposerTotals() {
 document.getElementById('compAddRow').addEventListener('click', () => {
   composerCtx.items.push({ card_id: null, description: '', date: todayISOC(), amount_ex_gst: 0 });
   renderComposerItems();
+});
+document.getElementById('compDiscount').addEventListener('input', (e) => {
+  if (!composerCtx) return;
+  composerCtx.discount = Math.max(0, Number(e.target.value) || 0);
+  renderComposerTotals();
 });
 document.getElementById('compIssue').addEventListener('click', async () => {
   if (!composerCtx) return;
@@ -7918,7 +8309,9 @@ document.getElementById('compIssue').addEventListener('click', async () => {
       due_at:    document.getElementById('compDue').value,
       notes:     document.getElementById('compNotes').value,
       gst_rate:  composerCtx.gstRate,
+      discount_ex_gst: composerCtx.discount || 0,
     });
+    draftEdits.delete(billingScopeProjectId); persistDraftEdits();   // issued → drop the overlay
     closeAllModals();
     openInvoice(inv.id);
   } catch (err) {
@@ -8042,8 +8435,10 @@ function buildDraftInvoice(clientId, scopeProjectId) {
   }
   items.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const subtotal = round2(items.reduce((t, it) => t + (Number(it.amount_ex_gst) || 0), 0));
-  const gst      = round2(subtotal * gstRate);
-  const total    = round2(subtotal + gst);
+  const discount = 0;                              // user enters it in the draft totals
+  const taxable  = round2(Math.max(0, subtotal - discount));
+  const gst      = round2(taxable * gstRate);
+  const total    = round2(taxable + gst);
   // Predicted id only when the client carries a running seq (future auto-
   // numbering). With no seq the id is blank — the draft prompts for a manual
   // number, which the user types before issuing.
@@ -8058,6 +8453,7 @@ function buildDraftInvoice(clientId, scopeProjectId) {
     due_at: addDaysISO(issued, s.default_due_days || 14),
     items,
     subtotal_ex_gst: subtotal,
+    discount_ex_gst: discount,
     gst_rate: gstRate,
     gst,
     total_inc_gst: total,
@@ -8086,16 +8482,50 @@ function buildDraftInvoice(clientId, scopeProjectId) {
   };
 }
 
+// Manual draft edits (invoice #, discount, notes) the user has typed, layered
+// on top of the cards-derived draft and keyed by project id. This is what lets
+// edits survive navigating away from the draft and back — the line items always
+// rebuild from the current cards, but these hand-entered fields persist until
+// the invoice is issued (then the entry is cleared). Backed by localStorage so
+// they also survive a page reload / reboot.
+const DRAFT_EDITS_KEY = 'runn.draftEdits.v1';
+function loadDraftEdits() {
+  try {
+    const raw = localStorage.getItem(DRAFT_EDITS_KEY);
+    return raw ? new Map(Object.entries(JSON.parse(raw))) : new Map();
+  } catch { return new Map(); }
+}
+const draftEdits = loadDraftEdits();
+function persistDraftEdits() {
+  try { localStorage.setItem(DRAFT_EDITS_KEY, JSON.stringify(Object.fromEntries(draftEdits))); }
+  catch {}
+}
+function applyDraftEdits(inv, pid) {
+  const ov = draftEdits.get(pid);
+  if (!ov) return inv;
+  if (typeof ov.id === 'string')    inv.id = ov.id;
+  if (typeof ov.notes === 'string') inv.notes = ov.notes;
+  if (ov.discount != null) {
+    inv.discount_ex_gst = Math.max(0, round2(Number(ov.discount) || 0));
+    const taxable = round2(Math.max(0, inv.subtotal_ex_gst - inv.discount_ex_gst));
+    inv.gst = round2(taxable * inv.gst_rate);
+    inv.total_inc_gst = round2(taxable + inv.gst);
+    inv.balance = inv.total_inc_gst;
+  }
+  return inv;
+}
+
 // Pane-2 bill button entry point: show the project's live draft invoice. Falls
 // back to the billing list for projects with no billable client (shouldn't
 // happen — the button is hidden for those — but keeps the click safe).
 function openProjectInvoice(projectId) {
-  const clientId = projectId ? resolveClientId(cards.get(projectId)) : null;
-  const cl = clientId ? clients.get(clientId) : null;
-  if (!clientId || (cl && cl.non_billable)) { openBilling(projectId); return; }
+  const project = projectId ? cards.get(projectId) : null;
+  const clientId = resolveClientId(project);
+  if (!clientId || projectNonBillable(project)) { openBilling(projectId); return; }
   billingScopeProjectId = projectId || null;
   draftInvoice = buildDraftInvoice(clientId, billingScopeProjectId);
   if (!draftInvoice) { openBilling(projectId); return; }
+  applyDraftEdits(draftInvoice, billingScopeProjectId);   // restore any in-progress edits
   currentInvoiceId = null;
   setPane3('invoice', draftInvoice.id);
   if (isMobileLayout()) goPane(3);
@@ -8122,8 +8552,8 @@ function closeInvoice() {
 document.getElementById('invEditDraft').addEventListener('click', () => {
   if (!draftInvoice) return;
   // Open the existing composer scoped to the same project so its rows match
-  // the draft the user is looking at.
-  openComposer(draftInvoice.client_id, billingScopeProjectId);
+  // the draft the user is looking at, carrying discount + notes through.
+  openComposer(draftInvoice.client_id, billingScopeProjectId, draftInvoice.discount_ex_gst, draftInvoice.notes);
 });
 document.getElementById('invIssueDraft').addEventListener('click', async () => {
   if (!draftInvoice || !draftInvoice.items.length) return;
@@ -8146,7 +8576,9 @@ document.getElementById('invIssueDraft').addEventListener('click', async () => {
       due_at:    draftInvoice.due_at,
       notes:     draftInvoice.notes || '',
       gst_rate:  draftInvoice.gst_rate,
+      discount_ex_gst: draftInvoice.discount_ex_gst || 0,
     });
+    draftEdits.delete(billingScopeProjectId); persistDraftEdits();   // issued → drop the overlay
     openInvoice(inv.id);
   } catch (err) {
     alert(`Issue failed: ${err.message}`);
@@ -8224,6 +8656,30 @@ function renderInvoiceDoc(inv, opts) {
   const balance = (typeof inv.balance === 'number') ? inv.balance : (inv.total_inc_gst - (inv.paid || 0));
   const balanceClass = balance > 0 ? 'outstanding' : '';
 
+  // Pre-tax discount row. Editable on a draft; on an issued invoice it only
+  // appears when there's an actual discount. (On a draft it's always present so
+  // you can enter one, but prints/hides itself when zero — see CSS is-empty.)
+  const discount = Math.max(0, Number(inv.discount_ex_gst) || 0);
+  const showDiscount = isDraft || discount > 0;
+
+  // Notes block — editable on a draft, static on an issued invoice, and hidden
+  // (prints nothing) when empty. Sits between the line items and the footer.
+  const notesText = (inv.notes || '').trim();
+  const notesBlock = (isDraft || notesText) ? `
+    <div class="invoice-doc-notes${notesText ? '' : ' is-empty'}" id="invNotesBlock">
+      <div class="invoice-doc-notes-label">Notes</div>
+      ${isDraft
+        ? `<div class="invoice-doc-notes-print" id="invNotesPrint">${escapeHtml(inv.notes || '').replace(/\n/g, '<br>')}</div><textarea id="invNotesInput" class="invoice-notes-input" rows="2" placeholder="Notes shown on the invoice (optional)">${escapeHtml(inv.notes || '')}</textarea>`
+        : `<div>${escapeHtml(inv.notes || '').replace(/\n/g, '<br>')}</div>`}
+    </div>` : '';
+  const discountRow = showDiscount ? `
+        <div class="invoice-doc-totals-row discount-row${discount > 0 ? '' : ' is-empty'}" id="invDiscountRow">
+          <span class="lbl">Discount (ex GST):</span>
+          <span class="val">${isDraft
+            ? `<span class="discount-print-only" id="invDiscountPrint">−${fmt$(discount)}</span><span class="discount-edit">−<input id="invDiscountInput" class="invoice-discount-input" type="number" step="0.01" min="0" placeholder="0.00" value="${discount > 0 ? discount : ''}"></span>`
+            : '−' + fmt$(discount)}</span>
+        </div>` : '';
+
   invoiceDoc.innerHTML = `
     ${isDraft ? '<div class="invoice-watermark">Draft</div>' : ''}
     <div class="invoice-doc-header">
@@ -8256,6 +8712,7 @@ function renderInvoiceDoc(inv, opts) {
       </thead>
       <tbody>${itemsHtml}</tbody>
     </table>
+    ${notesBlock}
     <div class="invoice-doc-footer">
       <div class="invoice-doc-bank">
         <div class="invoice-doc-bank-row"><span class="lbl">Due:</span><span>${fmtAUDate(inv.due_at)}</span></div>
@@ -8266,10 +8723,11 @@ function renderInvoiceDoc(inv, opts) {
       </div>
       <div class="invoice-doc-totals">
         <div class="invoice-doc-totals-row"><span class="lbl">Sub Total Ex GST:</span><span class="val">${fmt$(inv.subtotal_ex_gst)}</span></div>
-        <div class="invoice-doc-totals-row"><span class="lbl">GST:</span><span class="val">${fmt$(inv.gst)}</span></div>
-        <div class="invoice-doc-totals-row"><span class="lbl">Total Inc GST:</span><span class="val">${fmt$(inv.total_inc_gst)}</span></div>
+        ${discountRow}
+        <div class="invoice-doc-totals-row"><span class="lbl">GST:</span><span class="val" id="invGstVal">${fmt$(inv.gst)}</span></div>
+        <div class="invoice-doc-totals-row"><span class="lbl">Total Inc GST:</span><span class="val" id="invTotalVal">${fmt$(inv.total_inc_gst)}</span></div>
         <div class="invoice-doc-totals-row"><span class="lbl">Paid:</span><span class="val">${(inv.paid || 0) > 0 ? fmt$(inv.paid) : ''}</span></div>
-        <div class="invoice-doc-totals-row balance"><span class="lbl">Balance:</span><span class="val ${balanceClass}">${fmt$(balance)}</span></div>
+        <div class="invoice-doc-totals-row balance"><span class="lbl">Balance:</span><span class="val ${balanceClass}" id="invBalanceVal">${fmt$(balance)}</span></div>
       </div>
     </div>
   `;
@@ -8293,6 +8751,13 @@ function renderInvoiceDoc(inv, opts) {
   if (isDraft) {
     invStatusBadge.innerHTML = `<span class="billing-invoice-status draft">draft · preview</span>`;
     issueBtn.textContent = 'issue invoice';
+    // Persist hand-entered fields to the per-project overlay so they survive
+    // navigating away from the draft and back.
+    const pid = billingScopeProjectId;
+    const saveEdit = (patch) => {
+      draftEdits.set(pid, { ...(draftEdits.get(pid) || {}), ...patch });
+      persistDraftEdits();
+    };
     const numInput = document.getElementById('invNumInput');
     // Issue needs at least one line item AND an invoice number.
     const refreshIssuable = () => {
@@ -8302,7 +8767,42 @@ function renderInvoiceDoc(inv, opts) {
     if (numInput) {
       numInput.addEventListener('input', () => {
         if (draftInvoice) draftInvoice.id = numInput.value;
+        saveEdit({ id: numInput.value });
         refreshIssuable();
+      });
+    }
+    // Pre-tax discount: recompute GST / Total / Balance live as it's typed.
+    const discInput = document.getElementById('invDiscountInput');
+    if (discInput) {
+      discInput.addEventListener('input', () => {
+        const d = Math.max(0, Number(discInput.value) || 0);
+        draftInvoice.discount_ex_gst = round2(d);
+        const taxable = round2(Math.max(0, draftInvoice.subtotal_ex_gst - draftInvoice.discount_ex_gst));
+        const gst     = round2(taxable * draftInvoice.gst_rate);
+        const total   = round2(taxable + gst);
+        draftInvoice.gst = gst;
+        draftInvoice.total_inc_gst = total;
+        draftInvoice.balance = total;
+        document.getElementById('invGstVal').textContent     = fmt$(gst);
+        document.getElementById('invTotalVal').textContent   = fmt$(total);
+        document.getElementById('invBalanceVal').textContent = fmt$(total);
+        const print = document.getElementById('invDiscountPrint');
+        if (print) print.textContent = '−' + fmt$(draftInvoice.discount_ex_gst);
+        const row = document.getElementById('invDiscountRow');
+        if (row) row.classList.toggle('is-empty', !(draftInvoice.discount_ex_gst > 0));
+        saveEdit({ discount: draftInvoice.discount_ex_gst });
+      });
+    }
+    // Notes: editable on the draft, rendered on the invoice, persisted live.
+    const notesInput = document.getElementById('invNotesInput');
+    if (notesInput) {
+      notesInput.addEventListener('input', () => {
+        draftInvoice.notes = notesInput.value;
+        saveEdit({ notes: notesInput.value });
+        const np = document.getElementById('invNotesPrint');
+        if (np) np.innerHTML = escapeHtml(notesInput.value).replace(/\n/g, '<br>');
+        const nb = document.getElementById('invNotesBlock');
+        if (nb) nb.classList.toggle('is-empty', !notesInput.value.trim());
       });
     }
     refreshIssuable();

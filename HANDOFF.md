@@ -21,9 +21,10 @@ live); `./worker` requires `docker restart runn` to pick up.
   wrapper) stays in lockstep with the `@media (max-width:700px)` rule —
   use it, not `window.innerWidth <= 700`.
 - Pane 3 has a state machine `setPane3(mode, id)` with mode ∈
-  `null | 'task' | 'settings' | 'billing'`. Each mode toggles one of:
-  `#chatPanel`, `#chatSettingsPane`, `#billingPanel`. Three are siblings
-  under `#pane3`; only one is `hidden=false` at a time.
+  `null | 'task' | 'settings' | 'billing' | 'invoice'`. Each mode toggles one
+  of: `#chatPanel`, `#chatSettingsPane`, `#billingPanel`, `#invoicePage`. Four
+  siblings under `#pane3`; only one is `hidden=false` at a time. Leaving
+  `'invoice'` clears `currentInvoiceId` and `draftInvoice`.
 - History: each pane transition `pushState({runnPane, mode, id})`. Single
   `popstate` listener reconciles pane state to the new top of stack.
 
@@ -103,18 +104,39 @@ Key frontend functions (in `frontend/index.html`):
 - `billingGroups()` — groups done+(unbilled|invoiced) cards by client.
   Honours `billingScopeProjectId` (pane 2 bill button → that project's
   subtree only) AND skips non-billable clients.
-- `openComposer(clientId)` — invoice composer modal. Pulls client's
-  done+unbilled cards, prefills line items with `date = c.done_at ||
-  c.updated_at`, rate × hours.
-- Invoice route: `/invoices/:id` (history-based SPA). `renderInvoicePage(id)`
-  renders A4 layout in `#invoicePage`.
+- `openComposer(clientId, scopeProjectId?, discount?, notes?)` — invoice
+  composer modal. Pulls client's done+unbilled cards (filtered to
+  `scopeProjectId`'s subtree when given), prefills line items with
+  `date = c.done_at || c.updated_at`, rate × hours. Has a discount + notes
+  field; seeded from the draft when opened via "edit items".
+- **Draft-invoice flow (pane 3, shipped 2026-05-26)** — the project bill
+  button calls `openProjectInvoice(projectId)`, which builds a live draft via
+  `buildDraftInvoice(clientId, scopeProjectId)` and renders it through the
+  shared `renderInvoiceDoc(inv, {draft})` (same A4 layout as a real invoice,
+  with a DRAFT watermark). The draft is project-scoped. Editable in place:
+  invoice # (`#invNumInput`), pre-tax discount (`#invDiscountInput`, recomputes
+  GST live), notes (`#invNotesInput`, now rendered on the invoice). "issue
+  invoice" POSTs and lands on the persisted invoice; "edit items" opens the
+  composer; print/PDF works on drafts too (watermarked, filename = invoice id).
+- **Draft-edits overlay** — `draftEdits` Map (localStorage `runn.draftEdits.v1`),
+  keyed by project id, holds the hand-entered #/discount/notes so they survive
+  navigation AND reload. Line items always rebuild from cards; `applyDraftEdits`
+  re-layers the overlay. Cleared on issue (both draft + composer paths).
+- `renderInvoicePage(id)` — fetches a persisted invoice, calls
+  `renderInvoiceDoc`. Invoice route: `/invoices/:id` (history-based SPA),
+  A4 layout in `#invoicePage`.
 
 Backend endpoints:
 - `GET/PUT /settings` — global settings (spread-merge body).
 - `GET/POST/PATCH/DELETE /clients[/:id]`. POST + first PATCH-after-upgrade
   auto-provision the workspace dir + stub CLAUDE.md.
-- `POST /invoices` — issues; bumps client.invoice_seq, mints id from
-  `{prefix}{seq}`, snapshots from/to/bank/currency.
+- `POST /invoices` — issues. If body `id` is given (validated
+  `^[A-Za-z0-9._-]+$`, rejects dupes) it's used as-is and `invoice_seq` is NOT
+  bumped (manual numbering); otherwise mints `{prefix}{seq}` and bumps seq.
+  Accepts `discount_ex_gst` (pre-tax; GST + total computed on
+  subtotal−discount). Snapshots from/to/bank/currency, flips each item's card
+  → `invoiced` (+ records `invoice_id`). **⚠ server.js changes need
+  `docker restart runn` (plain `node`, no --watch) — easy to forget.**
 - `GET /invoices`, `GET /invoices/:id`, `PATCH /invoices/:id` (status, paid).
 - (No `/projects` routes — the billing-project layer was retired.)
 - (No `/workspaces` route — the cwd picker was retired; cwd is derived
@@ -122,25 +144,35 @@ Backend endpoints:
 
 ## Where billing UX is weak right now (probable next-session targets)
 
-- **No partial-invoice flow**: composer pulls every unbilled card; user
-  can edit/remove rows but can't filter by date range or by project.
-- **No batch billing-state ops**: marking N cards "invoiced" requires
-  going one-by-one in the billing panel (there is a "mark all invoiced"
-  per-group, but no broader UX).
+- **Composer has no invoice-# field**: issuing from "edit items" auto-mints
+  `{prefix}{seq}` (this produced a stray `ZIS1` during testing). Add parity
+  with the draft, carry the draft's number through, or require a number.
+- **Draft is project-scoped, can silently strand work**: a client's billable
+  cards under *other* projects aren't included. Planned: a "＋ include other
+  projects (N items, $X)" nudge so nothing is dropped. (Projects are a mix of
+  billing-batches and ongoing themes — see [[invoice-numbering]] reasoning.)
+- **Draft-edits overlay is per-browser** (localStorage) — doesn't sync across
+  devices, and a stale overlay can linger for a project already invoiced
+  elsewhere (harmless: no items ⇒ issue disabled). No prune-on-load yet.
 - **Invoice list (Invoices tab) is read-only** — no search, no filter,
   no payment-recording form (only the per-invoice mark-paid button).
 - **No reminders / aging report**: invoices don't surface "X days overdue".
-- **No PDF export** outside the browser print path. `window.print()` works
-  for the A4 layout but is fiddly.
+- **Auto-invoicing is the stated next frontier** — numbering scheme for auto
+  mode still undecided; manual entry is the interim (invoice_seq kept null).
 - **`apsDefaultRate` exists** in app-settings modal; per-client rate still
   takes precedence. Currency symbol is global, not per-client (the
   client.currency field exists in the schema but isn't used end-to-end).
 - **non_billable clients** don't render in the billing panel groups at all
   — fine for outstanding $ but means you can't see their hours summary
   per-client anywhere except the project card.
-- **done_at recently added**; invoice line item dates use it. Composer
-  hasn't been updated to let user override per-line date easily (the
-  field is editable but discoverability is low).
+
+## Done this pass (2026-05-26) — first real invoice issued
+
+Pane-3 live draft-invoice view + editable invoice # (manual numbering) +
+pre-tax discount + rendered notes + DRAFT watermark + print filename = id +
+localStorage draft-edits overlay. Mobile invoice layout fixed (flex-shrink,
+nowrap dates, content-fit white sheet). Server: `POST /invoices` honours an
+explicit `id` and a `discount_ex_gst`. See the billing key-functions list above.
 
 ## Key file paths
 

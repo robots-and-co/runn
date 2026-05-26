@@ -222,8 +222,12 @@ async function createInvoice(body) {
   const gstRate  = (typeof body.gst_rate === 'number') ? body.gst_rate
                  : (typeof client.gst_rate === 'number') ? client.gst_rate
                  : (settings.default_gst_rate || 0);
-  const gst      = round2(subtotal * gstRate);
-  const total    = round2(subtotal + gst);
+  // Pre-tax discount: applied to the ex-GST subtotal, so it reduces the GST
+  // base. taxable = subtotal − discount; GST + total computed off taxable.
+  const discount = Math.min(subtotal, Math.max(0, round2(Number(body.discount_ex_gst) || 0)));
+  const taxable  = round2(subtotal - discount);
+  const gst      = round2(taxable * gstRate);
+  const total    = round2(taxable + gst);
 
   const issued = body.issued_at || todayISO();
   const due    = body.due_at    || addDays(issued, settings.default_due_days || 14);
@@ -235,6 +239,7 @@ async function createInvoice(body) {
     due_at: due,
     items,
     subtotal_ex_gst: subtotal,
+    discount_ex_gst: discount,
     gst_rate: gstRate,
     gst,
     total_inc_gst: total,
@@ -1084,6 +1089,9 @@ const server = http.createServer(async (req, res) => {
         // true = queue halts until this task is marked done.
         blocking: body.blocking === true,
         client_id: body.client_id ?? null,
+        // Per-project billing override (projects only). null = inherit the
+        // client's non_billable flag; true/false force it for this project.
+        non_billable: (body.non_billable === true || body.non_billable === false) ? body.non_billable : null,
         acceptance_check: body.acceptance_check ?? null,
         created_at: nowIso(),
         updated_at: nowIso(),
