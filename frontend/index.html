@@ -3515,9 +3515,21 @@ function normStatus(s) { return s === 'todo' ? 'queued' : s; }
 // deliberately NOT here — a billable-but-not-yet-invoiced task stays visible
 // (just sorted to the bottom) so it's a standing reminder to bill it.
 const HIDDEN_STATUSES = new Set(['done', 'invoiced', 'paid']);
-// Task-list sort key: active work (0) first, then 'invoice' (1, visible at the
-// bottom), then the hidden/completed states (2).
+// Completion rank: 0 = active/incomplete work, 1 = 'invoice' (done, awaiting
+// billing), 2 = hidden/completed. Used widely as `> 0` ⇒ "completed" for
+// done-counting and the auto-close-on-finish behaviour, so 'hold' (which is
+// paused, NOT done) deliberately stays rank 0 here — see listRank() for
+// list ordering.
 function statusRank(s) {
+  if (HIDDEN_STATUSES.has(s)) return 2;
+  if (s === 'invoice') return 1;
+  return 0;
+}
+// Visible-list ordering rank (distinct from the completion rank above).
+// 'hold' is user-paused, so it sinks to the very bottom of the task list —
+// below active work, the invoice tail, and completed tasks.
+function listRank(s) {
+  if (s === 'hold') return 3;
   if (HIDDEN_STATUSES.has(s)) return 2;
   if (s === 'invoice') return 1;
   return 0;
@@ -4880,18 +4892,18 @@ function renderProjectSteps() {
   // Hidden statuses (done/invoiced/paid) get bucket rank 0 ('none') so they
   // settle at the bottom of the no-due group when the show-completed toggle
   // is on — they're terminal, not scheduled work.
-  const bucketRankFor = c => HIDDEN_STATUSES.has(c.status)
-    ? 0
-    : dueBucketFromDate(c.due).rank;
-  const bucketKeyFor = c => HIDDEN_STATUSES.has(c.status)
-    ? 'none'
-    : dueBucketFromDate(c.due).key;
+  // hold (user-paused) joins the hidden/completed states in the no-due bucket
+  // so a paused task never competes for the today/overdue buckets — it sinks
+  // to the bottom regardless of its due date.
+  const sinkBucket = c => HIDDEN_STATUSES.has(c.status) || c.status === 'hold';
+  const bucketRankFor = c => sinkBucket(c) ? 0 : dueBucketFromDate(c.due).rank;
+  const bucketKeyFor = c => sinkBucket(c) ? 'none' : dueBucketFromDate(c.due).key;
   children.sort((a, b) => {
     const ba = bucketRankFor(a), bb = bucketRankFor(b);
     if (ba !== bb) return bb - ba;
-    const ra = statusRank(a.status), rb = statusRank(b.status);
-    if (ra !== rb) return ra - rb;
-    if (ra > 0) {
+    const la = listRank(a.status), lb = listRank(b.status);
+    if (la !== lb) return la - lb;
+    if (statusRank(a.status) > 0) {
       const ka = a.done_at || a.updated_at || '';
       const kb = b.done_at || b.updated_at || '';
       if (ka !== kb) return ka < kb ? 1 : -1;
@@ -5642,9 +5654,9 @@ function renderSteps() {
   countSubtree(openCardId);
   for (const arr of byParent.values()) {
     arr.sort((a, b) => {
-      const ra = statusRank(a.status), rb = statusRank(b.status);
-      if (ra !== rb) return ra - rb;
-      if (ra > 0) {
+      const la = listRank(a.status), lb = listRank(b.status);
+      if (la !== lb) return la - lb;
+      if (statusRank(a.status) > 0) {
         const ka = a.done_at || a.updated_at || '';
         const kb = b.done_at || b.updated_at || '';
         if (ka !== kb) return ka < kb ? 1 : -1;
@@ -7916,12 +7928,13 @@ function scheduleWsReconnect(delayMs = 1000) {
 // after the turn finished, fixed only by a hard refresh" bug. Rebuild the maps
 // from scratch (not a merge) so cards deleted while offline actually vanish.
 async function resyncAfterReconnect() {
-  let nextCards, nextClients, nextPerms;
+  let nextCards, nextClients, nextPerms, nextArchived;
   try {
-    [nextCards, nextClients, nextPerms] = await Promise.all([
+    [nextCards, nextClients, nextPerms, nextArchived] = await Promise.all([
       api('GET', '/cards'),
       api('GET', '/clients').catch(() => null),
       api('GET', '/permissions/pending').catch(() => null),
+      api('GET', '/archive').catch(() => null),
     ]);
   } catch (err) {
     // Worker unreachable — keep current state; the 5s heartbeat will reconnect
@@ -7932,6 +7945,12 @@ async function resyncAfterReconnect() {
   }
   cards.clear();
   for (const c of nextCards) cards.set(c.id, c);
+  // Archived cards live in a separate store (/archive) and never appear in
+  // /cards. Without re-pulling them the rebuild drops every archived project,
+  // so the "show archived" board goes empty after any reconnect — e.g. a worker
+  // restart. Re-mark them so the board can show them again. (boot() does the
+  // same via the one-shot archive loader.)
+  if (nextArchived) for (const c of nextArchived) { c._archived = true; cards.set(c.id, c); }
   if (nextClients) { clients.clear(); for (const cl of nextClients) clients.set(cl.id, cl); }
   if (nextPerms)   { pendingPerms.clear(); for (const p of nextPerms) pendingPerms.set(p.request_id, p); }
 
