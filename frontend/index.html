@@ -1859,6 +1859,8 @@
   .chat-firstturn[hidden] { display: none; }
   .chat-firstturn .firstturn-bubble-wrap,
   .chat-firstturn .firstturn-extra-bubbles { flex-shrink: 0; }
+  /* Sidecar attachment chips sit at natural height above the composer. */
+  .chat-firstturn > .chat-attachments-row { flex-shrink: 0; }
   /* The user's own turns scroll within their own region. Without this a long
      pre-AI draft (title bubble + one bubble per notes paragraph) just grows
      past the panel — on mobile that pushes the input row off the bottom with
@@ -2547,10 +2549,14 @@
 
   /* Drop-target outline for drag-drop onto the transcript. The dashed inset
      ring uses outline-offset so it doesn't push the scroll content. */
-  .chat-transcript.drop-target {
+  .chat-transcript.drop-target,
+  .chat-firstturn.drop-target {
     outline: 2px dashed var(--accent); outline-offset: -6px;
     background: rgba(107, 82, 184, 0.04);
   }
+  /* In the first-turn sidecar the chip name is a link to the stored file. */
+  a.chat-attachment-name { text-decoration: none; }
+  a.chat-attachment-name:hover { color: var(--ink); text-decoration: underline; }
 
   /* Attachment row inside a user bubble (transcript display). */
   .turn-user-attachments {
@@ -3310,6 +3316,11 @@
            bubble. Clicking a bubble swaps it for an inline editor. -->
       <div class="firstturn-extra-bubbles" id="firstturnExtraBubbles"></div>
     </div>
+    <!-- Sidecar attachments: reference files on a human task; ride along into
+         the prompt when the task is promoted to AI. Pinned just above the
+         composer (a direct child of the column-flex .chat-firstturn so it
+         stacks above the bottom row rather than beside the input). -->
+    <div class="chat-attachments-row" id="firstturnAttachmentsRow" hidden></div>
     <!-- Bottom row: + Claude on the left (15% wide) sits inline with the
          chat-style input row (fills remaining width, right-justified).
          + Claude shows only once there's a turn AND Claude hasn't been
@@ -3319,8 +3330,12 @@
       <button type="button" class="firstturn-claude" id="firstturnAi" title="Assign this task to AI. Spawns now if the project's Runn switch is on; otherwise sits queued until you flip it on." hidden>+ AI</button>
       <div class="firstturn-empty" id="firstturnEmpty">
         <div class="footer-input-row firstturn-input-row">
+          <button type="button" class="footer-attach" id="firstturnAttach" title="Attach files (or drag/paste)">＋</button>
           <textarea class="firstturn-input footer-input" id="firstturnInput" rows="1" placeholder="What's this task?" autocomplete="off"></textarea>
           <button type="button" class="footer-send" id="firstturnSend" title="Send (Enter)">↑</button>
+          <input type="file" id="firstturnFilePicker" multiple
+                 accept="image/*,application/pdf,text/plain,text/markdown,text/csv,application/json,.md"
+                 hidden>
         </div>
         <div class="chat-error" id="firstturnMsg" hidden></div>
       </div>
@@ -5433,7 +5448,11 @@ firstturnBubble.addEventListener('click', () => {
 firstturnAi.addEventListener('click', async () => {
   if (!openCardId) return;
   const card = cards.get(openCardId);
-  if (!card || !card.title || !card.title.trim()) return;
+  // Allow promotion with a title OR an attachment-only lay-up (the spawn prompt
+  // falls back to "analyse the attached file(s)" when there's no text).
+  const hasTitle = !!(card && card.title && card.title.trim());
+  const hasAttachments = !!(card && Array.isArray(card.attachments) && card.attachments.length);
+  if (!card || (!hasTitle && !hasAttachments)) return;
   firstturnAi.disabled = true;
   try {
     await patchCard(openCardId, { assignee: 'ai' });
@@ -5938,16 +5957,20 @@ function applyPanel(card) {
       firstturnBubble.textContent = card.title;
     }
     renderFirstturnExtras(card);
-    // + AI: shown when (a) there's at least one turn to send, and (b) the
-    // task hasn't been handed to Claude yet. Click assigns to AI; whether
-    // that spawns Claude now or sits queued is decided server-side by the
-    // project's Runn switch. Once handed over, the button hides and the
-    // input row reclaims the full bottom width.
+    renderFirstturnAttachments(card);
+    // + AI: shown when (a) there's something to send — a title OR at least one
+    // attachment — and (b) the task hasn't been handed to Claude yet. An
+    // attachment-only task is valid: the spawn prompt defaults to "analyse the
+    // attached file(s)". Click assigns to AI; whether that spawns now or sits
+    // queued is decided server-side by the project's Runn switch.
+    const hasAttachments = Array.isArray(card.attachments) && card.attachments.length > 0;
     const claudeNotYet = !card.session_id && card.assignee !== 'ai';
-    firstturnAi.hidden = !(hasTitle && claudeNotYet);
+    firstturnAi.hidden = !((hasTitle || hasAttachments) && claudeNotYet);
     firstturnAi.disabled = false;
     firstturnAi.textContent = '+ AI';
-    firstturnInput.placeholder = hasTitle ? 'Add another note (Enter to send)…' : "What's this task?";
+    firstturnInput.placeholder = hasTitle
+      ? 'Add another note (Enter to send)…'
+      : (hasAttachments ? 'Add a note, or hit + AI to send the file…' : "What's this task?");
   }
   // When the first-turn chat is showing (any task without a session), it
   // owns the full panel height — hide the body accordions so the input
@@ -7766,6 +7789,160 @@ chatInput.addEventListener('paste', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
     addAttachments([...e.dataTransfer.files]);
+  });
+})();
+
+// ── First-turn (un-run task) sidecar attachments ──────────────
+// The first-turn composer is both the human-chat surface and the AI lay-up
+// surface. Attachments here are a sidecar on the card (card.attachments[]):
+// reference-only while the task is human, and prepended to the spawn prompt
+// when it's promoted to AI ("the image goes with it"). Unlike the live-chat
+// composer — which queues files until send — these persist immediately on
+// add/drop/paste, since there's no chat turn for them to belong to. They reuse
+// the live composer's caps + base64 reader; the chip CSS is shared too.
+const firstturnAttach         = document.getElementById('firstturnAttach');
+const firstturnFilePicker     = document.getElementById('firstturnFilePicker');
+const firstturnAttachmentsRow = document.getElementById('firstturnAttachmentsRow');
+let firstturnUploading = false;
+
+function firstturnAttachError(msg) {
+  firstturnMsg.textContent = msg;
+  firstturnMsg.hidden = false;
+  setTimeout(() => { if (firstturnMsg.textContent === msg) firstturnMsg.hidden = true; }, 4000);
+}
+
+function renderFirstturnAttachments(card) {
+  if (!firstturnAttachmentsRow) return;
+  const list = card && Array.isArray(card.attachments) ? card.attachments : [];
+  firstturnAttachmentsRow.innerHTML = '';
+  if (!list.length) { firstturnAttachmentsRow.hidden = true; return; }
+  firstturnAttachmentsRow.hidden = false;
+  // Once handed to AI the files are locked into the prompt — show, don't edit.
+  const locked = card.assignee === 'ai' || !!card.session_id;
+  for (const a of list) {
+    const href = `/attachments/${encodeURIComponent(card.id)}/${encodeURIComponent(a.filename)}`;
+    const chip = document.createElement('div');
+    chip.className = 'chat-attachment-chip';
+    if ((a.mime || '').startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = href; img.alt = '';
+      chip.appendChild(img);
+    }
+    const name = document.createElement('a');
+    name.className = 'chat-attachment-name';
+    name.textContent = a.name || 'file';
+    name.href = href; name.target = '_blank'; name.rel = 'noopener noreferrer';
+    name.title = `${a.name || 'file'} · ${Math.max(1, Math.round((a.bytes || 0) / 1024))} KB`;
+    chip.appendChild(name);
+    if (!locked) {
+      const x = document.createElement('button');
+      x.type = 'button'; x.className = 'chat-attachment-x'; x.textContent = '×';
+      x.title = 'Remove';
+      x.addEventListener('click', () => removeFirstturnAttachment(card.id, a.filename));
+      chip.appendChild(x);
+    }
+    firstturnAttachmentsRow.appendChild(chip);
+  }
+}
+
+async function addFirstturnAttachments(files) {
+  if (!openCardId || firstturnUploading) return;
+  const card = cards.get(openCardId);
+  if (!card) return;
+  if (card.assignee === 'ai' || card.session_id) {
+    firstturnAttachError('This task is already with AI — attachments are locked.');
+    return;
+  }
+  const existingCount = Array.isArray(card.attachments) ? card.attachments.length : 0;
+  const wire = [];
+  for (const f of files) {
+    if (existingCount + wire.length >= ATTACH_MAX_FILES) {
+      firstturnAttachError(`Max ${ATTACH_MAX_FILES} attachments per task.`);
+      break;
+    }
+    if (f.size > ATTACH_MAX_BYTES) {
+      firstturnAttachError(`"${f.name}" is too large (${Math.round(f.size / 1024 / 1024)} MB > ${Math.round(ATTACH_MAX_BYTES / 1024 / 1024)} MB).`);
+      continue;
+    }
+    const mime = f.type || '';
+    if (mime && !ATTACH_MIME_ALLOW.has(mime) && !mime.startsWith('image/')) {
+      firstturnAttachError(`Unsupported type: ${mime}`);
+      continue;
+    }
+    try {
+      const b64 = await fileToBase64(f);
+      wire.push({ name: f.name || 'file', mime, data: b64 });
+    } catch (err) {
+      firstturnAttachError(`Couldn't read ${f.name}: ${err.message}`);
+    }
+  }
+  if (!wire.length) return;
+  firstturnUploading = true;
+  firstturnAttach.disabled = true;
+  try {
+    const res = await fetch(`/cards/${openCardId}/attachments`, {
+      method: 'POST', cache: 'no-store',
+      headers: { 'accept': 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ attachments: wire }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `upload failed (${res.status})`);
+    // Optimistic local sync; the card.changed broadcast will confirm. Re-render
+    // the whole panel (not just the chips) so the + AI submit button appears as
+    // soon as the first file lands.
+    cards.set(data.id, data);
+    if (openCardId === data.id) applyPanel(data);
+  } catch (err) {
+    firstturnAttachError(`Upload failed: ${err.message}`);
+  } finally {
+    firstturnUploading = false;
+    firstturnAttach.disabled = false;
+  }
+}
+
+async function removeFirstturnAttachment(cardId, filename) {
+  try {
+    const res = await fetch(`/cards/${cardId}/attachments/${encodeURIComponent(filename)}`, {
+      method: 'DELETE', cache: 'no-store', headers: { 'accept': 'application/json' },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `remove failed (${res.status})`);
+    cards.set(data.id, data);
+    if (openCardId === data.id) applyPanel(data);
+  } catch (err) {
+    firstturnAttachError(`Remove failed: ${err.message}`);
+  }
+}
+
+firstturnAttach.addEventListener('click', () => firstturnFilePicker.click());
+firstturnFilePicker.addEventListener('change', () => {
+  addFirstturnAttachments([...firstturnFilePicker.files]);
+  firstturnFilePicker.value = ''; // allow re-picking the same file
+});
+firstturnInput.addEventListener('paste', (e) => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  const files = [];
+  for (const it of items) {
+    if (it.kind === 'file') { const f = it.getAsFile(); if (f) files.push(f); }
+  }
+  if (files.length) { e.preventDefault(); addFirstturnAttachments(files); }
+});
+(function wireFirstturnDrop() {
+  const zone = chatFirstTurn;
+  const hasFiles = (e) => !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
+  ['dragenter', 'dragover'].forEach(ev =>
+    zone.addEventListener(ev, (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      zone.classList.add('drop-target');
+    }));
+  ['dragleave', 'drop'].forEach(ev =>
+    zone.addEventListener(ev, () => zone.classList.remove('drop-target')));
+  zone.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    addFirstturnAttachments([...e.dataTransfer.files]);
   });
 })();
 

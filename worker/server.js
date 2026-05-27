@@ -146,11 +146,22 @@ async function saveAttachments(cardId, attachments) {
 // The marker the frontend strips back out at render time. Chosen for
 // uniqueness — Claude essentially never emits this literal opener.
 function buildPromptWithAttachments(text, saved) {
-  if (!saved || !saved.length) return String(text || '').trim();
-  const lines = saved.map(s => `- ${s.absPath} (${s.mime})`).join('\n');
-  const header = `<RUNN-ATTACHMENTS>\n${lines}\n</RUNN-ATTACHMENTS>`;
+  const header = bridge.attachmentsMarker(saved);
+  if (!header) return String(text || '').trim();
   const body = (text && text.trim()) ? text.trim() : 'Please analyse the attached file(s).';
   return `${header}\n\n${body}`;
+}
+
+// Map a card's stored sidecar attachments (filename-only on disk) to the
+// { absPath, mime } shape the marker builder + spawn path expect. Recomputes
+// absPath from the card id so the card JSON never has to carry host paths.
+function cardAttachmentSpawnList(card) {
+  if (!Array.isArray(card.attachments) || !card.attachments.length) return [];
+  const dir = path.join(ATTACHMENTS_DIR, card.id);
+  return card.attachments.map(a => ({
+    absPath: path.join(dir, a.filename),
+    mime: a.mime,
+  }));
 }
 
 async function deleteCardAttachments(cardId) {
@@ -1266,6 +1277,50 @@ const server = http.createServer(async (req, res) => {
       console.log(`[runn] deleted archived project ${id} (+${toDelete.length - 1} descendant card(s))`);
       return sendJson(res, 200, { ok: true, deleted: toDelete.length });
     }
+    // Sidecar attachments on an un-run task (the first-turn composer). Files are
+    // persisted to disk and their metadata recorded on card.attachments[]. For a
+    // human task they're reference-only; when the task is promoted to AI the
+    // spawn path (ai-ify / queue) rebuilds the marker from card.attachments so
+    // "the image goes with it". A live (sessioned) card uses /message instead.
+    if (m === 'POST' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/attachments$/))) {
+      const card = await readJson(cardPath(mm[1]));
+      if (card.session_id) {
+        return sendJson(res, 400, { error: 'card has a live session — send attachments via /message', code: 'HAS_SESSION' });
+      }
+      const body = await readBody(req);
+      let saved = [];
+      try { saved = await saveAttachments(card.id, body.attachments || []); }
+      catch (err) {
+        if (err && typeof err.code === 'string' && err.code.startsWith('ATTACH_')) {
+          return sendJson(res, 400, { error: err.message, code: err.code });
+        }
+        throw err;
+      }
+      if (!saved.length) return sendJson(res, 400, { error: 'no attachments provided' });
+      const existing = Array.isArray(card.attachments) ? card.attachments : [];
+      // Store filename-only metadata; absPath is recomputed from the card id at
+      // spawn time so the card JSON never carries host paths.
+      const added = saved.map(s => ({ name: s.name, mime: s.mime, bytes: s.bytes, filename: s.filename }));
+      const merged = { ...card, attachments: [...existing, ...added], updated_at: nowIso() };
+      await atomicWriteJson(cardPath(card.id), merged); // cardsWatcher broadcasts card.changed
+      return sendJson(res, 200, merged);
+    }
+    if (m === 'DELETE' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/attachments\/([^/]+)$/))) {
+      const card = await readJson(cardPath(mm[1]));
+      const filename = decodeURIComponent(mm[2]);
+      const existing = Array.isArray(card.attachments) ? card.attachments : [];
+      const next = existing.filter(a => a.filename !== filename);
+      if (next.length !== existing.length) {
+        // Best-effort unlink (path-traversal guarded by the join + prefix check).
+        const full = path.normalize(path.join(ATTACHMENTS_DIR, card.id, filename));
+        if (full.startsWith(path.join(ATTACHMENTS_DIR, card.id) + path.sep)) {
+          await fsp.rm(full, { force: true }).catch(() => {});
+        }
+      }
+      const merged = { ...card, attachments: next, updated_at: nowIso() };
+      await atomicWriteJson(cardPath(card.id), merged); // cardsWatcher broadcasts card.changed
+      return sendJson(res, 200, merged);
+    }
     if (m === 'POST' && (mm = url.pathname.match(/^\/cards\/([^/]+)\/ai-ify$/))) {
       const card = await readJson(cardPath(mm[1]));
       if (card.session_id) return sendJson(res, 400, { error: 'card already has a session' });
@@ -1292,6 +1347,7 @@ const server = http.createServer(async (req, res) => {
         const { session_id, session_path, location: resolvedLoc } = await bridge.spawnSession({
           title: card.title,
           notes: card.notes_md,
+          attachments: cardAttachmentSpawnList(card),
           location,
           permissionToken,
           permissionMode,
@@ -1708,6 +1764,7 @@ const queueDeps = {
   readJson, atomicWriteJson, cardPath, bridge, broadcast,
   listCards, nowIso,
   interruptedCards,
+  cardAttachmentSpawnList,
   resolveCardLocation,
   resolveCardPermissionMode,
   resolveCardSystemContext,

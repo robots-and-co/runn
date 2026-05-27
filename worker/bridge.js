@@ -205,7 +205,18 @@ function composeAppend(systemPromptAppend) {
   return parts.join('\n\n');
 }
 
-function spawnSession({ title, notes, location, permissionToken, permissionMode, systemPromptAppend, onExit, holder }) {
+// Build the <RUNN-ATTACHMENTS> marker block from a card's sidecar attachments
+// (or the saveAttachments() output) — each entry needs { absPath, mime }. This
+// is the single source of truth for the marker format; server.js delegates here
+// for the live /message path too, and the frontend's parseUserAttachments() is
+// its inverse. Returns '' when there's nothing to attach.
+function attachmentsMarker(attachments) {
+  if (!Array.isArray(attachments) || !attachments.length) return '';
+  const lines = attachments.map(a => `- ${a.absPath} (${a.mime})`).join('\n');
+  return `<RUNN-ATTACHMENTS>\n${lines}\n</RUNN-ATTACHMENTS>`;
+}
+
+function spawnSession({ title, notes, location, permissionToken, permissionMode, systemPromptAppend, onExit, holder, attachments }) {
   location = location || DEFAULT_LOCATION;
   if (location.type === 'ssh') {
     return Promise.reject(new Error('SSH transport not yet implemented — see slice 2d'));
@@ -231,7 +242,15 @@ function spawnSession({ title, notes, location, permissionToken, permissionMode,
       args.push('--permission-mode', permissionMode);
     }
     args.push('--append-system-prompt', composeAppend(systemPromptAppend));
-    const prompt = (notes && String(notes).trim()) ? `${title}\n\n${String(notes).trim()}` : title;
+    // Sidecar attachments laid up before the task ran ride along here: their
+    // marker block is prepended so the spawn prompt points Claude at the files
+    // (same contract as the live /message path). "The image goes with it."
+    let prompt = (notes && String(notes).trim()) ? `${title}\n\n${String(notes).trim()}` : (title || '');
+    const marker = attachmentsMarker(attachments);
+    if (marker) {
+      const body = prompt.trim() || 'Please analyse the attached file(s).';
+      prompt = `${marker}\n\n${body}`;
+    }
     args.push('--print', prompt);
     const child = spawn(CLAUDE_BIN, args, {
       cwd,
@@ -405,6 +424,7 @@ function sendMessage({ sessionId, text, location, permissionToken, permissionMod
 module.exports = {
   spawnSession,
   sendMessage,
+  attachmentsMarker,
   sessionPathFor,
   cwdToSlug,
   DEFAULT_LOCATION,

@@ -307,7 +307,7 @@ async function maybeAdvanceQueue(parentId, deps) {
 // Spawn an AI session for a single sibling and write the resulting `doing`
 // card back to disk. On failure, mark the card `blocked` so the user sees it.
 async function spawnSibling(sib, deps) {
-  const { bridge, onAiExit, atomicWriteJson, cardPath, nowIso, mintPermissionToken, resolveCardLocation, resolveCardPermissionMode, resolveCardSystemContext } = deps;
+  const { bridge, onAiExit, atomicWriteJson, cardPath, nowIso, mintPermissionToken, resolveCardLocation, resolveCardPermissionMode, resolveCardSystemContext, cardAttachmentSpawnList } = deps;
   const location = resolveCardLocation ? await resolveCardLocation(sib) : (sib.location || bridge.DEFAULT_LOCATION);
   try {
     const permissionToken = mintPermissionToken ? mintPermissionToken(sib.id) : undefined;
@@ -316,6 +316,7 @@ async function spawnSibling(sib, deps) {
     const { session_id, session_path, location: resolvedLoc } = await bridge.spawnSession({
       title: sib.title,
       notes: sib.notes_md,
+      attachments: cardAttachmentSpawnList ? cardAttachmentSpawnList(sib) : [],
       location,
       permissionToken,
       permissionMode,
