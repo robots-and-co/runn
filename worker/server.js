@@ -1190,6 +1190,15 @@ const server = http.createServer(async (req, res) => {
         // Preserve any existing stamp through unrelated edits.
         merged.done_at = card.done_at || null;
       }
+      // Once a completed task carries a done date, its due date is moot — a
+      // finished task shouldn't keep reading as due/overdue on the board, since
+      // done_at now supersedes it. Clear `due` only when the card is in a
+      // completed state AND a done_at is actually set (so a reopened task, or a
+      // completed-but-unstamped one, keeps its due). An explicit `due` in this
+      // same PATCH wins, so an intentional re-set isn't clobbered.
+      if (nowCompleted && merged.done_at && !('due' in body)) {
+        merged.due = null;
+      }
       applyTimerTransition(card, merged, nowIso);
       await atomicWriteJson(p, merged);
       // Tick the walker on transitions that could unblock or introduce work:
