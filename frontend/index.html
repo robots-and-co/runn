@@ -4901,16 +4901,16 @@ function renderProjectSteps() {
   }
   const totalCount = children.length;
   const doneCount = children.filter(c => statusRank(c.status) > 0).length;
-  // Sort: due bucket is primary — today-due cards sit together regardless of
-  // status (active or invoice). Within a bucket, active before invoice before
-  // hidden/completed; then sort_order (active) or recency (invoice/done).
-  // Hidden statuses (done/invoiced/paid) get bucket rank 0 ('none') so they
-  // settle at the bottom of the no-due group when the show-completed toggle
-  // is on — they're terminal, not scheduled work.
-  // hold (user-paused) joins the hidden/completed states in the no-due bucket
-  // so a paused task never competes for the today/overdue buckets — it sinks
-  // to the bottom regardless of its due date.
-  const sinkBucket = c => HIDDEN_STATUSES.has(c.status) || c.status === 'hold';
+  // Sort: due bucket is primary. Only ACTIVE (incomplete) tasks bucket by
+  // their due date; everything past active — 'invoice' (done, awaiting
+  // billing), the hidden completed states (done/invoiced/paid), and 'hold'
+  // (user-paused) — sinks to bucket 0 ('none'), so a finished or paused task
+  // never competes for the today/overdue buckets regardless of its due date.
+  // Mirrors pane 1's projectEffectiveDue, which only rolls up a due from
+  // active tasks (statusRank === 0 && not hold). Within a bucket, listRank
+  // orders active < invoice < hidden < hold; then sort_order (active) or
+  // recency (invoice/done).
+  const sinkBucket = c => statusRank(c.status) > 0 || c.status === 'hold';
   const bucketRankFor = c => sinkBucket(c) ? 0 : dueBucketFromDate(c.due).rank;
   const bucketKeyFor = c => sinkBucket(c) ? 'none' : dueBucketFromDate(c.due).key;
   children.sort((a, b) => {
@@ -4928,8 +4928,8 @@ function renderProjectSteps() {
   });
   // Render dividers when there's more than one visible bucket OR when today /
   // overdue is present. Urgency labels carry signal even alone — and the
-  // drag-to-today bump needs a today divider to drop onto. Bucketing now spans
-  // active + invoice, so today-due invoice cards share the TODAY label.
+  // drag-to-today bump needs a today divider to drop onto. Only active tasks
+  // bucket by due, so invoice/done/hold cards land under the "no due" label.
   const visibleBuckets = new Set();
   for (const c of children) {
     if (!showDoneTasks && HIDDEN_STATUSES.has(c.status)) continue;
