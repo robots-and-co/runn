@@ -8984,6 +8984,15 @@ function renderInvoiceDoc(inv, opts) {
     const [y, m, d] = iso.split('-');
     return `${d}/${m}/${y}`;
   }
+  // Payment terms, derived from due − issue date so the label never drifts out
+  // of sync with the dates above it (e.g. "7 days"). null ⇒ a date is missing.
+  function termsDays(issued, due) {
+    if (!issued || !due) return null;
+    const a = new Date(issued + 'T00:00:00'), b = new Date(due + 'T00:00:00');
+    if (isNaN(a) || isNaN(b)) return null;
+    return Math.round((b - a) / 86400000);
+  }
+  const terms = termsDays(inv.issued_at, inv.due_at);
 
   const itemsHtml = inv.items.length
     ? inv.items.map(it => `
@@ -9063,6 +9072,8 @@ function renderInvoiceDoc(inv, opts) {
     ${notesBlock}
     <div class="invoice-doc-footer">
       <div class="invoice-doc-bank">
+        <div class="invoice-doc-bank-row"><span class="lbl">Date:</span><span>${fmtAUDate(inv.issued_at)}</span></div>
+        ${terms != null ? `<div class="invoice-doc-bank-row"><span class="lbl">Terms:</span><span>${terms} day${terms === 1 ? '' : 's'}</span></div>` : ''}
         <div class="invoice-doc-bank-row"><span class="lbl">Due:</span><span>${fmtAUDate(inv.due_at)}</span></div>
         ${bank.bank ? `<div class="invoice-doc-bank-row"><span class="lbl">Bank:</span><span>${escapeHtml(bank.bank)}</span></div>` : ''}
         ${bank.name ? `<div class="invoice-doc-bank-row"><span class="lbl">Name:</span><span>${escapeHtml(bank.name)}</span></div>` : ''}
