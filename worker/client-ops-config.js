@@ -43,22 +43,31 @@ function isPort(v) {
 
 // Validate one site entry. Returns the field name that's bad, or null if OK.
 // Required: host, user, ssh_key_path. Optional (read by specific tools):
-//   - vm_name        : virsh domain name for vm_liveness
-//   - service_port   : TCP port vm_liveness probes (1..65535)
-//   - service_host   : hostname/IP for the probe (defaults to "127.0.0.1"
-//                      on the remote, NOT the model)
-//   - db_path        : Firebird .fdb path for db_health_check
-//   - db_gstat_cmd   : override for the gstat binary (default "gstat")
+//   - vm_name              : virsh domain name for vm_liveness
+//   - service_port         : TCP port vm_liveness probes (1..65535)
+//   - service_host         : hostname/IP for the probe (defaults to "127.0.0.1"
+//                            on the remote, NOT the model)
+//   - db_path              : Firebird .fdb path for db_health_check
+//   - db_gstat_cmd         : override for the gstat binary (default "gstat")
+//   - replication_kick_cmd : remote command (or `{dataset}` template) the
+//                            kick_replication tool runs on the site to re-fire
+//                            a send. Operator-supplied so the MCP server stays
+//                            free of site-specific orchestration policy.
+//   - replication_kill_cmd : optional override for kill_stuck_send. When
+//                            absent the tool falls back to a safe default
+//                            (pgrep `zfs send` matching the dataset → SIGTERM).
 function badField(entry) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return '<entry>';
   if (!isNonEmptyString(entry.host)) return 'host';
   if (!isNonEmptyString(entry.user)) return 'user';
   if (!isNonEmptyString(entry.ssh_key_path)) return 'ssh_key_path';
-  if (entry.vm_name      !== undefined && !isNonEmptyString(entry.vm_name))      return 'vm_name';
-  if (entry.service_port !== undefined && !isPort(entry.service_port))           return 'service_port';
-  if (entry.service_host !== undefined && !isNonEmptyString(entry.service_host)) return 'service_host';
-  if (entry.db_path      !== undefined && !isNonEmptyString(entry.db_path))      return 'db_path';
-  if (entry.db_gstat_cmd !== undefined && !isNonEmptyString(entry.db_gstat_cmd)) return 'db_gstat_cmd';
+  if (entry.vm_name              !== undefined && !isNonEmptyString(entry.vm_name))              return 'vm_name';
+  if (entry.service_port         !== undefined && !isPort(entry.service_port))                   return 'service_port';
+  if (entry.service_host         !== undefined && !isNonEmptyString(entry.service_host))         return 'service_host';
+  if (entry.db_path              !== undefined && !isNonEmptyString(entry.db_path))              return 'db_path';
+  if (entry.db_gstat_cmd         !== undefined && !isNonEmptyString(entry.db_gstat_cmd))         return 'db_gstat_cmd';
+  if (entry.replication_kick_cmd !== undefined && !isNonEmptyString(entry.replication_kick_cmd)) return 'replication_kick_cmd';
+  if (entry.replication_kill_cmd !== undefined && !isNonEmptyString(entry.replication_kill_cmd)) return 'replication_kill_cmd';
   return null;
 }
 

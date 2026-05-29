@@ -29,6 +29,8 @@ const receiverFreeSpace    = require('./receiver-free-space');
 const vmLiveness           = require('./vm-liveness');
 const dbHealthCheck        = require('./db-health-check');
 const createSnapshot       = require('./create-snapshot');
+const kickReplication      = require('./kick-replication');
+const killStuckSend        = require('./kill-stuck-send');
 
 const TOOLS = [
   zfsReplicationStatus,
@@ -38,6 +40,8 @@ const TOOLS = [
   vmLiveness,
   dbHealthCheck,
   createSnapshot,
+  kickReplication,
+  killStuckSend,
 ];
 
 const VALID_CATEGORIES = new Set(['read-only', 'mutating']);

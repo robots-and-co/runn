@@ -1,7 +1,8 @@
 'use strict';
 
-// Smoke for the mutating tier added in mcp-task 05:
-//   create_snapshot (and the shared _snapshot.js pre-hook helper).
+// Smoke for the mutating tier:
+//   - create_snapshot (and the shared _snapshot.js pre-hook helper) — task 05.
+//   - kick_replication, kill_stuck_send                              — task 06.
 //
 // Same two-layer shape as the read-only tier smoke
 // (worker/client-ops-tools/read-only-tier.smoke.js):
@@ -35,6 +36,8 @@ const { spawn } = require('child_process');
 
 const snap   = require('./_snapshot');
 const create = require('./create-snapshot');
+const kick   = require('./kick-replication');
+const kill   = require('./kill-stuck-send');
 
 // ── 1. Pure unit checks ──────────────────────────────────────────────────
 function unitChecks() {
@@ -69,7 +72,52 @@ function unitChecks() {
         'pre-migration insurance');
     }),
   ]).then(() => {
+    // kick_replication: template substitution + positional fallback.
+    assert.strictEqual(
+      kick._internals.buildKickCmd('kick.sh {dataset}', 'pool0/winvm'),
+      'kick.sh pool0/winvm',
+    );
+    assert.strictEqual(
+      kick._internals.buildKickCmd('kick.sh', 'pool0/winvm'),
+      'kick.sh pool0/winvm',
+    );
+    assert.strictEqual(
+      kick._internals.buildKickCmd('echo {dataset} && go {dataset}', 'a/b'),
+      'echo a/b && go a/b',
+    );
+    // Shared sanitisers — same charset / 500-char reason as create_snapshot.
+    assert.strictEqual(kick._internals.sanitiseDataset('foo; rm /'), null);
+    assert.strictEqual(kick._internals.sanitiseReason('  '), null);
+
+    // kill_stuck_send: template substitution wins when given, positional
+    // fallback otherwise, AND a non-empty default pipeline when no template.
+    assert.strictEqual(
+      kill._internals.buildKillCmd('kill.sh {dataset}', 'pool0/winvm'),
+      'kill.sh pool0/winvm',
+    );
+    assert.strictEqual(
+      kill._internals.buildKillCmd('kill.sh', 'pool0/winvm'),
+      'kill.sh pool0/winvm',
+    );
+    const fallback = kill._internals.buildKillCmd(undefined, 'pool0/winvm');
+    assert.ok(fallback.includes("pgrep -af 'zfs send'"),
+      'fallback kill cmd should pgrep zfs send');
+    assert.ok(fallback.includes('kill -TERM'),
+      'fallback kill cmd should SIGTERM');
+    assert.ok(fallback.includes('pool0/winvm'),
+      'fallback kill cmd should filter by dataset');
+
+    // parseKilledCount: first-line integer; reject anything else.
+    assert.strictEqual(kill._internals.parseKilledCount('0\n'), 0);
+    assert.strictEqual(kill._internals.parseKilledCount('3\n'), 3);
+    assert.strictEqual(kill._internals.parseKilledCount('3\n12345 ...\n'), 3);
+    assert.strictEqual(kill._internals.parseKilledCount('not-a-number\n'), null);
+    assert.strictEqual(kill._internals.parseKilledCount(''), null);
+    assert.strictEqual(kill._internals.parseKilledCount('-1\n'), null);
+    assert.strictEqual(kill._internals.parseKilledCount('2.5\n'), null);
+
     console.log('OK  unit: snapshot helper sanitisers + tag builder + reason sanitiser');
+    console.log('OK  unit: kick_replication + kill_stuck_send builders / parsers');
   });
 }
 
@@ -79,13 +127,26 @@ async function mcpSmoke() {
     HOST: 'SECRET-HOST-203-0-113-77',
     USER: 'SECRET-USER-zoperator',
     KEY:  '/home/waz/SECRET-KEY-PATH/id_rsa',
+    // Site-A is configured with operator-supplied kick/kill commands; both
+    // names are sentinels we'll assert show up in the ssh stub's recorded
+    // remote-cmd log (because the boundary runs them) but NOT in any tool
+    // result the server sends back.
+    KICK: '/secret/path/SECRET-KICK-CMD',
+    KILL: '/secret/path/SECRET-KILL-CMD',
   };
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'co-mut-smoke-'));
   const cfgPath = path.join(tmpDir, 'client-ops.config.json');
   fs.writeFileSync(cfgPath, JSON.stringify({
     sites: {
-      A: { host: SECRETS.HOST, user: SECRETS.USER, ssh_key_path: SECRETS.KEY },
+      A: {
+        host: SECRETS.HOST, user: SECRETS.USER, ssh_key_path: SECRETS.KEY,
+        replication_kick_cmd: SECRETS.KICK + ' {dataset}',
+        replication_kill_cmd: SECRETS.KILL + ' {dataset}',
+      },
+      // BARE has none of the kick/kill config — the tools must error cleanly
+      // (or, for kill, fall back to the safe default pipeline).
+      BARE: { host: SECRETS.HOST, user: SECRETS.USER, ssh_key_path: SECRETS.KEY },
     },
   }));
 
@@ -106,6 +167,23 @@ if (remote.startsWith('zfs snapshot BADDS')) {
   process.exit(1);
 }
 if (remote.startsWith('zfs snapshot ')) {
+  process.exit(0);
+}
+// kick_replication: succeed on the configured KICK template; fail when the
+// dataset is the "BADKICK" sentinel so we exercise the kick_failed path.
+if (remote.startsWith(${JSON.stringify(SECRETS.KICK + ' ')})) {
+  if (remote.indexOf('BADKICK') >= 0) { process.exit(1); }
+  process.exit(0);
+}
+// kill_stuck_send: configured KILL template — emit a deterministic count.
+if (remote.startsWith(${JSON.stringify(SECRETS.KILL + ' ')})) {
+  process.stdout.write('2\\n');
+  process.exit(0);
+}
+// kill_stuck_send: default fallback pipeline starts with the pgrep recipe.
+// Match by the literal prefix the tool emits when no template is set.
+if (remote.startsWith("pids=$(pgrep -af 'zfs send'")) {
+  process.stdout.write('1\\n');
   process.exit(0);
 }
 process.stderr.write('fake-ssh: unexpected remote cmd: ' + remote + '\\n');
@@ -165,15 +243,29 @@ process.exit(2);
   try {
     await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'smoke', version: '0' } });
 
-    // tools/list must include create_snapshot, but its CATEGORY metadata
-    // must NOT leak onto the wire — it's a server-internal label.
+    // tools/list must include the mutating-tier tools, but their CATEGORY
+    // metadata must NOT leak onto the wire — it's a server-internal label.
     const list = await rpc('tools/list', {});
-    const created = list.result.tools.find(t => t.name === 'create_snapshot');
-    assert.ok(created, 'create_snapshot missing from tools/list');
-    assert.strictEqual(created.inputSchema.required.sort().join(','), 'dataset,reason,site');
-    assert.strictEqual(created.inputSchema.additionalProperties, false);
-    assert.ok(!('CATEGORY' in created), 'CATEGORY leaked into tools/list entry');
-    assert.ok(!('category' in created), 'category leaked into tools/list entry');
+    for (const tn of ['create_snapshot', 'kick_replication', 'kill_stuck_send']) {
+      const t = list.result.tools.find(x => x.name === tn);
+      assert.ok(t, `${tn} missing from tools/list`);
+      assert.strictEqual(t.inputSchema.required.sort().join(','), 'dataset,reason,site',
+        `${tn}: required fields drifted`);
+      assert.strictEqual(t.inputSchema.additionalProperties, false,
+        `${tn}: additionalProperties should be false`);
+      assert.ok(!('CATEGORY' in t), `CATEGORY leaked into tools/list entry for ${tn}`);
+      assert.ok(!('category' in t), `category leaked into tools/list entry for ${tn}`);
+      // The model-visible description must spell out the kill-stuck-send remedy
+      // (so future operators reading tools/list — i.e. the model — see *why*
+      // killing the partial is the right move, per the spec). Cover this on
+      // the kill tool specifically.
+      if (tn === 'kill_stuck_send') {
+        assert.ok(/resume token/i.test(t.description),
+          'kill_stuck_send description must mention "no resume token" — the reason the remedy is safe');
+        assert.ok(/correct.*base/i.test(t.description),
+          'kill_stuck_send description must mention recomputing a correct base on next fire');
+      }
+    }
 
     // Happy path: snapshot succeeds, result has tag + created, no host/path.
     const ok = await callTool('create_snapshot', {
@@ -210,24 +302,123 @@ process.exit(2);
 
     const callsAfter = fs.readFileSync(sentinelPath, 'utf8').trim().split('\n');
     assert.strictEqual(callsAfter.length, 2,
-      `expected 2 ssh calls after bad-arg rejections + failing call, got ${callsAfter.length}`);
+      `expected 2 ssh calls after create_snapshot happy + BADDS failure, got ${callsAfter.length}`);
 
-    // Cardinal property: no real config secret appears in any tool result.
+    console.log('OK  e2e: create_snapshot end-to-end');
+
+    // ── kick_replication ───────────────────────────────────────────────────
+    // Happy path: site A has the operator-supplied KICK template. The tool
+    // takes a pre-mutate snapshot first, then runs the kick — so we expect
+    // TWO new ssh calls in order: `zfs snapshot …@<tag>` then the kick cmd
+    // with the dataset substituted in.
+    const kickOk = await callTool('kick_replication', {
+      site: 'A', dataset: 'pool0/winvm',
+      reason: 'manual re-fire after WG flap',
+    });
+    assert.strictEqual(kickOk.ok, true);
+    assert.strictEqual(kickOk.fired, true);
+    assert.ok(/^runn-pre-mutate-\d{9,}$/.test(kickOk.snapshot_tag),
+      `kick snapshot_tag malformed: ${kickOk.snapshot_tag}`);
+
+    let kickCalls = fs.readFileSync(sentinelPath, 'utf8').trim().split('\n');
+    assert.strictEqual(kickCalls.length, 4,
+      `expected 4 ssh calls after kick happy path, got ${kickCalls.length}`);
+    assert.strictEqual(kickCalls[2], `zfs snapshot pool0/winvm@${kickOk.snapshot_tag}`,
+      'kick pre-mutate snapshot did not match expected remote cmd');
+    assert.strictEqual(kickCalls[3], `${SECRETS.KICK} pool0/winvm`,
+      'kick remote cmd did not interpolate {dataset} into the configured template');
+
+    // Site without a kick command → config-error, no ssh call.
+    const kickBare = await callTool('kick_replication', {
+      site: 'BARE', dataset: 'pool0/winvm', reason: 'should refuse',
+    });
+    assert.deepStrictEqual(kickBare, { error: 'site_not_configured_for_kick' });
+
+    // Invalid reason / dataset rejected before any ssh.
+    const kickBadDs = await callTool('kick_replication', {
+      site: 'A', dataset: 'foo; rm /', reason: 'ok',
+    });
+    assert.deepStrictEqual(kickBadDs, { error: 'invalid_dataset' });
+    const kickBadReason = await callTool('kick_replication', {
+      site: 'A', dataset: 'pool0/winvm', reason: '   ',
+    });
+    assert.deepStrictEqual(kickBadReason, { error: 'invalid_reason' });
+
+    // Failure path: dataset includes BADKICK → kick exits 1 in the stub.
+    // The pre-mutate snapshot still succeeds; the response should report
+    // kick_failed and carry the snapshot_tag so the operator can roll back.
+    const kickFail = await callTool('kick_replication', {
+      site: 'A', dataset: 'pool0/BADKICK', reason: 'expected failure',
+    });
+    assert.strictEqual(kickFail.error, 'kick_failed');
+    assert.ok(/^runn-pre-mutate-\d{9,}$/.test(kickFail.snapshot_tag),
+      'kick_failed result must include the pre-mutate snapshot_tag for rollback');
+
+    console.log('OK  e2e: kick_replication happy + config-missing + bad-args + kick_failed');
+
+    // ── kill_stuck_send ────────────────────────────────────────────────────
+    // Happy path on A: operator KILL template → stub emits "2\n" → killed=2.
+    const killOk = await callTool('kill_stuck_send', {
+      site: 'A', dataset: 'pool0/winvm', reason: 'stuck send remediation',
+    });
+    assert.deepStrictEqual(killOk, { ok: true, killed: 2 });
+
+    // Default fallback on BARE: no template → tool builds the pgrep recipe
+    // → stub matches by literal prefix and emits "1\n".
+    const killBare = await callTool('kill_stuck_send', {
+      site: 'BARE', dataset: 'pool0/winvm', reason: 'fallback recipe',
+    });
+    assert.deepStrictEqual(killBare, { ok: true, killed: 1 });
+
+    // Important property of kill_stuck_send: it does NOT take a pre-mutate
+    // snapshot. The two kill calls above must therefore have added exactly
+    // two new ssh invocations (the kill cmd itself), NOT four.
+    const killCalls = fs.readFileSync(sentinelPath, 'utf8').trim().split('\n');
+    // Expected ssh-call ledger so far:
+    //   1-2: create_snapshot happy + BADDS failure                       (=2)
+    //   3-4: kick_replication happy: snapshot + kick                     (=4)
+    //   5-6: kick_replication BADKICK: snapshot + kick (kick exits 1)    (=6)
+    //        (bad-args & site_not_configured paths fire no ssh)
+    //   7  : kill_stuck_send happy on A (KILL template, no snapshot)     (=7)
+    //   8  : kill_stuck_send fallback on BARE (default recipe, no snap)  (=8)
+    assert.strictEqual(killCalls.length, 8,
+      `expected 8 ssh calls total, got ${killCalls.length}\n${killCalls.join('\n')}`);
+    assert.strictEqual(killCalls[6], `${SECRETS.KILL} pool0/winvm`,
+      'kill template remote cmd did not interpolate {dataset}');
+    assert.ok(killCalls[7].startsWith("pids=$(pgrep -af 'zfs send'"),
+      `fallback kill remote cmd did not match default recipe: ${killCalls[7]}`);
+    assert.ok(killCalls[7].includes('pool0/winvm'),
+      'fallback kill remote cmd must filter by the dataset');
+
+    // Bad args.
+    const killBadDs = await callTool('kill_stuck_send', {
+      site: 'A', dataset: 'foo; rm /', reason: 'ok',
+    });
+    assert.deepStrictEqual(killBadDs, { error: 'invalid_dataset' });
+    const killBadReason = await callTool('kill_stuck_send', {
+      site: 'A', dataset: 'pool0/winvm', reason: '',
+    });
+    assert.deepStrictEqual(killBadReason, { error: 'invalid_reason' });
+
+    console.log('OK  e2e: kill_stuck_send template + fallback + no-snapshot invariant');
+
+    // ── Cardinal invariants for the whole mutating tier ────────────────────
+    // No real config secret appears in any tool result the model would see.
     const blob = allResultTexts.join('\n');
     for (const [k, v] of Object.entries(SECRETS)) {
       assert.ok(!blob.includes(v), `result text leaked SECRETS.${k} ("${v}")`);
     }
 
-    // The MUTATING audit line must have fired on stderr at least once. That
-    // line stays on box (it's process.stderr from the server subprocess) but
-    // it must not contain a config secret either.
-    assert.ok(/MUTATING tool=create_snapshot/.test(stderrBuf),
-      `expected MUTATING audit line on stderr, got:\n${stderrBuf}`);
+    // The MUTATING audit line must have fired on stderr for each tool.
+    for (const tn of ['create_snapshot', 'kick_replication', 'kill_stuck_send']) {
+      assert.ok(new RegExp(`MUTATING tool=${tn}`).test(stderrBuf),
+        `expected MUTATING audit line for ${tn} on stderr, got:\n${stderrBuf}`);
+    }
     for (const [k, v] of Object.entries(SECRETS)) {
       assert.ok(!stderrBuf.includes(v), `stderr audit leaked SECRETS.${k} ("${v}")`);
     }
 
-    console.log('OK  e2e: create_snapshot end-to-end + audit + zero secret leakage');
+    console.log('OK  e2e: audit lines fired for all 3 mutating tools, zero secret leakage');
   } finally {
     try { child.kill('SIGTERM'); } catch {}
     fs.rmSync(tmpDir, { recursive: true, force: true });

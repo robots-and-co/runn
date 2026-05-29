@@ -1,5 +1,5 @@
 {
-  "_comment": "Template only. Copy to $CLIENT_OPS_CONFIG (default: ~/.config/runn/client-ops.config.json) and fill in real values. The real file MUST NOT be committed — see .gitignore. The 'sites' keys are the logical labels the model sees ('A', 'B', 'RECEIVER', …); the values are resolved server-side and never reach the model's context. Optional per-site fields (vm_name, service_port, service_host, db_path, db_gstat_cmd) are read by the vm_liveness / db_health_check tools; sites that don't set them simply can't be probed by those tools.",
+  "_comment": "Template only. Copy to $CLIENT_OPS_CONFIG (default: ~/.config/runn/client-ops.config.json) and fill in real values. The real file MUST NOT be committed — see .gitignore. The 'sites' keys are the logical labels the model sees ('A', 'B', 'RECEIVER', …); the values are resolved server-side and never reach the model's context. Optional per-site fields (vm_name, service_port, service_host, db_path, db_gstat_cmd) are read by the vm_liveness / db_health_check tools; replication_kick_cmd is the operator-supplied command kick_replication runs on the sender (`{dataset}` is substituted, or the dataset is appended); replication_kill_cmd is an optional override for kill_stuck_send (default: pgrep `zfs send` matching the dataset → SIGTERM). Sites that don't set a field simply can't be reached by the corresponding tool.",
   "sites": {
     "A": {
       "host": "203.0.113.10",
@@ -9,7 +9,9 @@
       "service_port": 3050,
       "service_host": "127.0.0.1",
       "db_path": "/srv/firebird/clinical.fdb",
-      "db_gstat_cmd": "gstat"
+      "db_gstat_cmd": "gstat",
+      "replication_kick_cmd": "/usr/local/bin/easyfleet-kick-send {dataset}",
+      "replication_kill_cmd": "/usr/local/bin/easyfleet-kill-send {dataset}"
     },
     "B": {
       "host": "203.0.113.11",
