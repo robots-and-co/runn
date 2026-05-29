@@ -3,6 +3,7 @@
 // Smoke for the mutating tier:
 //   - create_snapshot (and the shared _snapshot.js pre-hook helper) — task 05.
 //   - kick_replication, kill_stuck_send                              — task 06.
+//   - restart_service (closed-enum service axis)                     — task 07.
 //
 // Same two-layer shape as the read-only tier smoke
 // (worker/client-ops-tools/read-only-tier.smoke.js):
@@ -34,10 +35,11 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
-const snap   = require('./_snapshot');
-const create = require('./create-snapshot');
-const kick   = require('./kick-replication');
-const kill   = require('./kill-stuck-send');
+const snap    = require('./_snapshot');
+const create  = require('./create-snapshot');
+const kick    = require('./kick-replication');
+const kill    = require('./kill-stuck-send');
+const restart = require('./restart-service');
 
 // ── 1. Pure unit checks ──────────────────────────────────────────────────
 function unitChecks() {
@@ -116,8 +118,34 @@ function unitChecks() {
     assert.strictEqual(kill._internals.parseKilledCount('-1\n'), null);
     assert.strictEqual(kill._internals.parseKilledCount('2.5\n'), null);
 
-    console.log('OK  unit: snapshot helper sanitisers + tag builder + reason sanitiser');
-    console.log('OK  unit: kick_replication + kill_stuck_send builders / parsers');
+    // restart_service: closed enum on the service axis, plus state normaliser.
+    assert.deepStrictEqual(restart.SERVICE_ENUM, ['firebird', 'node_red_executor'],
+      'restart_service SERVICE_ENUM drifted — extending it is a deliberate change');
+    assert.strictEqual(restart._internals.sanitiseReason(''), null);
+    assert.strictEqual(restart._internals.sanitiseReason('  ok  '), 'ok');
+    assert.strictEqual(restart._internals.normaliseServiceState(true, 'active\n'), 'running');
+    assert.strictEqual(restart._internals.normaliseServiceState(true, 'running'), 'running');
+    assert.strictEqual(restart._internals.normaliseServiceState(true, 'inactive\n'), 'stopped');
+    assert.strictEqual(restart._internals.normaliseServiceState(true, 'failed'),   'stopped');
+    assert.strictEqual(restart._internals.normaliseServiceState(true, 'wat'),       'unknown');
+    assert.strictEqual(restart._internals.normaliseServiceState(true, ''),          'unknown');
+    assert.strictEqual(restart._internals.normaliseServiceState(false, 'active'),   'unknown');
+
+    // Handler-level enum guard: out-of-enum service must short-circuit BEFORE
+    // any ssh attempt — that's the task's named acceptance criterion. We
+    // exercise it with a minimal in-process call so a regression here can't
+    // hide behind the schema layer the smoke server doesn't run.
+    return restart.handler(
+      { site: 'A', service: 'rm -rf /', reason: 'try to escape' },
+      { sites: { A: { host: 'h', user: 'u', ssh_key_path: 'k' } } },
+    ).then(r => {
+      assert.deepStrictEqual(r, { error: 'invalid_service' },
+        'restart_service handler must reject out-of-enum service before any shell attempt');
+    }).then(() => {
+      console.log('OK  unit: snapshot helper sanitisers + tag builder + reason sanitiser');
+      console.log('OK  unit: kick_replication + kill_stuck_send builders / parsers');
+      console.log('OK  unit: restart_service closed enum + state normaliser + enum guard');
+    });
   });
 }
 
@@ -133,6 +161,14 @@ async function mcpSmoke() {
     // result the server sends back.
     KICK: '/secret/path/SECRET-KICK-CMD',
     KILL: '/secret/path/SECRET-KILL-CMD',
+    // restart_service per-service command sentinels. Same invariant: the
+    // stub records them as the remote command, but they must not appear in
+    // any text the server sends back to the model.
+    STATUS_FB:    'SECRET-STATUS-FIREBIRD-CMD',
+    RESTART_FB:   'SECRET-RESTART-FIREBIRD-CMD',
+    STATUS_NRX:   'SECRET-STATUS-NODERED-CMD',
+    RESTART_NRX:  'SECRET-RESTART-NODERED-CMD',
+    FAIL_RESTART: 'SECRET-FAIL-RESTART-CMD',
   };
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'co-mut-smoke-'));
@@ -143,10 +179,35 @@ async function mcpSmoke() {
         host: SECRETS.HOST, user: SECRETS.USER, ssh_key_path: SECRETS.KEY,
         replication_kick_cmd: SECRETS.KICK + ' {dataset}',
         replication_kill_cmd: SECRETS.KILL + ' {dataset}',
+        services: {
+          firebird: {
+            status_cmd: SECRETS.STATUS_FB,
+            restart_cmd: SECRETS.RESTART_FB,
+            stateful_dataset: 'pool0/winvm',
+          },
+          node_red_executor: {
+            status_cmd: SECRETS.STATUS_NRX,
+            restart_cmd: SECRETS.RESTART_NRX,
+          },
+        },
       },
-      // BARE has none of the kick/kill config — the tools must error cleanly
-      // (or, for kill, fall back to the safe default pipeline).
+      // BARE has none of the kick/kill/services config — the tools must error
+      // cleanly (or, for kill, fall back to the safe default pipeline).
       BARE: { host: SECRETS.HOST, user: SECRETS.USER, ssh_key_path: SECRETS.KEY },
+      // SVCFAIL exercises the restart_failed path: firebird is wired up but
+      // its restart_cmd is the sentinel the stub exits non-zero on. The
+      // pre-mutate snapshot still happens — that's the point — and the
+      // result must carry it for rollback.
+      SVCFAIL: {
+        host: SECRETS.HOST, user: SECRETS.USER, ssh_key_path: SECRETS.KEY,
+        services: {
+          firebird: {
+            status_cmd: SECRETS.STATUS_FB,
+            restart_cmd: SECRETS.FAIL_RESTART,
+            stateful_dataset: 'pool0/winvm',
+          },
+        },
+      },
     },
   }));
 
@@ -185,6 +246,25 @@ if (remote.startsWith(${JSON.stringify(SECRETS.KILL + ' ')})) {
 if (remote.startsWith("pids=$(pgrep -af 'zfs send'")) {
   process.stdout.write('1\\n');
   process.exit(0);
+}
+// restart_service: per-service status / restart sentinels. Status emits the
+// systemd-style "active" / "inactive" tokens; the tool normalises those to
+// "running" / "stopped" before they reach the model.
+if (remote === ${JSON.stringify(SECRETS.STATUS_FB)}) {
+  process.stdout.write('active\\n');
+  process.exit(0);
+}
+if (remote === ${JSON.stringify(SECRETS.STATUS_NRX)}) {
+  process.stdout.write('inactive\\n');
+  process.exit(0);
+}
+if (remote === ${JSON.stringify(SECRETS.RESTART_FB)} ||
+    remote === ${JSON.stringify(SECRETS.RESTART_NRX)}) {
+  process.exit(0);
+}
+if (remote === ${JSON.stringify(SECRETS.FAIL_RESTART)}) {
+  process.stderr.write('restart refused\\n');
+  process.exit(1);
 }
 process.stderr.write('fake-ssh: unexpected remote cmd: ' + remote + '\\n');
 process.exit(2);
@@ -246,10 +326,16 @@ process.exit(2);
     // tools/list must include the mutating-tier tools, but their CATEGORY
     // metadata must NOT leak onto the wire — it's a server-internal label.
     const list = await rpc('tools/list', {});
-    for (const tn of ['create_snapshot', 'kick_replication', 'kill_stuck_send']) {
+    const TOOL_REQUIRED = {
+      create_snapshot:   'dataset,reason,site',
+      kick_replication:  'dataset,reason,site',
+      kill_stuck_send:   'dataset,reason,site',
+      restart_service:   'reason,service,site',
+    };
+    for (const tn of Object.keys(TOOL_REQUIRED)) {
       const t = list.result.tools.find(x => x.name === tn);
       assert.ok(t, `${tn} missing from tools/list`);
-      assert.strictEqual(t.inputSchema.required.sort().join(','), 'dataset,reason,site',
+      assert.strictEqual(t.inputSchema.required.sort().join(','), TOOL_REQUIRED[tn],
         `${tn}: required fields drifted`);
       assert.strictEqual(t.inputSchema.additionalProperties, false,
         `${tn}: additionalProperties should be false`);
@@ -264,6 +350,16 @@ process.exit(2);
           'kill_stuck_send description must mention "no resume token" — the reason the remedy is safe');
         assert.ok(/correct.*base/i.test(t.description),
           'kill_stuck_send description must mention recomputing a correct base on next fire');
+      }
+      // restart_service: the service axis must be a closed enum on the wire,
+      // exactly the SERVICE_ENUM in the source. That's the named acceptance
+      // criterion for task 07 — the model literally cannot say "anything
+      // else".
+      if (tn === 'restart_service') {
+        const svc = t.inputSchema.properties.service;
+        assert.ok(Array.isArray(svc && svc.enum), 'restart_service.service must be a closed enum');
+        assert.deepStrictEqual(svc.enum.slice().sort(), ['firebird', 'node_red_executor'],
+          'restart_service.service enum drifted');
       }
     }
 
@@ -402,6 +498,103 @@ process.exit(2);
 
     console.log('OK  e2e: kill_stuck_send template + fallback + no-snapshot invariant');
 
+    // ── restart_service ────────────────────────────────────────────────────
+    // Happy path on A.firebird: stateful, so we expect 4 ssh calls in order
+    //   prior status → snapshot → restart → new status
+    const callsBeforeFb = fs.readFileSync(sentinelPath, 'utf8').trim().split('\n').length;
+    const fbOk = await callTool('restart_service', {
+      site: 'A', service: 'firebird',
+      reason: 'apply pending hotfix',
+    });
+    assert.strictEqual(fbOk.service, 'firebird');
+    assert.strictEqual(fbOk.prior_state, 'running');
+    assert.strictEqual(fbOk.new_state, 'running');
+    assert.ok(/T.*Z$/.test(fbOk.restarted_at),
+      `restarted_at not ISO-8601: ${fbOk.restarted_at}`);
+    assert.ok(/^runn-pre-mutate-\d{9,}$/.test(fbOk.snapshot_tag),
+      `firebird snapshot_tag malformed: ${fbOk.snapshot_tag}`);
+
+    let fbCalls = fs.readFileSync(sentinelPath, 'utf8').trim().split('\n');
+    assert.strictEqual(fbCalls.length, callsBeforeFb + 4,
+      `expected 4 ssh calls for firebird happy path, got ${fbCalls.length - callsBeforeFb}`);
+    assert.strictEqual(fbCalls[callsBeforeFb + 0], SECRETS.STATUS_FB);
+    assert.strictEqual(fbCalls[callsBeforeFb + 1], `zfs snapshot pool0/winvm@${fbOk.snapshot_tag}`);
+    assert.strictEqual(fbCalls[callsBeforeFb + 2], SECRETS.RESTART_FB);
+    assert.strictEqual(fbCalls[callsBeforeFb + 3], SECRETS.STATUS_FB);
+
+    // Happy path on A.node_red_executor: stateless, so NO snapshot — exactly
+    // 3 ssh calls: status → restart → status. This is the contract that
+    // "snapshot-before-mutate pre-hook IF the service touches stateful data".
+    const callsBeforeNrx = fbCalls.length;
+    const nrxOk = await callTool('restart_service', {
+      site: 'A', service: 'node_red_executor',
+      reason: 'pick up new flow',
+    });
+    assert.deepStrictEqual(
+      { ...nrxOk, restarted_at: '<dropped>' },
+      { service: 'node_red_executor', prior_state: 'stopped', new_state: 'stopped',
+        restarted_at: '<dropped>' },
+      'node_red_executor happy result schema drifted (or snapshot_tag leaked in for a stateless service)',
+    );
+    assert.ok(/T.*Z$/.test(nrxOk.restarted_at));
+    let nrxCalls = fs.readFileSync(sentinelPath, 'utf8').trim().split('\n');
+    assert.strictEqual(nrxCalls.length, callsBeforeNrx + 3,
+      `expected 3 ssh calls for stateless restart, got ${nrxCalls.length - callsBeforeNrx}`);
+    assert.strictEqual(nrxCalls[callsBeforeNrx + 0], SECRETS.STATUS_NRX);
+    assert.strictEqual(nrxCalls[callsBeforeNrx + 1], SECRETS.RESTART_NRX);
+    assert.strictEqual(nrxCalls[callsBeforeNrx + 2], SECRETS.STATUS_NRX);
+
+    // Acceptance criterion for task 07: out-of-enum service must short-circuit
+    // BEFORE any shell attempt — the count of ssh calls before == count after.
+    const callsBeforeBadSvc = nrxCalls.length;
+    const badSvc = await callTool('restart_service', {
+      site: 'A', service: 'rm -rf /', reason: 'try to escape',
+    });
+    assert.deepStrictEqual(badSvc, { error: 'invalid_service' });
+    const callsAfterBadSvc = fs.readFileSync(sentinelPath, 'utf8').trim().split('\n').length;
+    assert.strictEqual(callsAfterBadSvc, callsBeforeBadSvc,
+      'invalid_service must not trigger any ssh call — that is the acceptance criterion');
+
+    // BARE has no services map at all.
+    const bareSvc = await callTool('restart_service', {
+      site: 'BARE', service: 'firebird', reason: 'should refuse',
+    });
+    assert.deepStrictEqual(bareSvc, { error: 'service_not_configured_for_site' });
+
+    // Bad reason rejected before any ssh.
+    const callsBeforeBadReason = fs.readFileSync(sentinelPath, 'utf8').trim().split('\n').length;
+    const badReasonSvc = await callTool('restart_service', {
+      site: 'A', service: 'firebird', reason: '   ',
+    });
+    assert.deepStrictEqual(badReasonSvc, { error: 'invalid_reason' });
+    assert.strictEqual(
+      fs.readFileSync(sentinelPath, 'utf8').trim().split('\n').length,
+      callsBeforeBadReason,
+      'invalid_reason must not trigger any ssh call',
+    );
+
+    // SVCFAIL.firebird: restart_cmd fails. The pre-mutate snapshot still
+    // runs (stateful_dataset is set), so the response must carry snapshot_tag
+    // alongside the restart_failed error so the operator can roll back.
+    const callsBeforeFail = fs.readFileSync(sentinelPath, 'utf8').trim().split('\n').length;
+    const failRestart = await callTool('restart_service', {
+      site: 'SVCFAIL', service: 'firebird',
+      reason: 'expected to fail',
+    });
+    assert.strictEqual(failRestart.error, 'restart_failed');
+    assert.strictEqual(failRestart.service, 'firebird');
+    assert.strictEqual(failRestart.prior_state, 'running');
+    assert.ok(/^runn-pre-mutate-\d{9,}$/.test(failRestart.snapshot_tag),
+      'restart_failed must include snapshot_tag for stateful services so the operator can roll back');
+    const failCalls = fs.readFileSync(sentinelPath, 'utf8').trim().split('\n');
+    assert.strictEqual(failCalls.length, callsBeforeFail + 3,
+      `expected 3 ssh calls on restart_failed (status, snapshot, restart), got ${failCalls.length - callsBeforeFail}`);
+    assert.strictEqual(failCalls[callsBeforeFail + 0], SECRETS.STATUS_FB);
+    assert.strictEqual(failCalls[callsBeforeFail + 1], `zfs snapshot pool0/winvm@${failRestart.snapshot_tag}`);
+    assert.strictEqual(failCalls[callsBeforeFail + 2], SECRETS.FAIL_RESTART);
+
+    console.log('OK  e2e: restart_service stateful+stateless happy + invalid_service + bad-args + restart_failed');
+
     // ── Cardinal invariants for the whole mutating tier ────────────────────
     // No real config secret appears in any tool result the model would see.
     const blob = allResultTexts.join('\n');
@@ -410,7 +603,7 @@ process.exit(2);
     }
 
     // The MUTATING audit line must have fired on stderr for each tool.
-    for (const tn of ['create_snapshot', 'kick_replication', 'kill_stuck_send']) {
+    for (const tn of ['create_snapshot', 'kick_replication', 'kill_stuck_send', 'restart_service']) {
       assert.ok(new RegExp(`MUTATING tool=${tn}`).test(stderrBuf),
         `expected MUTATING audit line for ${tn} on stderr, got:\n${stderrBuf}`);
     }
@@ -418,7 +611,7 @@ process.exit(2);
       assert.ok(!stderrBuf.includes(v), `stderr audit leaked SECRETS.${k} ("${v}")`);
     }
 
-    console.log('OK  e2e: audit lines fired for all 3 mutating tools, zero secret leakage');
+    console.log('OK  e2e: audit lines fired for all 4 mutating tools, zero secret leakage');
   } finally {
     try { child.kill('SIGTERM'); } catch {}
     fs.rmSync(tmpDir, { recursive: true, force: true });

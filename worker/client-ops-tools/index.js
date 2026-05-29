@@ -31,6 +31,7 @@ const dbHealthCheck        = require('./db-health-check');
 const createSnapshot       = require('./create-snapshot');
 const kickReplication      = require('./kick-replication');
 const killStuckSend        = require('./kill-stuck-send');
+const restartService       = require('./restart-service');
 
 const TOOLS = [
   zfsReplicationStatus,
@@ -42,6 +43,7 @@ const TOOLS = [
   createSnapshot,
   kickReplication,
   killStuckSend,
+  restartService,
 ];
 
 const VALID_CATEGORIES = new Set(['read-only', 'mutating']);

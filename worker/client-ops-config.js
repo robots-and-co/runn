@@ -56,6 +56,20 @@ function isPort(v) {
 //   - replication_kill_cmd : optional override for kill_stuck_send. When
 //                            absent the tool falls back to a safe default
 //                            (pgrep `zfs send` matching the dataset → SIGTERM).
+//   - services             : optional map keyed by the restart_service closed
+//                            enum (firebird, node_red_executor). Each value
+//                            must declare `status_cmd` and `restart_cmd`;
+//                            `stateful_dataset` is optional and triggers a
+//                            pre-mutate ZFS snapshot before the restart for
+//                            services that touch on-disk state.
+const SERVICE_KEY_RE = /^[a-z][a-z0-9_]*$/;
+function badServiceEntry(svc) {
+  if (!svc || typeof svc !== 'object' || Array.isArray(svc)) return '<entry>';
+  if (!isNonEmptyString(svc.status_cmd))  return 'status_cmd';
+  if (!isNonEmptyString(svc.restart_cmd)) return 'restart_cmd';
+  if (svc.stateful_dataset !== undefined && !isNonEmptyString(svc.stateful_dataset)) return 'stateful_dataset';
+  return null;
+}
 function badField(entry) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return '<entry>';
   if (!isNonEmptyString(entry.host)) return 'host';
@@ -68,6 +82,16 @@ function badField(entry) {
   if (entry.db_gstat_cmd         !== undefined && !isNonEmptyString(entry.db_gstat_cmd))         return 'db_gstat_cmd';
   if (entry.replication_kick_cmd !== undefined && !isNonEmptyString(entry.replication_kick_cmd)) return 'replication_kick_cmd';
   if (entry.replication_kill_cmd !== undefined && !isNonEmptyString(entry.replication_kill_cmd)) return 'replication_kill_cmd';
+  if (entry.services !== undefined) {
+    if (typeof entry.services !== 'object' || entry.services === null || Array.isArray(entry.services)) {
+      return 'services';
+    }
+    for (const [k, v] of Object.entries(entry.services)) {
+      if (!SERVICE_KEY_RE.test(k)) return `services.${k}`;
+      const bad = badServiceEntry(v);
+      if (bad !== null) return `services.${k}.${bad}`;
+    }
+  }
   return null;
 }
 
