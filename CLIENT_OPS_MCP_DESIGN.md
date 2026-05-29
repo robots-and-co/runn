@@ -357,9 +357,38 @@ design and is not legal advice; consult a qualified professional.*
 4. **Output sanitisation depth.** How aggressively should tool results be shaped?
    A `zfs list` summarised to `{pool, lag, healthy}` leaks nothing; returning raw
    stdout risks re-introducing PII. Define the per-tool result schema deliberately.
-5. **Raw-SSH fallback policy.** When a task genuinely needs an unscripted command,
-   what's the explicit, human-gated escape hatch — and how is *that* logged so the
-   provenance chain stays intact?
+5. **Raw-SSH fallback policy.** **[decided — implemented]** A single
+   `raw_ssh_exec({ site, command, justification })` tool is the explicit,
+   human-gated escape hatch. Three controls layer on top of the standard
+   mutating-tier flow, so any one of them blocks an accidental call:
+   - **Disabled by default.** Tool is filtered out of `tools/list` (and
+     `findByName`) unless `CLIENT_OPS_ALLOW_RAW_SSH=1` is set in the
+     environment of the Runn worker process. The handler re-checks the flag
+     at call time as defence in depth against a stale CLI tool cache. The
+     opt-in is per Runn invocation — picked over a per-session UI toggle
+     because it's the simplest workable mechanism and the operator already
+     restarts Runn to roll config; a future UI toggle is a strict superset.
+   - **Visibly distinct approval, no blanket allow.** The Runn frontend
+     renders the permission card in a red danger palette with an explicit
+     warning, and the "Always allow" button is removed from the DOM for this
+     tool. `worker/server.js` independently refuses to persist or apply any
+     always-allow rule for `raw_ssh_exec` (via `isAlwaysAllowEligible`), so
+     the operator must affirmatively click Allow on every single call — no
+     reflex blanket approval is possible.
+   - **Dedicated audit channel.** Every invocation appends a JSON-lines
+     `start` entry (with timestamp, site label, resolved host, justification,
+     and full command) AND a `end` entry (exit ok, duration, output sizes) to
+     a file separate from the session `.jsonl`. Path is
+     `$CLIENT_OPS_RAW_SSH_AUDIT_LOG` or by default
+     `$HOME/.claude/client-ops-raw-ssh-audit.log`. The audit file is on-box
+     only (the model never reads it), so the resolved host IS recorded there
+     for forensic correlation — the boundary's no-leak invariant applies to
+     the wire, not to the operator's own log.
+   The escape hatch deliberately re-incurs both fears (§2): stdout/stderr
+   from an arbitrary command flow back to the model, and an arbitrary command
+   acts on the box. That's the whole point — the curated boundary is narrow
+   precisely so the unscripted case is the conspicuous, instrumented
+   exception, not the default.
 6. **Snapshot-before-mutate ergonomics.** Auto-snapshot per mutation vs one
    snapshot per session; naming/retention so these insurance snapshots don't
    themselves become send-base noise.

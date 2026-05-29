@@ -11,6 +11,12 @@
 //   - inputSchema(siteNames) -> JSON Schema (siteNames is the configured enum)
 //   - handler(args, ctx) -> structured result (no raw stdout/stderr)
 //
+// Optional:
+//   - isEnabled() -> boolean. When defined and false, the tool is filtered
+//     out of BOTH tools/list and findByName, i.e. it stops existing on the
+//     wire. Used by the raw_ssh_exec escape hatch (§8.5) to stay invisible
+//     unless an env flag opts the operator in.
+//
 // `ctx` always contains `{ sites }` (the resolved site/secret config map).
 //
 // `CATEGORY` is server-side metadata only — it is NOT shown to the model.
@@ -32,6 +38,7 @@ const createSnapshot       = require('./create-snapshot');
 const kickReplication      = require('./kick-replication');
 const killStuckSend        = require('./kill-stuck-send');
 const restartService       = require('./restart-service');
+const rawSshExec           = require('./raw-ssh-exec');
 
 const TOOLS = [
   zfsReplicationStatus,
@@ -44,6 +51,7 @@ const TOOLS = [
   kickReplication,
   killStuckSend,
   restartService,
+  rawSshExec,
 ];
 
 const VALID_CATEGORIES = new Set(['read-only', 'mutating']);
@@ -60,8 +68,15 @@ for (const t of TOOLS) {
   }
 }
 
+// Tools that opt out of registration via `isEnabled()` are filtered here so
+// they are simultaneously invisible to tools/list AND unreachable via
+// tools/call. A tool without an isEnabled hook is always enabled.
+function isToolEnabled(t) {
+  return typeof t.isEnabled !== 'function' || t.isEnabled();
+}
+
 function listForMcp(siteNames) {
-  return TOOLS.map(t => ({
+  return TOOLS.filter(isToolEnabled).map(t => ({
     name: t.NAME,
     description: t.DESCRIPTION,
     inputSchema: t.inputSchema(siteNames),
@@ -69,7 +84,10 @@ function listForMcp(siteNames) {
 }
 
 function findByName(name) {
-  return TOOLS.find(t => t.NAME === name) || null;
+  const t = TOOLS.find(x => x.NAME === name);
+  if (!t) return null;
+  if (!isToolEnabled(t)) return null;
+  return t;
 }
 
-module.exports = { TOOLS, listForMcp, findByName };
+module.exports = { TOOLS, listForMcp, findByName, isToolEnabled };

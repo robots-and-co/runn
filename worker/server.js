@@ -873,11 +873,23 @@ const permissionTokens   = new Map(); // token → card_id
 const pendingPermissions = new Map(); // request_id → { send, card_id, tool_name, input, created_at }
 
 function alwaysAllowKey(toolName) { return toolName; }
+
+// The client-ops raw-SSH escape hatch (CLIENT_OPS_MCP_DESIGN.md §8.5) is
+// permanently ineligible for "always allow" — the whole point of the hatch
+// is that the operator must affirmatively click Allow every single time, so
+// it can't be blanket-approved by reflex. Both the read AND write paths
+// short-circuit here, so even a stale rule that somehow landed in
+// settings.json from an older build wouldn't take effect.
+function isAlwaysAllowEligible(toolName) {
+  return !/(?:^|__)raw_ssh_exec$/.test(String(toolName || ''));
+}
 async function isAlwaysAllowed(toolName) {
+  if (!isAlwaysAllowEligible(toolName)) return false;
   const s = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
   return !!(s.permissions && s.permissions.alwaysAllow && s.permissions.alwaysAllow[alwaysAllowKey(toolName)]);
 }
 async function setAlwaysAllowed(toolName) {
+  if (!isAlwaysAllowEligible(toolName)) return;
   const s = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
   s.permissions = s.permissions || {};
   s.permissions.alwaysAllow = s.permissions.alwaysAllow || {};

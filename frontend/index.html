@@ -2481,6 +2481,22 @@
   .chat-permission .perm-btn.primary:hover:not(:disabled) { filter: brightness(0.95); }
   .chat-permission .perm-deny { color: #b85c1f; }
 
+  /* Danger palette for the raw-SSH escape hatch (CLIENT_OPS_MCP_DESIGN.md
+     §8.5). Visibly distinct from the normal amber permission card so the
+     operator can't reflex-click Allow on it. Also drops the "Always allow"
+     affordance — that button is removed from the DOM for dangerous tools
+     and the worker refuses to persist a rule for it. */
+  .chat-permission.chat-permission-dangerous {
+    background: #fdecea; border-color: #d93025; color: #5c1d1d;
+  }
+  .chat-permission.chat-permission-dangerous .perm-head { font-weight: 700; }
+  .chat-permission.chat-permission-dangerous .perm-warning {
+    font-size: 12px; color: #5c1d1d; padding: 4px 0;
+  }
+  .chat-permission.chat-permission-dangerous .perm-btn.primary {
+    background: #d93025; border-color: #d93025;
+  }
+
   .chat-transcript {
     flex: 1; display: flex; flex-direction: column; gap: 12px;
     min-height: 0;
@@ -5535,28 +5551,61 @@ function renderPendingPermissions() {
   }
 }
 
+// The client-ops raw-SSH escape hatch (CLIENT_OPS_MCP_DESIGN.md §8.5) is the
+// one tool that gets the danger treatment: red palette, explicit warning,
+// no "Always allow" button. The worker independently refuses to persist /
+// apply always-allow rules for it, so this is purely a UX guard against
+// reflex-clicking "Always allow" on a card that scrolled by.
+function isDangerousTool(toolName) {
+  return /(?:^|__)raw_ssh_exec$/.test(String(toolName || ''));
+}
+
 function buildPermissionEl(p) {
   const el = document.createElement('div');
-  el.className = 'chat-permission';
+  const dangerous = isDangerousTool(p.tool_name);
+  el.className = 'chat-permission' + (dangerous ? ' chat-permission-dangerous' : '');
   el.dataset.requestId = p.request_id;
-  // Pull the most useful bit of input — file_path for Write/Edit, command for Bash.
+  // Pull the most useful bit of input — file_path for Write/Edit, command for
+  // Bash. For the raw-SSH escape hatch, the operator needs to read the actual
+  // command and the model-supplied justification before deciding, so prefer
+  // those fields and show both.
   const inp = p.input || {};
-  const detail = inp.file_path || inp.path || inp.command || '';
-  const detailHtml = detail ? `<div class="perm-detail">${escapeHtml(String(detail))}</div>` : '';
+  let detailHtml = '';
+  if (dangerous) {
+    const cmd = inp.command ? `<div class="perm-detail">${escapeHtml(String(inp.command))}</div>` : '';
+    const why = inp.justification
+      ? `<div class="perm-detail"><em>${escapeHtml(String(inp.justification))}</em></div>` : '';
+    detailHtml = cmd + why;
+  } else {
+    const detail = inp.file_path || inp.path || inp.command || '';
+    detailHtml = detail ? `<div class="perm-detail">${escapeHtml(String(detail))}</div>` : '';
+  }
+  const icon = dangerous ? '⚠️' : '🔐';
+  const title = dangerous
+    ? `Claude wants to run <code>${escapeHtml(p.tool_name)}</code> — RAW SSH ESCAPE HATCH`
+    : `Claude wants to use <code>${escapeHtml(p.tool_name)}</code>`;
+  const warningHtml = dangerous
+    ? `<div class="perm-warning">Bypasses the curated client-ops boundary. Read the command and justification carefully — this approval is single-use.</div>`
+    : '';
+  const alwaysBtn = dangerous
+    ? ''
+    : `<button class="perm-btn perm-allow-always">Always allow</button>`;
   el.innerHTML = `
     <div class="perm-head">
-      <span class="perm-icon">🔐</span>
-      <span class="perm-title">Claude wants to use <code>${escapeHtml(p.tool_name)}</code></span>
+      <span class="perm-icon">${icon}</span>
+      <span class="perm-title">${title}</span>
     </div>
+    ${warningHtml}
     ${detailHtml}
     <div class="perm-actions">
       <button class="perm-btn perm-deny">Deny</button>
-      <button class="perm-btn perm-allow-always">Always allow</button>
+      ${alwaysBtn}
       <button class="perm-btn perm-allow primary">Allow</button>
     </div>
   `;
   el.querySelector('.perm-allow').addEventListener('click', () => decidePermission(p.request_id, 'allow', false));
-  el.querySelector('.perm-allow-always').addEventListener('click', () => decidePermission(p.request_id, 'allow', true));
+  const alwaysEl = el.querySelector('.perm-allow-always');
+  if (alwaysEl) alwaysEl.addEventListener('click', () => decidePermission(p.request_id, 'allow', true));
   el.querySelector('.perm-deny').addEventListener('click', () => decidePermission(p.request_id, 'deny', false));
   return el;
 }
