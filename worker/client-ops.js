@@ -5,11 +5,29 @@
 // the boundary that holds real client hostnames/IPs/creds on-box and only
 // hands the model abstract args + sanitised results (see CLIENT_OPS_MCP_DESIGN.md).
 //
-// This is the skeleton task: it completes the JSON-RPC handshake and reports
-// an empty tool list. Tool implementations and secret-config loading land in
-// later tasks.
+// Boot order matters: we load the site/secret config *before* completing the
+// MCP handshake so a missing or malformed config is a loud failure (non-zero
+// exit + stderr) rather than a server with no sites that silently accepts
+// tool calls it can't fulfil.
 
 const readline = require('readline');
+const { loadConfig, ClientOpsConfigError } = require('./client-ops-config');
+
+let SITES;
+try {
+  const cfg = loadConfig();
+  SITES = cfg.sites;
+  // Stderr is safe to write to in a stdio MCP server (stdout is JSON-RPC).
+  // We log the count only — site names and values must never leave the box
+  // via a transcript or log file the model can read.
+  process.stderr.write(
+    `client-ops: loaded ${Object.keys(SITES).length} site(s) from ${cfg.configPath}\n`
+  );
+} catch (err) {
+  const where = err instanceof ClientOpsConfigError ? '' : ` (${err.name})`;
+  process.stderr.write(`client-ops: refusing to start${where}: ${err.message}\n`);
+  process.exit(1);
+}
 
 const rl = readline.createInterface({ input: process.stdin });
 const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
