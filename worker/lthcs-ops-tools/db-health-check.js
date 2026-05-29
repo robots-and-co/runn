@@ -1,6 +1,6 @@
 'use strict';
 
-// READ-ONLY client-ops tool: db_health_check({ site })
+// READ-ONLY lthcs-ops tool: db_health_check({ site })
 //
 // Runs the Firebird `gstat -h <db_path>` header probe over SSH. `gstat -h`
 // is a header-only read — it does not mutate the database — making it the

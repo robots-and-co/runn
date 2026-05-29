@@ -1,11 +1,11 @@
 'use strict';
 
-// MUTATING client-ops tool: kick_replication({ site, dataset, reason })
+// MUTATING lthcs-ops tool: kick_replication({ site, dataset, reason })
 //
 // Re-fires a ZFS replication send for a dataset on a site. Approval is
 // inherited from the CLI's `--permission-prompt-tool mcp__runn__ask_permission`
 // gate (CLIENT_OPS_MCP_DESIGN.md §4) — a denied call never reaches this
-// handler. The mutating-tier audit line on stderr (see worker/client-ops.js)
+// handler. The mutating-tier audit line on stderr (see worker/lthcs-ops.js)
 // is added on top as belt-and-braces.
 //
 // Two-step shape, in order:
@@ -102,7 +102,7 @@ async function handler(args, { sites }) {
   // the model, so this log line introduces no new leak surface. Reason is
   // the operator-readable record of *why* the kick was fired.
   process.stderr.write(
-    `client-ops: kick_replication site=${JSON.stringify(siteLabel)} ` +
+    `lthcs-ops: kick_replication site=${JSON.stringify(siteLabel)} ` +
     `reason=${JSON.stringify(reason)}\n`
   );
 

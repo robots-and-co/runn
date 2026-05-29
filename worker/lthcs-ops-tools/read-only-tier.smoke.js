@@ -4,7 +4,7 @@
 //   zpool_status, list_snapshots, receiver_free_space,
 //   vm_liveness, db_health_check.
 //
-// Two layers, like worker/client-ops-tools/zfs-replication-status.smoke.js:
+// Two layers, like worker/lthcs-ops-tools/zfs-replication-status.smoke.js:
 //   1. Pure parsers exercised directly (no network, no ssh).
 //   2. One MCP server subprocess driven over stdio. PATH is shadowed with a
 //      Node stub that pretends to be ssh and emits canned ZFS / virsh /
@@ -13,7 +13,7 @@
 //      anything the server sends back.
 //
 // Run from the repo root:
-//   node worker/client-ops-tools/read-only-tier.smoke.js
+//   node worker/lthcs-ops-tools/read-only-tier.smoke.js
 
 const assert = require('assert');
 const fs = require('fs');
@@ -110,7 +110,7 @@ async function mcpSmoke() {
   };
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'co-ro-smoke-'));
-  const cfgPath = path.join(tmpDir, 'client-ops.config.json');
+  const cfgPath = path.join(tmpDir, 'lthcs-ops.config.json');
   fs.writeFileSync(cfgPath, JSON.stringify({
     sites: {
       A: {
@@ -181,12 +181,12 @@ process.exit(2);
 `;
   fs.writeFileSync(path.join(stubDir, 'ssh'), sshStub, { mode: 0o755 });
 
-  const serverPath = path.join(__dirname, '..', 'client-ops.js');
+  const serverPath = path.join(__dirname, '..', 'lthcs-ops.js');
   const child = spawn(process.execPath, [serverPath], {
     env: {
       ...process.env,
       PATH: stubDir + path.delimiter + process.env.PATH,
-      CLIENT_OPS_CONFIG: cfgPath,
+      LTHCS_OPS_CONFIG: cfgPath,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });

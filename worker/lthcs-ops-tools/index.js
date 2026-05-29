@@ -1,8 +1,9 @@
 'use strict';
 
-// Registry of curated client-ops tools. Each entry is one MCP tool that the
-// boundary server (worker/client-ops.js) exposes. Adding a tool here is the
-// only change needed to surface it on tools/list.
+// Registry of curated lthcs-ops tools (the per-client implementation of the
+// client-ops boundary for lthcs; design doc §2, §8.7). Each entry is one MCP
+// tool that the boundary server (worker/lthcs-ops.js) exposes. Adding a tool
+// here is the only change needed to surface it on tools/list.
 //
 // Each module must export:
 //   - NAME           : the MCP tool name (must be a valid identifier)
@@ -62,7 +63,7 @@ const VALID_CATEGORIES = new Set(['read-only', 'mutating']);
 for (const t of TOOLS) {
   if (!VALID_CATEGORIES.has(t.CATEGORY)) {
     throw new Error(
-      `client-ops: tool "${t.NAME}" has missing/invalid CATEGORY ` +
+      `lthcs-ops: tool "${t.NAME}" has missing/invalid CATEGORY ` +
       `(got ${JSON.stringify(t.CATEGORY)}; expected one of ${[...VALID_CATEGORIES].join(', ')})`
     );
   }

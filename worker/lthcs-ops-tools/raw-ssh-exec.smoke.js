@@ -14,13 +14,13 @@
 //      resolved host because that file is on-box-only.
 //
 // We deliberately do NOT touch the CLI's permission-prompt-tool here — same
-// scoping as the other client-ops smokes (talking straight to the MCP
+// scoping as the other lthcs-ops smokes (talking straight to the MCP
 // server's stdio bypasses the gate by construction). The "always-allow is
 // blocked" guarantee for raw_ssh_exec is enforced by worker/server.js
 // (isAlwaysAllowEligible) and exercised separately when server.js is tested.
 //
 // Run from the repo root:
-//   node worker/client-ops-tools/raw-ssh-exec.smoke.js
+//   node worker/lthcs-ops-tools/raw-ssh-exec.smoke.js
 
 const assert = require('assert');
 const fs = require('fs');
@@ -62,7 +62,7 @@ function unitChecks() {
   const saved = process.env[raw.AUDIT_ENV];
   delete process.env[raw.AUDIT_ENV];
   try {
-    assert.ok(I.auditLogPath().endsWith(path.join('.claude', 'client-ops-raw-ssh-audit.log')));
+    assert.ok(I.auditLogPath().endsWith(path.join('.claude', 'lthcs-ops-raw-ssh-audit.log')));
     process.env[raw.AUDIT_ENV] = '/tmp/x.log';
     assert.strictEqual(I.auditLogPath(), '/tmp/x.log');
   } finally {
@@ -102,15 +102,15 @@ async function smokeDisabled(commonSetup) {
   const { cfgPath, stubDir, sentinelPath, tmpDir } = commonSetup;
 
   const auditPath = path.join(tmpDir, 'audit-disabled.log');
-  const serverPath = path.join(__dirname, '..', 'client-ops.js');
+  const serverPath = path.join(__dirname, '..', 'lthcs-ops.js');
   const child = spawn(process.execPath, [serverPath], {
     env: {
       ...process.env,
       PATH: stubDir + path.delimiter + process.env.PATH,
-      CLIENT_OPS_CONFIG: cfgPath,
+      LTHCS_OPS_CONFIG: cfgPath,
       // Flag explicitly absent. Clear any inherited value just in case.
-      CLIENT_OPS_ALLOW_RAW_SSH: '',
-      CLIENT_OPS_RAW_SSH_AUDIT_LOG: auditPath,
+      LTHCS_OPS_ALLOW_RAW_SSH: '',
+      LTHCS_OPS_RAW_SSH_AUDIT_LOG: auditPath,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -122,7 +122,7 @@ async function smokeDisabled(commonSetup) {
     const list = await rpc('tools/list', {});
     const names = list.result.tools.map(t => t.name);
     assert.ok(!names.includes('raw_ssh_exec'),
-      `raw_ssh_exec must NOT appear in tools/list when CLIENT_OPS_ALLOW_RAW_SSH is unset (got ${names.join(',')})`);
+      `raw_ssh_exec must NOT appear in tools/list when LTHCS_OPS_ALLOW_RAW_SSH is unset (got ${names.join(',')})`);
 
     // tools/call for it must come back with the server's "no such tool" RPC
     // error — i.e. the tool truly doesn't exist on the wire when disabled.
@@ -158,14 +158,14 @@ async function smokeEnabled(commonSetup) {
   const { cfgPath, stubDir, sentinelPath, tmpDir, SECRETS } = commonSetup;
 
   const auditPath = path.join(tmpDir, 'audit-enabled.log');
-  const serverPath = path.join(__dirname, '..', 'client-ops.js');
+  const serverPath = path.join(__dirname, '..', 'lthcs-ops.js');
   const child = spawn(process.execPath, [serverPath], {
     env: {
       ...process.env,
       PATH: stubDir + path.delimiter + process.env.PATH,
-      CLIENT_OPS_CONFIG: cfgPath,
-      CLIENT_OPS_ALLOW_RAW_SSH: '1',
-      CLIENT_OPS_RAW_SSH_AUDIT_LOG: auditPath,
+      LTHCS_OPS_CONFIG: cfgPath,
+      LTHCS_OPS_ALLOW_RAW_SSH: '1',
+      LTHCS_OPS_RAW_SSH_AUDIT_LOG: auditPath,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -188,7 +188,7 @@ async function smokeEnabled(commonSetup) {
 
     const list = await rpc('tools/list', {});
     const t = list.result.tools.find(x => x.name === 'raw_ssh_exec');
-    assert.ok(t, 'raw_ssh_exec must appear in tools/list when CLIENT_OPS_ALLOW_RAW_SSH=1');
+    assert.ok(t, 'raw_ssh_exec must appear in tools/list when LTHCS_OPS_ALLOW_RAW_SSH=1');
     assert.strictEqual(t.inputSchema.additionalProperties, false,
       'raw_ssh_exec: additionalProperties should be false');
     assert.deepStrictEqual(t.inputSchema.required.slice().sort(), ['command', 'justification', 'site']);
@@ -353,7 +353,7 @@ function setupCommon() {
     KEY:  '/home/waz/SECRET-KEY-PATH/id_rsa',
   };
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'co-raw-smoke-'));
-  const cfgPath = path.join(tmpDir, 'client-ops.config.json');
+  const cfgPath = path.join(tmpDir, 'lthcs-ops.config.json');
   fs.writeFileSync(cfgPath, JSON.stringify({
     sites: {
       A: { host: SECRETS.HOST, user: SECRETS.USER, ssh_key_path: SECRETS.KEY },

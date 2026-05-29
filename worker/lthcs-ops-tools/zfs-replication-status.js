@@ -1,6 +1,6 @@
 'use strict';
 
-// READ-ONLY client-ops tool: zfs_replication_status({ site, dataset? })
+// READ-ONLY lthcs-ops tool: zfs_replication_status({ site, dataset? })
 //
 // First instance of the curated MCP boundary described in
 // CLIENT_OPS_MCP_DESIGN.md §3 + §8.4. The contract this file is upholding:
@@ -135,6 +135,6 @@ async function handler(args, { sites }) {
 
 module.exports = {
   NAME, CATEGORY, DESCRIPTION, inputSchema, handler,
-  // Exposed for unit-style tests under worker/client-ops-tools/.
+  // Exposed for unit-style tests under worker/lthcs-ops-tools/.
   _internals: { sanitiseDataset, parseHealth, parseLatestSnapshot },
 };

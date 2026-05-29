@@ -1,6 +1,6 @@
 'use strict';
 
-// READ-ONLY client-ops tool: vm_liveness({ site })
+// READ-ONLY lthcs-ops tool: vm_liveness({ site })
 //
 // Two probes, on the hypervisor reached via the site's SSH credentials:
 //   1. `virsh domstate <vm_name>` — libvirt's view of the guest.
@@ -8,7 +8,7 @@
 //      using bash's `/dev/tcp` so we don't need `nc` installed.
 //
 // Both `vm_name` and `service_port` live in the local site config (see
-// client-ops-config.js). `service_host` defaults to "127.0.0.1" on the
+// lthcs-ops-config.js). `service_host` defaults to "127.0.0.1" on the
 // remote — i.e. the probe checks a loopback port bridged from the guest.
 //
 // Result schema (success):

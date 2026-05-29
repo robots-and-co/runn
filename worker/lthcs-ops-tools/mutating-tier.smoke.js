@@ -6,7 +6,7 @@
 //   - restart_service (closed-enum service axis)                     — task 07.
 //
 // Same two-layer shape as the read-only tier smoke
-// (worker/client-ops-tools/read-only-tier.smoke.js):
+// (worker/lthcs-ops-tools/read-only-tier.smoke.js):
 //   1. Pure unit checks on sanitiser + tag builder + helper-error paths,
 //      no network and no ssh subprocess.
 //   2. One MCP server subprocess driven over stdio. PATH is shadowed with a
@@ -27,7 +27,7 @@
 //   - the registry's CATEGORY metadata stays server-internal (not on the wire).
 //
 // Run from the repo root:
-//   node worker/client-ops-tools/mutating-tier.smoke.js
+//   node worker/lthcs-ops-tools/mutating-tier.smoke.js
 
 const assert = require('assert');
 const fs = require('fs');
@@ -172,7 +172,7 @@ async function mcpSmoke() {
   };
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'co-mut-smoke-'));
-  const cfgPath = path.join(tmpDir, 'client-ops.config.json');
+  const cfgPath = path.join(tmpDir, 'lthcs-ops.config.json');
   fs.writeFileSync(cfgPath, JSON.stringify({
     sites: {
       A: {
@@ -271,12 +271,12 @@ process.exit(2);
 `;
   fs.writeFileSync(path.join(stubDir, 'ssh'), sshStub, { mode: 0o755 });
 
-  const serverPath = path.join(__dirname, '..', 'client-ops.js');
+  const serverPath = path.join(__dirname, '..', 'lthcs-ops.js');
   const child = spawn(process.execPath, [serverPath], {
     env: {
       ...process.env,
       PATH: stubDir + path.delimiter + process.env.PATH,
-      CLIENT_OPS_CONFIG: cfgPath,
+      LTHCS_OPS_CONFIG: cfgPath,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });

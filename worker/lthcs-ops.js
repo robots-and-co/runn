@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-// Stdio MCP server that will expose the curated `client-ops` tool surface —
-// the boundary that holds real client hostnames/IPs/creds on-box and only
-// hands the model abstract args + sanitised results (see CLIENT_OPS_MCP_DESIGN.md).
+// Stdio MCP server that exposes the curated `lthcs-ops` tool surface — the
+// per-client implementation of the client-ops MCP boundary (see
+// CLIENT_OPS_MCP_DESIGN.md §2, §8.7) for the lthcs site. It holds the real
+// LTHCS hostnames/IPs/creds on-box and only hands the model abstract args +
+// sanitised results.
 //
 // Boot order matters: we load the site/secret config *before* completing the
 // MCP handshake so a missing or malformed config is a loud failure (non-zero
@@ -12,7 +14,7 @@
 //
 // Approval flow for mutating tools (design doc §4): the Claude CLI is spawned
 // with `--permission-prompt-tool mcp__runn__ask_permission`, which routes
-// EVERY tool call — including mcp__client-ops__* — through worker/mcp-permission.js
+// EVERY tool call — including mcp__lthcs-ops__* — through worker/mcp-permission.js
 // before this handler runs. That tool posts to /permissions/request on the
 // worker, parking the call until the operator clicks Allow/Deny. By the time
 // `tools/call` reaches us here, the gate has already fired; a denied call
@@ -23,8 +25,10 @@
 // if/when it's answered.
 
 const readline = require('readline');
-const { loadConfig, ClientOpsConfigError } = require('./client-ops-config');
-const toolRegistry = require('./client-ops-tools');
+const { loadConfig, LthcsOpsConfigError } = require('./lthcs-ops-config');
+const toolRegistry = require('./lthcs-ops-tools');
+
+const SERVER_NAME = 'lthcs-ops';
 
 let SITES;
 let SITE_NAMES;
@@ -36,11 +40,11 @@ try {
   // We log the count only — site names and values must never leave the box
   // via a transcript or log file the model can read.
   process.stderr.write(
-    `client-ops: loaded ${SITE_NAMES.length} site(s) from ${cfg.configPath}\n`
+    `${SERVER_NAME}: loaded ${SITE_NAMES.length} site(s) from ${cfg.configPath}\n`
   );
 } catch (err) {
-  const where = err instanceof ClientOpsConfigError ? '' : ` (${err.name})`;
-  process.stderr.write(`client-ops: refusing to start${where}: ${err.message}\n`);
+  const where = err instanceof LthcsOpsConfigError ? '' : ` (${err.name})`;
+  process.stderr.write(`${SERVER_NAME}: refusing to start${where}: ${err.message}\n`);
   process.exit(1);
 }
 
@@ -55,7 +59,7 @@ rl.on('line', async (line) => {
     send({ jsonrpc: '2.0', id: msg.id, result: {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'client-ops', version: '0.1.0' },
+      serverInfo: { name: SERVER_NAME, version: '0.1.0' },
     }});
     return;
   }
@@ -74,7 +78,7 @@ rl.on('line', async (line) => {
     if (!tool) {
       send({ jsonrpc: '2.0', id: msg.id, error: {
         code: -32601,
-        message: `client-ops: no such tool: ${params.name || '?'}`,
+        message: `${SERVER_NAME}: no such tool: ${params.name || '?'}`,
       }});
       return;
     }
@@ -86,7 +90,7 @@ rl.on('line', async (line) => {
     if (tool.CATEGORY === 'mutating') {
       const siteArg = (params.arguments && params.arguments.site) || null;
       process.stderr.write(
-        `client-ops: MUTATING tool=${tool.NAME} site=${JSON.stringify(siteArg)}\n`
+        `${SERVER_NAME}: MUTATING tool=${tool.NAME} site=${JSON.stringify(siteArg)}\n`
       );
     }
     let result;
@@ -97,7 +101,7 @@ rl.on('line', async (line) => {
       // We log the real cause to stderr (stays on box) and return an opaque
       // error code to the model.
       process.stderr.write(
-        `client-ops: tool ${tool.NAME} threw: ${err && err.message ? err.message : err}\n`
+        `${SERVER_NAME}: tool ${tool.NAME} threw: ${err && err.message ? err.message : err}\n`
       );
       result = { error: 'internal_error' };
     }

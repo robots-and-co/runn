@@ -1,7 +1,8 @@
 'use strict';
 
-// Pre-mutate auto-snapshot helper for the mutating tier of the client-ops MCP
-// boundary. The design contract is in CLIENT_OPS_MCP_DESIGN.md §5: cheap
+// Pre-mutate auto-snapshot helper for the mutating tier of the lthcs-ops
+// server (the per-client implementation of the client-ops MCP boundary for
+// lthcs). The design contract is in CLIENT_OPS_MCP_DESIGN.md §5: cheap
 // snapshot before any change, so a bad mutation becomes "roll back to the
 // pre-change snapshot" rather than an irreversible incident.
 //

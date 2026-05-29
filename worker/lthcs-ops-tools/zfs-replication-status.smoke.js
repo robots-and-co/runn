@@ -1,11 +1,11 @@
 'use strict';
 
 // Standalone smoke for zfs_replication_status. Run from repo root:
-//   node worker/client-ops-tools/zfs-replication-status.smoke.js
+//   node worker/lthcs-ops-tools/zfs-replication-status.smoke.js
 //
 // Two layers of coverage:
 //   1. Pure parsers and the dataset whitelist (no network, no ssh).
-//   2. The MCP server itself (worker/client-ops.js) launched as a subprocess
+//   2. The MCP server itself (worker/lthcs-ops.js) launched as a subprocess
 //      with PATH stubbed so that `ssh` is a deterministic local script. We
 //      drive a real tools/list + tools/call over its stdio and assert the
 //      response shape — in particular that it contains no host/user/key
@@ -68,8 +68,8 @@ async function mcpSmoke() {
   const SECRET_USER = 'SECRET-USER-zoperator';
   const SECRET_KEY  = '/home/waz/SECRET-KEY-PATH/id_rsa';
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'client-ops-smoke-'));
-  const cfgPath = path.join(tmpDir, 'client-ops.config.json');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lthcs-ops-smoke-'));
+  const cfgPath = path.join(tmpDir, 'lthcs-ops.config.json');
   fs.writeFileSync(cfgPath, JSON.stringify({
     sites: {
       A: { host: SECRET_HOST, user: SECRET_USER, ssh_key_path: SECRET_KEY },
@@ -99,12 +99,12 @@ process.exit(2);
   const sshStubPath = path.join(stubDir, 'ssh');
   fs.writeFileSync(sshStubPath, sshStub, { mode: 0o755 });
 
-  const serverPath = path.join(__dirname, '..', 'client-ops.js');
+  const serverPath = path.join(__dirname, '..', 'lthcs-ops.js');
   const child = spawn(process.execPath, [serverPath], {
     env: {
       ...process.env,
       PATH: stubDir + path.delimiter + process.env.PATH,
-      CLIENT_OPS_CONFIG: cfgPath,
+      LTHCS_OPS_CONFIG: cfgPath,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -197,7 +197,7 @@ process.exit(2);
 (async () => {
   unitChecks();
   await mcpSmoke();
-  console.log('all client-ops zfs_replication_status smoke checks passed');
+  console.log('all lthcs-ops zfs_replication_status smoke checks passed');
 })().catch(err => {
   console.error('SMOKE FAILED:', err);
   process.exit(1);

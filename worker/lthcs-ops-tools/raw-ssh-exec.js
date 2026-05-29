@@ -1,6 +1,6 @@
 'use strict';
 
-// MUTATING client-ops tool: raw_ssh_exec({ site, command, justification })
+// MUTATING lthcs-ops tool: raw_ssh_exec({ site, command, justification })
 //
 // THE EXPLICIT ESCAPE HATCH.
 //
@@ -10,13 +10,15 @@
 // raw-SSH path that re-incurs both fears (data leakage AND action liability)
 // and goes through approval. This tool IS that fallback — explicit, opt-in,
 // and instrumented so its use is impossible to miss after the fact. §8.5
-// records this as the decided policy.
+// records this as the decided policy. Per-client scoping (§8.7) means each
+// client's server has its OWN allow flag and audit log, so opting one
+// client in never silently arms the hatch for another.
 //
 // Three controls layer on top of the standard mutating-tier flow, all
 // belt-and-braces — any one of them blocks an accidental call:
 //
 //   1. Disabled by default. The tool is only registered into tools/list when
-//      env CLIENT_OPS_ALLOW_RAW_SSH=1 is set at server boot, AND the handler
+//      env LTHCS_OPS_ALLOW_RAW_SSH=1 is set at server boot, AND the handler
 //      re-checks the flag at call time (defence-in-depth against a stale CLI
 //      tool cache reaching us after the flag was cleared).
 //
@@ -28,10 +30,10 @@
 //
 //   3. Dedicated audit channel. Every invocation is appended (pre- and
 //      post-execution) to a separate JSON-lines log file in addition to the
-//      session .jsonl. The path is `$CLIENT_OPS_RAW_SSH_AUDIT_LOG` or by
-//      default `$HOME/.claude/client-ops-raw-ssh-audit.log`. Grepping that
+//      session .jsonl. The path is `$LTHCS_OPS_RAW_SSH_AUDIT_LOG` or by
+//      default `$HOME/.claude/lthcs-ops-raw-ssh-audit.log`. Grepping that
 //      single file gives a clean answer to "when did the AI ever fall back
-//      to raw SSH and why?" without trawling per-session transcripts.
+//      to raw SSH on lthcs and why?" without trawling per-session transcripts.
 //
 // Result schema (success or non-zero exit; the latter is not an error here —
 // a failed command is a normal outcome and we surface it):
@@ -58,14 +60,14 @@ const { sshBaseArgs, run } = require('./_ssh');
 
 const NAME = 'raw_ssh_exec';
 const CATEGORY = 'mutating';
-const ENV_FLAG = 'CLIENT_OPS_ALLOW_RAW_SSH';
-const AUDIT_ENV = 'CLIENT_OPS_RAW_SSH_AUDIT_LOG';
+const ENV_FLAG = 'LTHCS_OPS_ALLOW_RAW_SSH';
+const AUDIT_ENV = 'LTHCS_OPS_RAW_SSH_AUDIT_LOG';
 
 const DESCRIPTION =
   'ESCAPE HATCH — run an arbitrary command over SSH on a configured site. ' +
   'This bypasses the curated boundary and SHOULD ONLY be used for genuinely ' +
   'novel work no curated tool covers. Disabled by default; the operator ' +
-  'opts in per Runn invocation via env CLIENT_OPS_ALLOW_RAW_SSH=1. Every ' +
+  'opts in per Runn invocation via env LTHCS_OPS_ALLOW_RAW_SSH=1. Every ' +
   'call requires approval (no "always allow") and is logged to a dedicated ' +
   'audit file in addition to the session transcript. Justification is ' +
   'mandatory and recorded. Stdout and stderr are returned to the caller, ' +
@@ -115,7 +117,7 @@ function sanitiseJustification(s) {
 
 function auditLogPath() {
   return process.env[AUDIT_ENV] || path.join(
-    os.homedir(), '.claude', 'client-ops-raw-ssh-audit.log',
+    os.homedir(), '.claude', 'lthcs-ops-raw-ssh-audit.log',
   );
 }
 
@@ -167,7 +169,7 @@ async function handler(args, { sites }) {
     });
   } catch (err) {
     process.stderr.write(
-      `client-ops: raw_ssh_exec audit append failed: ${err && err.message}\n`
+      `lthcs-ops: raw_ssh_exec audit append failed: ${err && err.message}\n`
     );
     return { error: 'audit_log_failed' };
   }
@@ -176,7 +178,7 @@ async function handler(args, { sites }) {
   // justification is operator-readable. The full command and resolved host
   // live only in the dedicated audit file.
   process.stderr.write(
-    `client-ops: RAW_SSH_EXEC site=${JSON.stringify(siteLabel)} ` +
+    `lthcs-ops: RAW_SSH_EXEC site=${JSON.stringify(siteLabel)} ` +
     `justification=${JSON.stringify(justification)}\n`
   );
 
@@ -200,7 +202,7 @@ async function handler(args, { sites }) {
     });
   } catch (err) {
     process.stderr.write(
-      `client-ops: raw_ssh_exec audit (end) failed: ${err && err.message}\n`
+      `lthcs-ops: raw_ssh_exec audit (end) failed: ${err && err.message}\n`
     );
   }
 

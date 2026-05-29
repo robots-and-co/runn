@@ -1,6 +1,6 @@
 'use strict';
 
-// MUTATING client-ops tool: create_snapshot({ site, dataset, reason })
+// MUTATING lthcs-ops tool: create_snapshot({ site, dataset, reason })
 //
 // First tool in the mutating tier (CLIENT_OPS_MCP_DESIGN.md §3, §5). Every
 // call is gated by the CLI's `--permission-prompt-tool mcp__runn__ask_permission`
@@ -67,7 +67,7 @@ async function handler(args, { sites }) {
   // line introduces no new leak surface. Reason is the operator-readable
   // record of *why* a snapshot was taken.
   process.stderr.write(
-    `client-ops: create_snapshot site=${JSON.stringify(siteLabel)} ` +
+    `lthcs-ops: create_snapshot site=${JSON.stringify(siteLabel)} ` +
     `reason=${JSON.stringify(reason)}\n`
   );
 

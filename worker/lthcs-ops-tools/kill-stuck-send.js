@@ -1,6 +1,6 @@
 'use strict';
 
-// MUTATING client-ops tool: kill_stuck_send({ site, dataset, reason })
+// MUTATING lthcs-ops tool: kill_stuck_send({ site, dataset, reason })
 //
 // The documented correct remedy for the "stuck send" spiral
 // (CLIENT_OPS_MCP_DESIGN.md §3, lthcs/CLAUDE.md "The stuck send spiral").
@@ -123,7 +123,7 @@ async function handler(args, { sites }) {
 
   // Audit line — same shape as the other mutating tools.
   process.stderr.write(
-    `client-ops: kill_stuck_send site=${JSON.stringify(siteLabel)} ` +
+    `lthcs-ops: kill_stuck_send site=${JSON.stringify(siteLabel)} ` +
     `reason=${JSON.stringify(reason)}\n`
   );
 

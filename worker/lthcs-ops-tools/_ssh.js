@@ -1,6 +1,6 @@
 'use strict';
 
-// Shared SSH/exec primitives for the curated client-ops tools.
+// Shared SSH/exec primitives for the curated lthcs-ops tools.
 //
 // One rule binds every consumer of this module: stdout/stderr returned by
 // `run()` MUST NOT be propagated into a tool result the model receives.

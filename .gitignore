@@ -2,5 +2,6 @@ node_modules/
 *.log
 .DS_Store
 .claude/settings.local.json
-# Real client-ops config holds host/user/key — must never be committed.
-client-ops.config.json
+# Real per-client ops configs hold host/user/key — must never be committed.
+# Catches lthcs-ops.config.json and future zis-ops/ngs-ops/... siblings.
+*-ops.config.json

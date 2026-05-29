@@ -874,12 +874,15 @@ const pendingPermissions = new Map(); // request_id → { send, card_id, tool_na
 
 function alwaysAllowKey(toolName) { return toolName; }
 
-// The client-ops raw-SSH escape hatch (CLIENT_OPS_MCP_DESIGN.md §8.5) is
+// The per-client raw-SSH escape hatch (CLIENT_OPS_MCP_DESIGN.md §8.5) is
 // permanently ineligible for "always allow" — the whole point of the hatch
 // is that the operator must affirmatively click Allow every single time, so
 // it can't be blanket-approved by reflex. Both the read AND write paths
 // short-circuit here, so even a stale rule that somehow landed in
-// settings.json from an older build wouldn't take effect.
+// settings.json from an older build wouldn't take effect. The regex is
+// client-agnostic (matches `raw_ssh_exec` after either start-of-string or
+// the MCP `__` prefix), so it covers `mcp__lthcs-ops__raw_ssh_exec` and any
+// future per-client server's same-named tool.
 function isAlwaysAllowEligible(toolName) {
   return !/(?:^|__)raw_ssh_exec$/.test(String(toolName || ''));
 }

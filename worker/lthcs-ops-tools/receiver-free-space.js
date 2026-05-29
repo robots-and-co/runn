@@ -1,6 +1,6 @@
 'use strict';
 
-// READ-ONLY client-ops tool: receiver_free_space({ site })
+// READ-ONLY lthcs-ops tool: receiver_free_space({ site })
 //
 // Aggregate ZFS pool capacity across the site, so the model can answer
 // "is the receiver about to run out of room?" without learning a single

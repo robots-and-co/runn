@@ -1,6 +1,6 @@
 'use strict';
 
-// MUTATING client-ops tool: restart_service({ site, service, reason })
+// MUTATING lthcs-ops tool: restart_service({ site, service, reason })
 //
 // Closed enums on BOTH axes — `site` is the configured site label set, and
 // `service` is the hard-coded SERVICE_ENUM below. The model literally cannot
@@ -125,7 +125,7 @@ async function handler(args, { sites }) {
   // Audit line — site + service labels are abstract; reason is operator-
   // readable. Same shape as the other mutating tools.
   process.stderr.write(
-    `client-ops: restart_service site=${JSON.stringify(siteLabel)} ` +
+    `lthcs-ops: restart_service site=${JSON.stringify(siteLabel)} ` +
     `service=${JSON.stringify(service)} reason=${JSON.stringify(reason)}\n`
   );
 

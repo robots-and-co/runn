@@ -8,14 +8,44 @@ const os = require('os');
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
 
-// Write a fresh MCP config pointing Claude at our in-tree permission server,
-// then expose its path so spawn args can reference it. The MCP server is a
-// stdio Node script; Claude launches it per session and routes every Write/
-// Edit/Bash permission check to it.
+// Permission server (always registered). Claude launches it per session over
+// stdio and routes every Write/Edit/Bash permission check through it.
 const MCP_SERVER_PATH = path.join(__dirname, 'mcp-permission.js');
-const CLIENT_OPS_SERVER_PATH = path.join(__dirname, 'client-ops.js');
-const MCP_CONFIG_PATH = path.join(os.tmpdir(), 'runn-mcp-config.json');
-function ensureMcpConfig() {
+
+// Per-client ops servers (CLIENT_OPS_MCP_DESIGN.md §8.7). The decision is one
+// server per client (`lthcs-ops`, future `zis-ops`, …), selected by the
+// session's cwd: a session in `/home/waz/projects/lthcs/...` gets the lthcs
+// server in its MCP config; a session anywhere else (Runn itself, runn-data,
+// an unmanaged dir) gets only the permission server. This narrows the
+// model-visible tool surface per session AND scopes always-allow rules
+// per-client via the MCP tool-name prefix (`mcp__lthcs-ops__…`). Add a new
+// client by dropping a `<client>-ops.js` server and adding the entry here.
+const CLIENT_OPS_SERVERS = {
+  lthcs: path.join(__dirname, 'lthcs-ops.js'),
+};
+const PROJECTS_ROOT = path.join(process.env.HOME || '/home/waz', 'projects');
+
+// Map a session cwd to a known client whose tree it sits in, or null. We
+// require an exact `<projects>/<client>/...` prefix — the bare `projects`
+// dir, runn-data cards, and unrelated trees all map to null.
+function clientForCwd(cwd) {
+  if (typeof cwd !== 'string' || !cwd) return null;
+  const prefix = PROJECTS_ROOT + path.sep;
+  if (!cwd.startsWith(prefix)) return null;
+  const first = cwd.slice(prefix.length).split(path.sep)[0];
+  if (!first) return null;
+  return Object.prototype.hasOwnProperty.call(CLIENT_OPS_SERVERS, first) ? first : null;
+}
+
+// Per-cwd MCP config path. Keyed by the cwd slug (same scheme Claude Code
+// uses for project dirs) so two concurrent sessions in different cwds never
+// race on the same file. Idempotent: rewriting it with the same contents is
+// a no-op for the running CLI, which reads it once at spawn.
+function mcpConfigPathFor(cwd) {
+  return path.join(os.tmpdir(), `runn-mcp-config-${cwdToSlug(cwd)}.json`);
+}
+
+function ensureMcpConfig(cwd) {
   const cfg = {
     mcpServers: {
       runn: {
@@ -23,16 +53,21 @@ function ensureMcpConfig() {
         command: process.execPath, // node binary inside this container/runtime
         args: [MCP_SERVER_PATH],
       },
-      'client-ops': {
-        type: 'stdio',
-        command: process.execPath,
-        args: [CLIENT_OPS_SERVER_PATH],
-      },
     },
   };
-  fs.writeFileSync(MCP_CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  const client = clientForCwd(cwd);
+  if (client) {
+    cfg.mcpServers[`${client}-ops`] = {
+      type: 'stdio',
+      command: process.execPath,
+      args: [CLIENT_OPS_SERVERS[client]],
+    };
+  }
+  const configPath = mcpConfigPathFor(cwd);
+  fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+  return configPath;
 }
-ensureMcpConfig();
+
 const PERMISSION_TOOL_NAME = 'mcp__runn__ask_permission';
 
 // Convert an absolute cwd to the slug Claude Code uses for its project dir.
@@ -236,12 +271,16 @@ function spawnSession({ title, notes, location, permissionToken, permissionMode,
   // onExit below).
   try { claimCwd(cwd, holder || 'spawnSession'); }
   catch (err) { return Promise.reject(err); }
+  // Write the per-cwd MCP config now — this picks the matching <client>-ops
+  // server (if any) for the session's tree. Done before the spawn so the CLI
+  // reads it directly from --mcp-config below.
+  const mcpConfigPath = ensureMcpConfig(cwd);
   return new Promise((resolve, reject) => {
     const args = [
       '-p',
       '--output-format', 'stream-json',
       '--verbose',
-      '--mcp-config', MCP_CONFIG_PATH,
+      '--mcp-config', mcpConfigPath,
       '--permission-prompt-tool', PERMISSION_TOOL_NAME,
     ];
     if (permissionMode && permissionMode !== 'default') {
@@ -347,12 +386,16 @@ function sendMessage({ sessionId, text, location, permissionToken, permissionMod
   const cwd = location.cwd;
   try { claimCwd(cwd, holder || `sendMessage:${sessionId.slice(0,8)}`); }
   catch (err) { return Promise.reject(err); }
+  // Re-write the per-cwd MCP config — idempotent for unchanged cwds, but the
+  // resume target's cwd is always authoritative (the same client mapping
+  // applies whether this is a spawn or a follow-up turn).
+  const mcpConfigPath = ensureMcpConfig(cwd);
   return new Promise((resolve, reject) => {
     const args = [
       '-p',
       '--output-format', 'stream-json',
       '--verbose',
-      '--mcp-config', MCP_CONFIG_PATH,
+      '--mcp-config', mcpConfigPath,
       '--permission-prompt-tool', PERMISSION_TOOL_NAME,
     ];
     if (permissionMode && permissionMode !== 'default') {
@@ -440,4 +483,7 @@ module.exports = {
   killSession,
   clearPending,
   isSessionLive,
+  clientForCwd,
+  ensureMcpConfig,
+  mcpConfigPathFor,
 };

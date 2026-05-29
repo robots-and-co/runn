@@ -1,6 +1,6 @@
 'use strict';
 
-// READ-ONLY client-ops tool: list_snapshots({ site, dataset, limit? })
+// READ-ONLY lthcs-ops tool: list_snapshots({ site, dataset, limit? })
 //
 // Returns the most recent snapshots of a dataset, as timestamps only — the
 // snapshot *names* are stripped before the result returns, since names

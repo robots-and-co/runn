@@ -1,6 +1,6 @@
 'use strict';
 
-// READ-ONLY client-ops tool: zpool_status({ site })
+// READ-ONLY lthcs-ops tool: zpool_status({ site })
 //
 // Returns per-pool health *without* echoing the real pool names back to the
 // model. Pools are returned as an ordered list of opaque entries — by their
