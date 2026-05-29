@@ -25,6 +25,7 @@
 const { sshBaseArgs, run, shellQuote } = require('./_ssh');
 
 const NAME = 'db_health_check';
+const CATEGORY = 'read-only';
 const DESCRIPTION =
   'Read-only Firebird database header probe (gstat -h). Returns ODS ' +
   'version, page size and transaction counters. Does not write to the ' +
@@ -101,6 +102,6 @@ async function handler(args, { sites }) {
 }
 
 module.exports = {
-  NAME, DESCRIPTION, inputSchema, handler,
+  NAME, CATEGORY, DESCRIPTION, inputSchema, handler,
   _internals: { parseHeader, findField },
 };

@@ -24,6 +24,7 @@
 const { sshBaseArgs, run } = require('./_ssh');
 
 const NAME = 'zpool_status';
+const CATEGORY = 'read-only';
 const DESCRIPTION =
   'Read-only ZFS pool health for a site. Returns an anonymised, ' +
   'ordered list of pools with their state and scrub/resilver flags. ' +
@@ -114,6 +115,6 @@ async function handler(args, { sites }) {
 }
 
 module.exports = {
-  NAME, DESCRIPTION, inputSchema, handler,
+  NAME, CATEGORY, DESCRIPTION, inputSchema, handler,
   _internals: { parseList, parseStatusBlocks, normaliseState },
 };

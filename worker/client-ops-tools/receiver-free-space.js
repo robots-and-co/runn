@@ -20,6 +20,7 @@
 const { sshBaseArgs, run } = require('./_ssh');
 
 const NAME = 'receiver_free_space';
+const CATEGORY = 'read-only';
 const DESCRIPTION =
   'Aggregate ZFS pool capacity for a site (typically the receiver). ' +
   'Returns summed total/allocated/free bytes and used percentage. ' +
@@ -79,6 +80,6 @@ async function handler(args, { sites }) {
 }
 
 module.exports = {
-  NAME, DESCRIPTION, inputSchema, handler,
+  NAME, CATEGORY, DESCRIPTION, inputSchema, handler,
   _internals: { parseSpace },
 };

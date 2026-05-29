@@ -238,6 +238,10 @@ process.exit(2);
     const list = await rpc('tools/list', {});
     const names = list.result.tools.map(t => t.name).sort();
     assert.deepStrictEqual(names, [
+      // create_snapshot is the mutating-tier tool added in mcp-task 05; its
+      // own behaviour is covered in mutating-tier.smoke.js. It shows up here
+      // only because tools/list returns the full registry.
+      'create_snapshot',
       'db_health_check',
       'list_snapshots',
       'receiver_free_space',

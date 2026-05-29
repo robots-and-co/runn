@@ -22,6 +22,7 @@
 const { sshBaseArgs, run, shellQuote } = require('./_ssh');
 
 const NAME = 'vm_liveness';
+const CATEGORY = 'read-only';
 const DESCRIPTION =
   'Read-only liveness probe for a site\'s VM: libvirt domain state ' +
   'plus a TCP reachability check of the configured service port. ' +
@@ -79,6 +80,6 @@ async function handler(args, { sites }) {
 }
 
 module.exports = {
-  NAME, DESCRIPTION, inputSchema, handler,
+  NAME, CATEGORY, DESCRIPTION, inputSchema, handler,
   _internals: { normaliseState },
 };

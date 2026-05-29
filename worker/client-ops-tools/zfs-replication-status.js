@@ -24,6 +24,7 @@
 const { sshBaseArgs, run } = require('./_ssh');
 
 const NAME = 'zfs_replication_status';
+const CATEGORY = 'read-only';
 const DESCRIPTION =
   'Read-only health probe for a site\'s ZFS replication: pool health, ' +
   'latest snapshot timestamp and lag (when a dataset is given). ' +
@@ -133,7 +134,7 @@ async function handler(args, { sites }) {
 }
 
 module.exports = {
-  NAME, DESCRIPTION, inputSchema, handler,
+  NAME, CATEGORY, DESCRIPTION, inputSchema, handler,
   // Exposed for unit-style tests under worker/client-ops-tools/.
   _internals: { sanitiseDataset, parseHealth, parseLatestSnapshot },
 };

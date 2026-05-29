@@ -9,6 +9,18 @@
 // MCP handshake so a missing or malformed config is a loud failure (non-zero
 // exit + stderr) rather than a server with no sites that silently accepts
 // tool calls it can't fulfil.
+//
+// Approval flow for mutating tools (design doc §4): the Claude CLI is spawned
+// with `--permission-prompt-tool mcp__runn__ask_permission`, which routes
+// EVERY tool call — including mcp__client-ops__* — through worker/mcp-permission.js
+// before this handler runs. That tool posts to /permissions/request on the
+// worker, parking the call until the operator clicks Allow/Deny. By the time
+// `tools/call` reaches us here, the gate has already fired; a denied call
+// never arrives. We therefore do NOT reinvent the gate — we lean on it and
+// add a stderr audit line for every mutating call as a belt-and-braces record.
+// Defence-in-depth (server-side self-gating of mutations) is the open
+// question §8.3; the CATEGORY field on each tool is the hook for that work
+// if/when it's answered.
 
 const readline = require('readline');
 const { loadConfig, ClientOpsConfigError } = require('./client-ops-config');
@@ -65,6 +77,17 @@ rl.on('line', async (line) => {
         message: `client-ops: no such tool: ${params.name || '?'}`,
       }});
       return;
+    }
+    // Audit line for mutating tools — the CLI's permission-prompt gate has
+    // already fired at this point, so reaching here means the operator
+    // clicked Allow. We log only the site label (abstract) — never the
+    // resolved host/user/key — and let the tool's own handler log any
+    // operator-readable detail like `reason`.
+    if (tool.CATEGORY === 'mutating') {
+      const siteArg = (params.arguments && params.arguments.site) || null;
+      process.stderr.write(
+        `client-ops: MUTATING tool=${tool.NAME} site=${JSON.stringify(siteArg)}\n`
+      );
     }
     let result;
     try {

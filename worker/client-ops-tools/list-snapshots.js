@@ -18,6 +18,7 @@
 const { sshBaseArgs, run } = require('./_ssh');
 
 const NAME = 'list_snapshots';
+const CATEGORY = 'read-only';
 const DESCRIPTION =
   'List the most recent snapshots of a dataset on a site, as ' +
   'timestamps only (snapshot names are stripped). Useful for ' +
@@ -86,6 +87,6 @@ async function handler(args, { sites }) {
 }
 
 module.exports = {
-  NAME, DESCRIPTION, inputSchema, handler,
+  NAME, CATEGORY, DESCRIPTION, inputSchema, handler,
   _internals: { sanitiseDataset, sanitiseLimit, parseEpochs },
 };
