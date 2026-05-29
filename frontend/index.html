@@ -2774,6 +2774,30 @@
   @media (hover: none) {
     .code-copy-btn { opacity: 0.7; }
   }
+  /* Per-turn copy chip. Same visual family as .code-copy-btn but anchored
+     to the top-right of the bubble itself. Hidden until hover/focus so it
+     doesn't crowd the message. Click handler stops propagation so the
+     collapsed <details> doesn't toggle. */
+  .turn-user, .turn-assistant { position: relative; }
+  .turn-copy-btn {
+    position: absolute; top: 4px; right: 4px; z-index: 1;
+    background: var(--paper); border: 1px solid var(--line);
+    color: var(--ink-2);
+    font: 500 11px/1 ui-sans-serif, system-ui, sans-serif;
+    padding: 3px 8px; border-radius: 4px;
+    cursor: pointer; opacity: 0;
+    transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease;
+  }
+  .turn-user:hover > .turn-copy-btn,
+  .turn-assistant:hover > .turn-copy-btn,
+  .turn-copy-btn:focus-visible { opacity: 1; }
+  .turn-copy-btn:hover { color: var(--ink); }
+  .turn-copy-btn.copied {
+    opacity: 1; color: var(--accent); border-color: var(--accent-soft);
+  }
+  @media (hover: none) {
+    .turn-copy-btn { opacity: 0.55; }
+  }
   .turn-user h1, .turn-user h2, .turn-user h3,
   .turn-user h4, .turn-user h5, .turn-user h6,
   .turn-text h1, .turn-text h2, .turn-text h3,
@@ -6760,6 +6784,34 @@ async function copyToClipboard(text) {
   return ok;
 }
 
+// Inject a `copy` chip into a turn bubble. `getText` is called lazily on click
+// so collapsed/phase bubbles can defer collecting the body until needed.
+function addTurnCopyButton(bubbleEl, getText) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'turn-copy-btn';
+  btn.textContent = 'copy';
+  btn.title = 'Copy to clipboard';
+  btn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const text = (typeof getText === 'function' ? getText() : getText) || '';
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      btn.textContent = 'copied ✓';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'copy';
+        btn.classList.remove('copied');
+      }, 1200);
+    } else {
+      btn.textContent = 'copy failed';
+      setTimeout(() => { btn.textContent = 'copy'; }, 1500);
+    }
+  });
+  bubbleEl.appendChild(btn);
+}
+
 // Inject a `copy` chip into every fenced code block under `root`.
 // Idempotent — safe to call on a re-rendered transcript.
 function attachCodeCopyButtons(root) {
@@ -6897,6 +6949,7 @@ function buildCollapsedBubble(summary, bodies) {
     details.appendChild(body);
   }
   outer.appendChild(details);
+  addTurnCopyButton(outer, () => bodies.filter(b => b && String(b).trim()).join('\n\n'));
   div.appendChild(outer);
   return div;
 }
@@ -7020,6 +7073,7 @@ function renderTurn(t) {
       txt.innerHTML = renderMarkdown(bodyText);
       body.appendChild(txt);
     }
+    addTurnCopyButton(body, () => bodyText || '');
     div.appendChild(body);
     return div;
   }
@@ -7082,6 +7136,7 @@ function renderTurn(t) {
   body.innerHTML = renderMarkdown(t.text);
   attachCodeCopyButtons(body);
   outer.appendChild(body);
+  addTurnCopyButton(outer, () => t.text || '');
   div.appendChild(outer);
   return div;
 }
