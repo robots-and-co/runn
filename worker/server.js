@@ -872,7 +872,53 @@ function serveStatic(req, res) {
 const permissionTokens   = new Map(); // token → card_id
 const pendingPermissions = new Map(); // request_id → { send, card_id, tool_name, input, created_at }
 
+// Plan-then-apply (CLIENT_OPS_MCP_DESIGN.md §5). The per-client *_plan tools
+// POST their plan bodies here keyed by an opaque plan_id; the matching
+// apply_plan call later looks the body up so the approval card can render the
+// full original plan instead of just `{plan_id, reason}`. Scoped per Runn
+// permission token (= one Claude session, mirroring permissionTokens above),
+// so two sessions can't read each other's plans even with a guessed id.
+const sessionPlans = new Map(); // token → Map<plan_id, plan_body>
+// Wall-clock cap on a stored plan so a session that planned-but-never-applied
+// can't pin plan bodies in memory forever. 24h is generous — the typical
+// plan→approve cycle is seconds. Cleared opportunistically on every register
+// + lookup; no separate timer.
+const PLAN_TTL_MS = 24 * 60 * 60 * 1000;
+
 function alwaysAllowKey(toolName) { return toolName; }
+
+function isApplyPlanToolName(toolName) {
+  // Matches `mcp__<client>-ops__apply_plan` across any future per-client
+  // server, plus the bare `apply_plan` form some smoke tests may exercise.
+  return /(?:^|__)apply_plan$/.test(String(toolName || ''));
+}
+
+function lookupSessionPlan(token, planId) {
+  if (!token || typeof planId !== 'string') return null;
+  const m = sessionPlans.get(token);
+  if (!m) return null;
+  const entry = m.get(planId);
+  if (!entry) return null;
+  if (Date.now() - entry.created_at_ms > PLAN_TTL_MS) {
+    m.delete(planId);
+    if (m.size === 0) sessionPlans.delete(token);
+    return null;
+  }
+  return entry.plan;
+}
+
+function storeSessionPlan(token, planId, plan) {
+  if (!token || typeof planId !== 'string' || !plan) return;
+  if (!sessionPlans.has(token)) sessionPlans.set(token, new Map());
+  // Opportunistic GC of this token's expired plans on every write — keeps the
+  // map bounded even if no one ever calls apply_plan.
+  const m = sessionPlans.get(token);
+  const now = Date.now();
+  for (const [pid, entry] of m) {
+    if (now - entry.created_at_ms > PLAN_TTL_MS) m.delete(pid);
+  }
+  m.set(planId, { plan, created_at_ms: now });
+}
 
 // The per-client raw-SSH escape hatch (CLIENT_OPS_MCP_DESIGN.md §8.5) is
 // permanently ineligible for "always allow" — the whole point of the hatch
@@ -884,7 +930,14 @@ function alwaysAllowKey(toolName) { return toolName; }
 // the MCP `__` prefix), so it covers `mcp__lthcs-ops__raw_ssh_exec` and any
 // future per-client server's same-named tool.
 function isAlwaysAllowEligible(toolName) {
-  return !/(?:^|__)raw_ssh_exec$/.test(String(toolName || ''));
+  if (/(?:^|__)raw_ssh_exec$/.test(String(toolName || ''))) return false;
+  // apply_plan is the only path to execute a stored plan body (§5). Letting
+  // it be blanket-approved would dissolve the plan-then-apply contract: the
+  // operator could stop seeing the plan body the very moment they granted a
+  // single broad approval. Keep every apply on the same "review the plan,
+  // click Allow" footing as the raw-SSH hatch.
+  if (isApplyPlanToolName(toolName)) return false;
+  return true;
 }
 async function isAlwaysAllowed(toolName) {
   if (!isAlwaysAllowEligible(toolName)) return false;
@@ -1442,11 +1495,24 @@ const server = http.createServer(async (req, res) => {
         console.log(`[perm] auto-allow ${body.tool_name} (always-allow rule)`);
         return sendJson(res, 200, { behavior: 'allow' });
       }
+      // apply_plan enrichment (CLIENT_OPS_MCP_DESIGN.md §5): the model only
+      // passes {plan_id, reason}; the *_plan tool already POSTed the full
+      // plan body to /plans/register. Look it up by id+token and embed it on
+      // a reserved `_plan` field so the approval card can render the body
+      // the operator is being asked to authorise — not just the opaque id.
+      // Missing lookup degrades gracefully (id-only card); the operator can
+      // still Allow/Deny but should be cautious.
+      let enrichedInput = body.input;
+      if (isApplyPlanToolName(body.tool_name)) {
+        const planId = body.input && body.input.plan_id;
+        const plan = lookupSessionPlan(body.token, planId);
+        enrichedInput = { ...(body.input || {}), _plan: plan || null };
+      }
       const requestId = crypto.randomUUID();
       pendingPermissions.set(requestId, {
         card_id: cardId,
         tool_name: body.tool_name,
-        input: body.input,
+        input: enrichedInput,
         created_at: Date.now(),
         send: (decision) => {
           pendingPermissions.delete(requestId);
@@ -1465,9 +1531,40 @@ const server = http.createServer(async (req, res) => {
         request_id: requestId,
         card_id: cardId,
         tool_name: body.tool_name,
-        input: body.input,
+        input: enrichedInput,
       });
       return; // response will be sent later via pending.send()
+    }
+    // Plan registration (CLIENT_OPS_MCP_DESIGN.md §5). The lthcs-ops *_plan
+    // tools POST the model-visible plan body here so a later apply_plan call
+    // can surface it on the approval card. Token-scoped (= session-scoped)
+    // because plans are not shared across sessions. Returns 200/ok on success
+    // and 400 on bad input; a hard error here would leak into the model's
+    // tool result (the *_plan tool treats register failures as best-effort
+    // and still returns the plan to the model).
+    if (m === 'POST' && url.pathname === '/plans/register') {
+      const body = await readBody(req);
+      if (!body || typeof body.token !== 'string' || !body.token) {
+        return sendJson(res, 400, { error: 'token required' });
+      }
+      if (typeof body.plan_id !== 'string' || !body.plan_id) {
+        return sendJson(res, 400, { error: 'plan_id required' });
+      }
+      if (!body.plan || typeof body.plan !== 'object') {
+        return sendJson(res, 400, { error: 'plan required' });
+      }
+      // Cap stored plan size as a defensive measure — a runaway server
+      // shouldn't be able to pin arbitrarily large payloads in worker
+      // memory per plan. Encoded length proxies for in-memory size; the
+      // body the model and approval card see is small (a few KB at most).
+      let encoded;
+      try { encoded = JSON.stringify(body.plan); }
+      catch { return sendJson(res, 400, { error: 'plan not serialisable' }); }
+      if (encoded.length > 64 * 1024) {
+        return sendJson(res, 400, { error: 'plan too large' });
+      }
+      storeSessionPlan(body.token, body.plan_id, body.plan);
+      return sendJson(res, 200, { ok: true });
     }
     if (m === 'POST' && url.pathname === '/permissions/decide') {
       const body = await readBody(req);

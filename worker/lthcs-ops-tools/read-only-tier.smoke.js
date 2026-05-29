@@ -242,19 +242,39 @@ process.exit(2);
       // (mcp-task 06), and restart_service (mcp-task 07) are the mutating-
       // tier tools; their own behaviour is covered in mutating-tier.smoke.js.
       // They show up here only because tools/list returns the full registry.
+      // The plan-then-apply tier (CLIENT_OPS_MCP_DESIGN.md §5, mcp-task 09)
+      // adds five `*_plan` read-only variants and a single mutating
+      // apply_plan; behaviour is covered in plan-then-apply.smoke.js.
+      // raw_ssh_exec_plan only appears when LTHCS_OPS_ALLOW_RAW_SSH=1, which
+      // this smoke deliberately leaves off (matching the cwd-default posture).
+      'apply_plan',
       'create_snapshot',
+      'create_snapshot_plan',
       'db_health_check',
       'kick_replication',
+      'kick_replication_plan',
       'kill_stuck_send',
+      'kill_stuck_send_plan',
       'list_snapshots',
       'receiver_free_space',
       'restart_service',
+      'restart_service_plan',
       'vm_liveness',
       'zfs_replication_status',
       'zpool_status',
     ]);
-    // Every input schema must enumerate sites exactly — that's the boundary.
+    // Every site-shaped input schema must enumerate sites exactly — that's
+    // the boundary. apply_plan is the exception: it takes {plan_id, reason},
+    // no site (the plan envelope carries the abstract site label, resolved
+    // at apply time via the in-memory plan store).
     for (const t of list.result.tools) {
+      if (t.name === 'apply_plan') {
+        assert.deepStrictEqual(t.inputSchema.required.slice().sort(), ['plan_id', 'reason'],
+          'apply_plan must require exactly {plan_id, reason}');
+        assert.ok(!t.inputSchema.properties.site,
+          'apply_plan must NOT have a site property — that is what plan_id is for');
+        continue;
+      }
       assert.deepStrictEqual(t.inputSchema.properties.site.enum.sort(), ['A', 'BARE']);
     }
 

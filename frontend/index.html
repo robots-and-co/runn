@@ -2497,6 +2497,14 @@
     background: #d93025; border-color: #d93025;
   }
 
+  /* apply_plan (CLIENT_OPS_MCP_DESIGN.md §5) cards surface the full plan
+     body — tool / site / affects / per-step commands. That detail block can
+     run to several lines, so lift the .perm-detail max-height clamp and
+     keep wrapping conservative so commands stay readable. */
+  .chat-permission.chat-permission-apply-plan .perm-detail {
+    max-height: none; white-space: pre-wrap; word-break: break-word;
+  }
+
   .chat-transcript {
     flex: 1; display: flex; flex-direction: column; gap: 12px;
     min-height: 0;
@@ -5560,18 +5568,79 @@ function isDangerousTool(toolName) {
   return /(?:^|__)raw_ssh_exec$/.test(String(toolName || ''));
 }
 
+// apply_plan (CLIENT_OPS_MCP_DESIGN.md §5) is the single execution path for a
+// previously-returned plan. The worker enriches its permission card input
+// with a `_plan` field carrying the full original plan body, and refuses to
+// persist any always-allow rule for it — so the operator must review the
+// plan and click Allow on every execution.
+function isApplyPlanTool(toolName) {
+  return /(?:^|__)apply_plan$/.test(String(toolName || ''));
+}
+
+// Stringify one of the plan envelope's `steps[i]` for a code-style detail
+// block. Configured-command steps show the abstract placeholder rather than
+// raw site-config text (see §5).
+function describePlanStep(step) {
+  const lbl = step && step.label ? `# ${step.label}` : '';
+  if (step && step.kind === 'ssh_exec' && step.remote_command) {
+    return [lbl, `ssh <${step.site_label}> ${step.remote_command}`].filter(Boolean).join('\n');
+  }
+  if (step && step.kind === 'ssh_exec_configured' && step.remote_command_abstract) {
+    return [lbl, `ssh <${step.site_label}> ${step.remote_command_abstract}`].filter(Boolean).join('\n');
+  }
+  // Unknown shape — fall back to a JSON dump so the operator at least sees something.
+  try { return [lbl, JSON.stringify(step)].filter(Boolean).join('\n'); }
+  catch { return lbl || '(unprintable step)'; }
+}
+
 function buildPermissionEl(p) {
   const el = document.createElement('div');
-  const dangerous = isDangerousTool(p.tool_name);
-  el.className = 'chat-permission' + (dangerous ? ' chat-permission-dangerous' : '');
+  // raw_ssh_exec gets the red danger palette directly; apply_plan inherits
+  // it ONLY when its embedded plan body is for the raw_ssh_exec tool, so
+  // the operator sees "this apply is actually an escape-hatch run" with the
+  // same visual gravity as a direct raw_ssh_exec.
+  const inp = p.input || {};
+  const isApplyPlan = isApplyPlanTool(p.tool_name);
+  const plan = isApplyPlan ? (inp._plan || null) : null;
+  const dangerous = isDangerousTool(p.tool_name) || (plan && plan.tool === 'raw_ssh_exec');
+  el.className = 'chat-permission' + (dangerous ? ' chat-permission-dangerous' : '')
+    + (isApplyPlan ? ' chat-permission-apply-plan' : '');
   el.dataset.requestId = p.request_id;
   // Pull the most useful bit of input — file_path for Write/Edit, command for
   // Bash. For the raw-SSH escape hatch, the operator needs to read the actual
   // command and the model-supplied justification before deciding, so prefer
-  // those fields and show both.
-  const inp = p.input || {};
+  // those fields and show both. For apply_plan, surface the FULL plan body
+  // looked up server-side from the registered plan store (CLIENT_OPS_MCP_DESIGN.md §5).
   let detailHtml = '';
-  if (dangerous) {
+  if (isApplyPlan) {
+    const reason = inp.reason ? `<div class="perm-detail"><em>apply reason: ${escapeHtml(String(inp.reason))}</em></div>` : '';
+    if (plan) {
+      const meta = [
+        `tool:    ${plan.tool}`,
+        `site:    ${plan.site_label}`,
+        plan.reason ? `reason:  ${plan.reason}` : '',
+        plan.affects && plan.affects.length ? `affects: ${plan.affects.join(', ')}` : '',
+      ].filter(Boolean).join('\n');
+      const stepsText = (plan.steps || []).map((s, i) =>
+        `[${i + 1}] ${describePlanStep(s).replace(/\n/g, '\n    ')}`
+      ).join('\n');
+      const planId = inp.plan_id ? `<div class="perm-detail" style="opacity:.7">plan_id: ${escapeHtml(String(inp.plan_id))}</div>` : '';
+      detailHtml =
+        `<div class="perm-detail">${escapeHtml(meta)}</div>` +
+        (stepsText ? `<div class="perm-detail">${escapeHtml(stepsText)}</div>` : '') +
+        reason + planId;
+    } else {
+      // Plan body wasn't enriched (worker miss, expired, or token mismatch).
+      // The operator is being asked to approve an opaque plan_id, which the
+      // spec calls out as the degraded case — surface the warning loudly
+      // rather than silently rendering "Allow / Deny" on nothing.
+      const pid = inp.plan_id ? `<div class="perm-detail">plan_id: ${escapeHtml(String(inp.plan_id))}</div>` : '';
+      detailHtml =
+        `<div class="perm-warning">⚠️ Plan body unavailable — the worker has no registered plan for this id ` +
+        `(expired, race, or token mismatch). Deny unless you can confirm what this plan does from the transcript above.</div>` +
+        pid + reason;
+    }
+  } else if (dangerous) {
     const cmd = inp.command ? `<div class="perm-detail">${escapeHtml(String(inp.command))}</div>` : '';
     const why = inp.justification
       ? `<div class="perm-detail"><em>${escapeHtml(String(inp.justification))}</em></div>` : '';
@@ -5580,14 +5649,21 @@ function buildPermissionEl(p) {
     const detail = inp.file_path || inp.path || inp.command || '';
     detailHtml = detail ? `<div class="perm-detail">${escapeHtml(String(detail))}</div>` : '';
   }
-  const icon = dangerous ? '⚠️' : '🔐';
+  const icon = dangerous ? '⚠️' : (isApplyPlan ? '📋' : '🔐');
   const title = dangerous
-    ? `Claude wants to run <code>${escapeHtml(p.tool_name)}</code> — RAW SSH ESCAPE HATCH`
-    : `Claude wants to use <code>${escapeHtml(p.tool_name)}</code>`;
+    ? (isApplyPlan
+        ? `Claude wants to apply a plan that runs <code>raw_ssh_exec</code> — RAW SSH ESCAPE HATCH`
+        : `Claude wants to run <code>${escapeHtml(p.tool_name)}</code> — RAW SSH ESCAPE HATCH`)
+    : (isApplyPlan
+        ? `Claude wants to execute a planned operation (<code>apply_plan</code>)`
+        : `Claude wants to use <code>${escapeHtml(p.tool_name)}</code>`);
   const warningHtml = dangerous
     ? `<div class="perm-warning">Bypasses the curated client-ops boundary. Read the command and justification carefully — this approval is single-use.</div>`
     : '';
-  const alwaysBtn = dangerous
+  // apply_plan is permanently ineligible for "always allow" — the worker
+  // also enforces this independently. Suppressing the button in the DOM is
+  // the matching UX guard against reflex-clicking it on a plan-execute card.
+  const alwaysBtn = (dangerous || isApplyPlan)
     ? ''
     : `<button class="perm-btn perm-allow-always">Always allow</button>`;
   el.innerHTML = `

@@ -276,6 +276,45 @@ human reviews, *then* a separate apply step executes. This keeps "figure out
 what's wrong" cleanly distinct from "change the system," and means the approval
 prompt is reviewing a concrete, already-formed action rather than a vague intent.
 
+**[implemented]** The lthcs-ops server exposes a `*_plan` read-only variant for
+every mutating tool (`create_snapshot_plan`, `kick_replication_plan`,
+`kill_stuck_send_plan`, `restart_service_plan`, `raw_ssh_exec_plan`) and a
+single mutating `apply_plan({ plan_id, reason })` that is the only path to
+execute one. The shape works like this:
+
+- Each `*_plan` call validates its inputs, **freezes** the dynamic values
+  (notably the `runn-pre-mutate-<epoch>` snapshot tag, computed once at plan
+  time) and stores a plan envelope keyed by `plan_id` in an in-memory Map
+  inside the lthcs-ops process. The MCP server is spawned per Claude session,
+  so the Map is naturally **session-scoped** and dies with the subprocess —
+  no cross-session reuse, no disk persistence.
+- The same call POSTs the model-visible portion of the envelope to the
+  worker's `/plans/register` endpoint, keyed by `plan_id` under the session's
+  permission token. The body the worker stores is at parity with what the
+  model already sees: site label (abstract), ordered steps with `remote_command`
+  strings for non-secret verbs (e.g. `zfs snapshot pool0/winvm@<frozen-tag>`)
+  and `remote_command_abstract` placeholders for verbs whose body is a
+  site-config secret (kick/kill templates, service status/restart commands).
+  The envelope's private fields (raw commands, executor state) stay on-box.
+- When the model later calls `apply_plan(plan_id, reason)`, the CLI's
+  `--permission-prompt-tool` gate posts to `/permissions/request` as usual.
+  The worker's handler recognises `apply_plan`, looks up the stored plan
+  body by `plan_id` under the session's token, and **enriches the broadcast
+  input on a reserved `_plan` field** before the approval card is rendered.
+  That is how the approval prompt surfaces the **full original plan**, not
+  just the opaque id — the operator reviews steps, affected resources, and
+  the frozen tag, then clicks Allow/Deny.
+- `apply_plan` is permanently **ineligible for "always allow"** — same
+  treatment as the raw-SSH escape hatch — so plan-then-apply cannot collapse
+  into a single blanket-approved step. Every execution is an individual
+  decision.
+- Plans are **single-use**: a successful dispatch (regardless of executor
+  outcome) deletes the envelope. The operator must re-plan to retry, which
+  is the correct posture — a retry is not a free repeat of an approved
+  action. Stored plans in the worker also expire after 24 h as a memory cap.
+- Each `*_plan` tool stays read-only (no SSH, no state change), so no
+  approval is needed to mint a plan; review happens at apply time.
+
 Rough ordering of the action-risk controls by impact:
 1. **Curated tools + read-only by default** — the capability simply isn't there.
 2. **Plan-then-apply** — diagnosis is separated from mutation; the human reviews

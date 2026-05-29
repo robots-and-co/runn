@@ -40,6 +40,17 @@ const kickReplication      = require('./kick-replication');
 const killStuckSend        = require('./kill-stuck-send');
 const restartService       = require('./restart-service');
 const rawSshExec           = require('./raw-ssh-exec');
+// Plan-then-apply tier (CLIENT_OPS_MCP_DESIGN.md §5). Five read-only `*_plan`
+// tools build frozen, reviewable plan envelopes; a single mutating apply_plan
+// tool is the only execution path. apply_plan inherits the standard
+// permission gate AND is permanently ineligible for "always allow" — the
+// operator must review the full plan body on every execution.
+const createSnapshotPlan   = require('./create-snapshot-plan');
+const kickReplicationPlan  = require('./kick-replication-plan');
+const killStuckSendPlan    = require('./kill-stuck-send-plan');
+const restartServicePlan   = require('./restart-service-plan');
+const rawSshExecPlan       = require('./raw-ssh-exec-plan');
+const applyPlan            = require('./apply-plan');
 
 const TOOLS = [
   zfsReplicationStatus,
@@ -53,6 +64,12 @@ const TOOLS = [
   killStuckSend,
   restartService,
   rawSshExec,
+  createSnapshotPlan,
+  kickReplicationPlan,
+  killStuckSendPlan,
+  restartServicePlan,
+  rawSshExecPlan,
+  applyPlan,
 ];
 
 const VALID_CATEGORIES = new Set(['read-only', 'mutating']);
