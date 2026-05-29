@@ -13,6 +13,7 @@ const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
 // stdio Node script; Claude launches it per session and routes every Write/
 // Edit/Bash permission check to it.
 const MCP_SERVER_PATH = path.join(__dirname, 'mcp-permission.js');
+const CLIENT_OPS_SERVER_PATH = path.join(__dirname, 'client-ops.js');
 const MCP_CONFIG_PATH = path.join(os.tmpdir(), 'runn-mcp-config.json');
 function ensureMcpConfig() {
   const cfg = {
@@ -21,6 +22,11 @@ function ensureMcpConfig() {
         type: 'stdio',
         command: process.execPath, // node binary inside this container/runtime
         args: [MCP_SERVER_PATH],
+      },
+      'client-ops': {
+        type: 'stdio',
+        command: process.execPath,
+        args: [CLIENT_OPS_SERVER_PATH],
       },
     },
   };
