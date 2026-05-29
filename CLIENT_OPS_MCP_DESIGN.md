@@ -53,12 +53,14 @@ design* and it is fully deterministic — there is no classifier to be wrong.
 ### How it works
 Instead of giving the model a raw shell and the client's `CLAUDE.md` full of real
 IPs, you expose each client task as a small set of **curated MCP tools**. A
-**local** MCP server — running inside the Runn worker container, never off-box —
-holds the real connection details and resolves abstract arguments to concrete
-hosts itself.
+**local, per-client** MCP server — running inside the Runn worker container,
+never off-box — holds the real connection details and resolves abstract
+arguments to concrete hosts itself. One server per client (`lthcs-ops`,
+`zis-ops`, …), selected by Runn based on the session's cwd; see §8.7 for the
+decision and rationale.
 
 ```
-  Claude (cloud)                Local client-ops MCP server         Client host
+  Claude (cloud)                Local <client>-ops MCP server       Client host
   ─────────────                 ────────────────────────────       ───────────
   calls tool:                   resolves "A" -> <LTHCS_HOST_A>
   zfs_status(site="A")  ──────▶ runs: ssh ... user@<real-ip>  ──────▶ zfs list
@@ -195,42 +197,52 @@ makes the boundary deterministic on both the leakage and the action axis.
 
 ## 4. Integration with Runn's existing machinery
 
-The good news is that Runn already has the load-bearing pieces; the `client-ops`
-server slots in beside them rather than replacing anything.
+The good news is that Runn already has the load-bearing pieces; the per-client
+`<client>-ops` server slots in beside them rather than replacing anything.
 
 - **Spawn path (`worker/bridge.js`):** Runn spawns the CLI with
   `--mcp-config <path>` and `--permission-prompt-tool mcp__runn__ask_permission`
-  (see `spawnSession` / `sendMessage`). Today `ensureMcpConfig()` writes a config
-  with a single server (`runn`, the permission tool). The `client-ops` server is
-  **a second entry in that same `mcpServers` map** — a sibling stdio Node process
-  launched per session. No new transport, no base-URL override, no proxy needed
-  for the operational-secret case; this is the cleanest hook point.
+  (see `spawnSession` / `sendMessage`). `ensureMcpConfig(cwd)` writes a
+  **per-cwd** config: the `runn` permission server is always present, and a
+  second entry — `<client>-ops` — is added **only when the session's cwd sits
+  under a known client's tree** (e.g. `/home/waz/projects/lthcs/...` →
+  `lthcs-ops`). Cwds that don't belong to a client (the Runn repo itself, a
+  generic runn-data card, …) get the permission server alone. No new
+  transport, no base-URL override, no proxy needed; this is the cleanest hook
+  point and the cwd-based selection is what concretely implements §8.7.
 
 - **Approval flow (`worker/mcp-permission.js`):** this existing stdio MCP server
   exposes `ask_permission`, which the CLI calls before any Write/Edit/Bash. It
   forwards to the worker over HTTP (`POST /permissions/request`), which parks the
   request, shows Allow/Deny in the chat UI, and replies. **Every mutating
-  `client-ops` tool call inherits this gate for free** — the CLI routes *all* tool
-  permission checks through the configured prompt tool, so a mutation surfaces the
-  same Allow/Deny card the operator already knows. We do **not** reinvent approval;
-  we reuse it. (The server can additionally hard-gate: read-only tools return
-  immediately; mutating tools can decline to act until they observe an allow.)
+  `<client>-ops` tool call inherits this gate for free** — the CLI routes *all*
+  tool permission checks through the configured prompt tool, so a mutation
+  surfaces the same Allow/Deny card the operator already knows. We do **not**
+  reinvent approval; we reuse it. Always-allow rules key on the full MCP tool
+  name (`mcp__lthcs-ops__restart_service`, etc.), so per-client server names
+  also keep the rule scope per-client — a "remember this" on an lthcs tool
+  cannot match a same-shortname tool on a future zis server. (The server can
+  additionally hard-gate: read-only tools return immediately; mutating tools
+  can decline to act until they observe an allow.)
 
 - **Where the server runs:** in the **Runn worker container**, the same place the
   real SSH keys (`~/.ssh`, read-only mount) and WireGuard-reachable routes already
   live. The secret resolution (`"A"` -> `<LTHCS_HOST_A>`) therefore happens exactly
   where the credentials already are, and never crosses the container boundary
-  toward the cloud. It is launched per-session over stdio (like the permission
-  server) so it shares the session's lifecycle.
+  toward the cloud. The matching per-client server is launched per-session over
+  stdio (like the permission server) so it shares the session's lifecycle.
 
 - **Single-writer lock:** `bridge.js` enforces one `claude` per cwd
   (`claimCwd`/`releaseCwd`), and Runn's concurrency rule is that the lock is
-  per-cwd, not global. The `client-ops` server is **stateless request/response over
-  stdio**, launched and torn down with each session, so it does not introduce a
-  long-running shared writer of its own and does not need its own lock — it lives
-  inside the session that already holds the cwd. (If a future version wanted a
-  persistent daemon — e.g. to hold an SSH ControlMaster — that would need its own
-  concurrency story; out of scope here.)
+  per-cwd, not global. The `<client>-ops` server is **stateless request/response
+  over stdio**, launched and torn down with each session, so it does not
+  introduce a long-running shared writer of its own and does not need its own
+  lock — it lives inside the session that already holds the cwd. The per-cwd
+  MCP-config file written by `ensureMcpConfig(cwd)` is also keyed by the cwd
+  slug, so concurrent sessions in different cwds never race on the config
+  path. (If a future version wanted a persistent daemon — e.g. to hold an SSH
+  ControlMaster — that would need its own concurrency story; out of scope
+  here.)
 
 - **Audit trail:** Claude Code writes the full session transcript as `.jsonl`
   under `~/.claude/projects/<cwd-slug>/<session_id>.jsonl` (see
@@ -362,12 +374,15 @@ design and is not legal advice; consult a qualified professional.*
    human-gated escape hatch. Three controls layer on top of the standard
    mutating-tier flow, so any one of them blocks an accidental call:
    - **Disabled by default.** Tool is filtered out of `tools/list` (and
-     `findByName`) unless `CLIENT_OPS_ALLOW_RAW_SSH=1` is set in the
-     environment of the Runn worker process. The handler re-checks the flag
-     at call time as defence in depth against a stale CLI tool cache. The
-     opt-in is per Runn invocation — picked over a per-session UI toggle
-     because it's the simplest workable mechanism and the operator already
-     restarts Runn to roll config; a future UI toggle is a strict superset.
+     `findByName`) unless the per-client allow flag is set in the
+     environment of the Runn worker process (`LTHCS_OPS_ALLOW_RAW_SSH=1`
+     for lthcs; future clients each get their own `<CLIENT>_OPS_ALLOW_RAW_SSH`
+     so opting one client in doesn't silently enable the hatch for another).
+     The handler re-checks the flag at call time as defence in depth against
+     a stale CLI tool cache. The opt-in is per Runn invocation — picked over
+     a per-session UI toggle because it's the simplest workable mechanism
+     and the operator already restarts Runn to roll config; a future UI
+     toggle is a strict superset.
    - **Visibly distinct approval, no blanket allow.** The Runn frontend
      renders the permission card in a red danger palette with an explicit
      warning, and the "Always allow" button is removed from the DOM for this
@@ -378,12 +393,12 @@ design and is not legal advice; consult a qualified professional.*
    - **Dedicated audit channel.** Every invocation appends a JSON-lines
      `start` entry (with timestamp, site label, resolved host, justification,
      and full command) AND a `end` entry (exit ok, duration, output sizes) to
-     a file separate from the session `.jsonl`. Path is
-     `$CLIENT_OPS_RAW_SSH_AUDIT_LOG` or by default
-     `$HOME/.claude/client-ops-raw-ssh-audit.log`. The audit file is on-box
-     only (the model never reads it), so the resolved host IS recorded there
-     for forensic correlation — the boundary's no-leak invariant applies to
-     the wire, not to the operator's own log.
+     a file separate from the session `.jsonl`. Path is the per-client
+     audit-log env var (`$LTHCS_OPS_RAW_SSH_AUDIT_LOG` for lthcs) or by
+     default `$HOME/.claude/<client>-ops-raw-ssh-audit.log`. The audit file
+     is on-box only (the model never reads it), so the resolved host IS
+     recorded there for forensic correlation — the boundary's no-leak
+     invariant applies to the wire, not to the operator's own log.
    The escape hatch deliberately re-incurs both fears (§2): stdout/stderr
    from an arbitrary command flow back to the model, and an arbitrary command
    acts on the box. That's the whole point — the curated boundary is narrow
@@ -392,10 +407,42 @@ design and is not legal advice; consult a qualified professional.*
 6. **Snapshot-before-mutate ergonomics.** Auto-snapshot per mutation vs one
    snapshot per session; naming/retention so these insurance snapshots don't
    themselves become send-base noise.
-7. **Per-client servers vs one server.** One `client-ops` server with a `client`
-   argument, or one server per client (`lthcs-ops`, `zis-ops`, …) selected by the
-   card's cwd/context? Per-client keeps blast radius and config scoped to the
-   client whose tree the session is in.
+7. **Per-client servers vs one server.** **[decided — per-client]** One
+   server per client (`lthcs-ops`, `zis-ops`, …), selected by Runn at spawn
+   time from the session's cwd: if the cwd sits under
+   `/home/waz/projects/<known-client>/...`, the matching `<client>-ops`
+   server is added to that session's MCP config; otherwise only the `runn`
+   permission server is registered. The runner-up was a single `client-ops`
+   server taking a `client` argument on every tool call. Three concrete
+   benefits decided it:
+   - **Smaller per-session model surface.** The model only sees the tools
+     for the client whose tree it's in — a session in `runn/` itself sees
+     none of them at all. Fewer tools in `tools/list` means less context
+     spend per turn and a smaller target for misuse / prompt-injection.
+   - **Naturally scoped always-allow rules.** Always-allow keys on the full
+     MCP tool name (`mcp__lthcs-ops__restart_service`), so a rule remembered
+     for lthcs cannot accidentally fire on a same-shortname tool in a future
+     `zis-ops` server. With a single shared server, every always-allow rule
+     would be cross-client by construction — the operator would have to
+     reason about it to keep blast radius small, instead of getting it for
+     free.
+   - **Clean home for divergent toolsets.** lthcs is ZFS replication +
+     Firebird; zis is SMB/Nextcloud; ngs is something else again. They
+     share approximately nothing. A single server forces the tool surface
+     to be the union of all clients' tools (or awkwardly conditional on the
+     `client` arg); per-client servers let each tool set evolve
+     independently with no signature contortions.
+
+   Cost: `bridge.js` learns a cwd→client mapping
+   (`/home/waz/projects/<x>/...` → `x` if `x` is a registered client) and
+   writes a per-cwd MCP config file instead of one global one. That cost is
+   contained — a single small function plus a per-session file in tmpdir —
+   and it's a one-time payment that all future per-client servers reuse.
+   Server-side, each client's tool catalogue lives in its own dedicated
+   directory and config (e.g. `worker/lthcs-ops*` + `$LTHCS_OPS_CONFIG`),
+   and shared scaffolding (the stdio MCP loop, the site-config loader, the
+   SSH helpers) gets extracted only when the second client's server is
+   actually written — YAGNI until then.
 8. **Persistent daemon question.** If an SSH ControlMaster / connection reuse is
    ever wanted, the stateless per-session model changes and needs its own
    concurrency story against the per-cwd lock.
