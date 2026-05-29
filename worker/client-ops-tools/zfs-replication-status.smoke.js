@@ -143,9 +143,9 @@ process.exit(2);
     assert.ok(init.result && init.result.serverInfo, 'initialize returned no serverInfo');
 
     const list = await rpc('tools/list', {});
-    assert.ok(Array.isArray(list.result.tools) && list.result.tools.length === 1, 'tools/list should return one tool');
-    const t = list.result.tools[0];
-    assert.strictEqual(t.name, 'zfs_replication_status');
+    assert.ok(Array.isArray(list.result.tools), 'tools/list should return an array');
+    const t = list.result.tools.find(x => x.name === 'zfs_replication_status');
+    assert.ok(t, 'zfs_replication_status not registered');
     assert.deepStrictEqual(t.inputSchema.properties.site.enum, ['A']);
 
     // Healthy path with a dataset → expect latest_snapshot + lag_seconds.

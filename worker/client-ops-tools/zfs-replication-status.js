@@ -21,7 +21,7 @@
 //     notes?: ["scrub_in_progress" | "resilver_in_progress" | …],
 //     error?: "<enum>" }                 // mutually exclusive with the success keys
 
-const { execFile } = require('child_process');
+const { sshBaseArgs, run } = require('./_ssh');
 
 const NAME = 'zfs_replication_status';
 const DESCRIPTION =
@@ -49,34 +49,6 @@ function sanitiseDataset(s) {
   if (typeof s !== 'string' || !s.length || s.length > 255) return null;
   if (!DATASET_RE.test(s)) return null;
   return s;
-}
-
-function sshBaseArgs({ host, user, ssh_key_path }) {
-  return [
-    '-i', ssh_key_path,
-    '-o', 'BatchMode=yes',
-    '-o', 'ConnectTimeout=8',
-    '-o', 'IdentitiesOnly=yes',
-    `${user}@${host}`,
-  ];
-}
-
-// Run a command via execFile (no local shell). Resolves with {ok, stdout, stderr}
-// — but the caller MUST NOT propagate stdout/stderr into a tool result.
-function run(cmd, args, { timeoutMs }) {
-  return new Promise((resolve) => {
-    execFile(
-      cmd, args,
-      { timeout: timeoutMs, maxBuffer: 1024 * 1024 },
-      (err, stdout, stderr) => {
-        resolve({
-          ok: !err,
-          stdout: String(stdout || ''),
-          stderr: String(stderr || ''),
-        });
-      },
-    );
-  });
 }
 
 // Parse `zpool status -x` output. We do NOT return any of this text — only

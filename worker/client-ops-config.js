@@ -37,12 +37,28 @@ function isNonEmptyString(v) {
   return typeof v === 'string' && v.length > 0;
 }
 
+function isPort(v) {
+  return Number.isInteger(v) && v >= 1 && v <= 65535;
+}
+
 // Validate one site entry. Returns the field name that's bad, or null if OK.
+// Required: host, user, ssh_key_path. Optional (read by specific tools):
+//   - vm_name        : virsh domain name for vm_liveness
+//   - service_port   : TCP port vm_liveness probes (1..65535)
+//   - service_host   : hostname/IP for the probe (defaults to "127.0.0.1"
+//                      on the remote, NOT the model)
+//   - db_path        : Firebird .fdb path for db_health_check
+//   - db_gstat_cmd   : override for the gstat binary (default "gstat")
 function badField(entry) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return '<entry>';
   if (!isNonEmptyString(entry.host)) return 'host';
   if (!isNonEmptyString(entry.user)) return 'user';
   if (!isNonEmptyString(entry.ssh_key_path)) return 'ssh_key_path';
+  if (entry.vm_name      !== undefined && !isNonEmptyString(entry.vm_name))      return 'vm_name';
+  if (entry.service_port !== undefined && !isPort(entry.service_port))           return 'service_port';
+  if (entry.service_host !== undefined && !isNonEmptyString(entry.service_host)) return 'service_host';
+  if (entry.db_path      !== undefined && !isNonEmptyString(entry.db_path))      return 'db_path';
+  if (entry.db_gstat_cmd !== undefined && !isNonEmptyString(entry.db_gstat_cmd)) return 'db_gstat_cmd';
   return null;
 }
 
