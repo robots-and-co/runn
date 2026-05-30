@@ -2327,6 +2327,67 @@
   .project-goal-anchor .goal-preview.is-empty {
     color: var(--ink-3); font-style: italic;
   }
+  /* Goal panel — chat-style notes-only editor for projects. Each notes_md
+     paragraph is a bubble; sending appends a new paragraph. The other
+     project settings live behind the cog so this stays focused on "the why". */
+  .goal-panel {
+    display: flex; flex-direction: column; height: 100%;
+    background: var(--paper);
+  }
+  .goal-panel[hidden] { display: none; }
+  .goal-panel-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px; border-bottom: 1px solid var(--line); flex-shrink: 0;
+  }
+  .goal-panel-title {
+    font-size: 16px; font-weight: 600; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+  }
+  .goal-panel-body {
+    flex: 1; overflow-y: auto; padding: 16px 14px;
+  }
+  .goal-bubbles { display: flex; flex-direction: column; gap: 10px; }
+  .goal-bubble {
+    align-self: flex-end; max-width: 85%;
+    padding: 10px 14px; background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent, #c8b88a) 25%, var(--line));
+    border-radius: 14px;
+    cursor: pointer; white-space: pre-wrap; word-wrap: break-word;
+    font-size: 14px; line-height: 1.45; color: var(--ink);
+  }
+  .goal-bubble:hover {
+    border-color: color-mix(in srgb, var(--accent, #c8b88a) 50%, var(--line));
+  }
+  .goal-bubble.is-empty {
+    align-self: center; background: transparent; border: 1px dashed var(--line);
+    cursor: default; color: var(--ink-3); font-style: italic;
+    padding: 12px 16px;
+  }
+  .goal-bubble-edit {
+    align-self: flex-end; width: 85%;
+    padding: 10px 14px; background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent, #c8b88a) 35%, var(--line));
+    border-radius: 14px; resize: none; outline: none;
+    font: inherit; font-size: 14px; line-height: 1.45; color: var(--ink);
+  }
+  .goal-input-row {
+    display: flex; gap: 8px; padding: 10px 14px;
+    border-top: 1px solid var(--line); background: var(--paper); flex-shrink: 0;
+  }
+  .goal-input {
+    flex: 1; resize: none; border: 1px solid var(--line); border-radius: 10px;
+    padding: 8px 12px; min-height: 38px; max-height: 240px;
+    font: inherit; font-size: 14px; color: var(--ink);
+    background: var(--paper);
+  }
+  .goal-input:focus { outline: none; border-color: var(--accent, #c8b88a); }
+  .goal-send {
+    padding: 0 14px; min-width: 44px;
+    border: 1px solid var(--line); border-radius: 10px;
+    background: var(--paper); cursor: pointer;
+    font-size: 16px; color: var(--ink-2);
+  }
+  .goal-send:hover { background: var(--paper-2, var(--paper)); border-color: var(--ink-3); }
   .tasks-summary {
     font-size: 11px; color: var(--ink-3);
   }
@@ -3491,6 +3552,24 @@
         </div>
       </div>
     </section>
+  </div>
+</aside>
+
+<!-- Goal panel: chat-style description editor for a project. Opens from the
+     pinned goal-anchor row in pane 2. notes_md paragraphs render as bubbles
+     (mirrors firstturn-extra style); send appends a new paragraph. The
+     project's other settings (client/billing/perms/tags) live behind the cog. -->
+<aside class="goal-panel" id="goalPanel" aria-hidden="true" hidden>
+  <div class="goal-panel-header">
+    <button class="chat-back pane-mobile-back" id="goalBackBtn" type="button" title="Back">←</button>
+    <div class="goal-panel-title" id="goalPanelTitle">Goal</div>
+  </div>
+  <div class="goal-panel-body" id="goalPanelBody">
+    <div class="goal-bubbles" id="goalBubbles"></div>
+  </div>
+  <div class="goal-input-row">
+    <textarea class="goal-input" id="goalInput" rows="1" placeholder="Describe what this project is for. One thought per send."></textarea>
+    <button class="goal-send" id="goalSend" type="button" title="Add to description">↵</button>
   </div>
 </aside>
 
@@ -4812,8 +4891,14 @@ const projectStepsCount   = document.getElementById('projectStepsCount');
 const projectToggleDone   = document.getElementById('projectToggleDoneTasks');
 const projectFab          = document.getElementById('projectFab');
 const chatSettingsPaneEl  = document.getElementById('chatSettingsPane');
+const goalPanel           = document.getElementById('goalPanel');
+const goalPanelTitle      = document.getElementById('goalPanelTitle');
+const goalBubbles         = document.getElementById('goalBubbles');
+const goalInput           = document.getElementById('goalInput');
+const goalSend            = document.getElementById('goalSend');
+const goalBackBtn         = document.getElementById('goalBackBtn');
 let openProjectId = null;       // the project shown in pane 2
-let pane3Mode = null;           // 'task' | 'settings' | 'billing' | null
+let pane3Mode = null;           // 'task' | 'settings' | 'billing' | 'invoice' | 'goal' | null
 // Alias the old chatFabAdd reference to the new pane-2 FAB so legacy code paths
 // that toggle .disabled / .hidden / fire .click() still work without edits.
 const chatFabAdd = projectFab;
@@ -4906,9 +4991,13 @@ function setPane3(mode, id) {
   billingPanel.setAttribute('aria-hidden', mode === 'billing' ? 'false' : 'true');
   invoicePage.hidden        = mode !== 'invoice';
   invoicePage.setAttribute('aria-hidden', mode === 'invoice' ? 'false' : 'true');
-  // Highlight the goal anchor when its target (project settings) is open.
+  if (goalPanel) {
+    goalPanel.hidden = mode !== 'goal';
+    goalPanel.setAttribute('aria-hidden', mode === 'goal' ? 'false' : 'true');
+  }
+  // Highlight the goal anchor while its target (goal panel) is open.
   const _ga = document.querySelector('.project-goal-anchor');
-  if (_ga) _ga.classList.toggle('is-active', mode === 'settings');
+  if (_ga) _ga.classList.toggle('is-active', mode === 'goal');
   if (mode !== 'invoice') { currentInvoiceId = null; draftInvoice = null; }
   // Side effects per mode.
   if (mode === null) {
@@ -5931,9 +6020,138 @@ function buildGoalAnchorEl(project) {
   el.querySelector('.goal-preview').textContent = hasGoal
     ? preview
     : 'Click to describe what this project is for…';
-  el.addEventListener('click', () => setSettingsView(true));
+  el.addEventListener('click', () => openGoal(project.id));
   return el;
 }
+
+// Goal panel — chat-style notes-only editor for a project's description.
+// notes_md splits on blank lines (same splitTurns used elsewhere); each
+// paragraph is a bubble, click-to-edit, blank-save deletes. Sending appends
+// a new paragraph. Other project settings (client/billing/perms/tags) stay
+// behind the cog so this stays focused on "the why".
+function openGoal(projectId) {
+  const card = cards.get(projectId);
+  if (!card) return;
+  openCardId = projectId;
+  setPane3('goal', projectId);
+  renderGoal(card);
+  if (isMobileLayout()) goPane(3);
+  if (history.state?.runnPane !== 3) {
+    history.pushState({ runnPane: 3, mode: 'goal', id: projectId }, '');
+  }
+}
+
+let _goalEditingIndex = null;
+
+function renderGoal(card) {
+  if (!goalPanel) return;
+  goalPanelTitle.textContent = `Goal · ${card.title || 'untitled project'}`;
+  goalBubbles.replaceChildren();
+  const turns = splitTurns(card.notes_md);
+  if (turns.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'goal-bubble is-empty';
+    empty.textContent = 'No description yet. Add a line below to start.';
+    goalBubbles.appendChild(empty);
+  } else {
+    for (let i = 0; i < turns.length; i++) {
+      const b = document.createElement('div');
+      b.className = 'goal-bubble';
+      b.dataset.index = String(i);
+      b.textContent = turns[i];
+      b.title = 'Click to edit';
+      b.addEventListener('click', () => editGoalBubble(i));
+      goalBubbles.appendChild(b);
+    }
+  }
+  autoGrowGoalInput();
+  // Scroll to bottom so the latest bubble (or input) is in view.
+  requestAnimationFrame(() => {
+    const body = document.getElementById('goalPanelBody');
+    if (body) body.scrollTop = body.scrollHeight;
+  });
+}
+
+function autoGrowGoalInput() {
+  if (!goalInput) return;
+  goalInput.style.height = 'auto';
+  goalInput.style.height = Math.min(goalInput.scrollHeight, 240) + 'px';
+}
+
+async function sendGoalTurn() {
+  if (!openCardId) return;
+  const card = cards.get(openCardId);
+  if (!card) return;
+  const val = (goalInput.value || '').trim();
+  if (!val) return;
+  const turns = splitTurns(card.notes_md);
+  turns.push(val);
+  const nextNotes = joinTurns(turns);
+  card.notes_md = nextNotes;
+  goalInput.value = '';
+  autoGrowGoalInput();
+  renderGoal(card);
+  renderProjectSteps(); // refresh the goal-anchor preview in pane 2
+  try { await patchCard(openCardId, { notes_md: nextNotes }); }
+  catch (e) { console.error(e); }
+}
+
+function editGoalBubble(index) {
+  if (_goalEditingIndex != null) return;
+  if (!openCardId) return;
+  const card = cards.get(openCardId);
+  if (!card) return;
+  const turns = splitTurns(card.notes_md);
+  if (index < 0 || index >= turns.length) return;
+  const bubble = goalBubbles.querySelector(`[data-index="${index}"]`);
+  if (!bubble) return;
+  const ta = document.createElement('textarea');
+  ta.className = 'goal-bubble-edit';
+  ta.value = turns[index];
+  bubble.replaceWith(ta);
+  _goalEditingIndex = index;
+  const grow = () => {
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight + 4, 400) + 'px';
+  };
+  grow();
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  const commit = (save) => {
+    if (_goalEditingIndex == null) return;
+    _goalEditingIndex = null;
+    const newVal = save ? ta.value.trim() : turns[index];
+    const next = [...turns];
+    if (save && !newVal) next.splice(index, 1);
+    else                 next[index] = newVal;
+    const nextNotes = joinTurns(next);
+    const changed = nextNotes !== (card.notes_md || '');
+    card.notes_md = nextNotes;
+    renderGoal(card);
+    renderProjectSteps();
+    if (save && changed) {
+      patchCard(openCardId, { notes_md: nextNotes }).catch(console.error);
+    }
+  };
+  ta.addEventListener('input', grow);
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commit(true); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); commit(false); }
+  });
+  ta.addEventListener('blur', () => commit(true));
+}
+
+if (goalSend)    goalSend.addEventListener('click', sendGoalTurn);
+if (goalInput) {
+  goalInput.addEventListener('input', autoGrowGoalInput);
+  goalInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendGoalTurn(); }
+  });
+}
+if (goalBackBtn) goalBackBtn.addEventListener('click', () => {
+  setPane3(null);
+  if (isMobileLayout()) goPane(2);
+});
 
 function buildStepEl(step, depth) {
   const el = document.createElement('div');
@@ -8466,7 +8684,12 @@ function connectWS() {
         renderAll();
       }
       // Pane 3: refresh whichever task is currently open.
-      if (openCardId === msg.card.id) applyPanel(msg.card);
+      if (openCardId === msg.card.id) {
+        applyPanel(msg.card);
+        // Goal panel reads notes_md directly; re-render bubbles on remote
+        // patches (e.g. notes_md edited in another tab).
+        if (pane3Mode === 'goal') renderGoal(msg.card);
+      }
       // Pane 2: refresh the task list if the changed card belongs to the open
       // project — covers sibling-status changes, AI-exit transitions, etc.
       if (openProjectId && descendsFrom(msg.card, openProjectId)) {
