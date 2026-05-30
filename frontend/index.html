@@ -2291,6 +2291,42 @@
   }
   .chat-step.drop-before::before { top: -5px; }
   .chat-step.drop-after::after   { bottom: -5px; }
+  /* Goal anchor — pinned pseudo-step at slot 0 of the project's task list.
+     Opens the project description in panel 3 settings. Visually distinct from
+     real tasks (no chips, no drag handle, accent-coloured left edge) so it
+     reads as the project's why, not a task. Solves design goals #1 + #5
+     (clickable-top-of-list + persistent overview). */
+  .project-goal-anchor {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; margin-bottom: 10px;
+    background: var(--paper); border: 1px solid var(--line);
+    border-left: 3px solid #c8b88a;
+    border-radius: 8px; cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  .project-goal-anchor:hover {
+    border-color: color-mix(in srgb, var(--ink-3) 50%, var(--line));
+    border-left-color: #c8b88a;
+  }
+  .project-goal-anchor.is-active {
+    background: linear-gradient(to right, var(--accent-soft) 0%, var(--paper) 48%);
+  }
+  .project-goal-anchor .goal-icon { font-size: 16px; line-height: 1; flex-shrink: 0; }
+  .project-goal-anchor .goal-body {
+    flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  }
+  .project-goal-anchor .goal-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--ink-3); font-weight: 600;
+  }
+  .project-goal-anchor .goal-preview {
+    font-size: 14px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-height: 1.35em;
+  }
+  .project-goal-anchor .goal-preview.is-empty {
+    color: var(--ink-3); font-style: italic;
+  }
   .tasks-summary {
     font-size: 11px; color: var(--ink-3);
   }
@@ -4870,6 +4906,9 @@ function setPane3(mode, id) {
   billingPanel.setAttribute('aria-hidden', mode === 'billing' ? 'false' : 'true');
   invoicePage.hidden        = mode !== 'invoice';
   invoicePage.setAttribute('aria-hidden', mode === 'invoice' ? 'false' : 'true');
+  // Highlight the goal anchor when its target (project settings) is open.
+  const _ga = document.querySelector('.project-goal-anchor');
+  if (_ga) _ga.classList.toggle('is-active', mode === 'settings');
   if (mode !== 'invoice') { currentInvoiceId = null; draftInvoice = null; }
   // Side effects per mode.
   if (mode === null) {
@@ -4940,6 +4979,12 @@ function renderProjectSteps() {
     if (projectStepsHeader) projectStepsHeader.hidden = true;
     return;
   }
+  // Goal anchor — pinned pseudo-step at slot 0 (above any bucket dividers).
+  // Clicking opens project settings (where the description editor lives) so the
+  // project's why is always one tap away. Not a real task: skipped by the
+  // children loop and the DnD handler (different class).
+  const _projectCard = cards.get(openProjectId);
+  if (_projectCard) projectSteps.appendChild(buildGoalAnchorEl(_projectCard));
   // Pane 2 is a flat task list — only direct children of the project. No
   // nesting, no recursion. Tasks are a single sortable list per project.
   const children = [];
@@ -5853,6 +5898,41 @@ function renderSteps() {
     }
   }
   updateSectionSummaries();
+}
+
+// Goal anchor row — pinned at top of the project's task list. Reads notes_md
+// off the project card, previews the first non-empty line, and on click opens
+// panel 3 in settings mode (where the full description editor lives).
+function buildGoalAnchorEl(project) {
+  const el = document.createElement('div');
+  el.className = 'project-goal-anchor';
+  el.dataset.projectId = project.id;
+  if (pane3Mode === 'settings' && openCardId === project.id) {
+    el.classList.add('is-active');
+  }
+  const notes = (project.notes_md || '').trim();
+  let previewLine = '';
+  if (notes) {
+    for (const raw of notes.split('\n')) {
+      const stripped = raw.replace(/^[#>*\-\s]+/, '').trim();
+      if (stripped) { previewLine = stripped; break; }
+    }
+    if (!previewLine) previewLine = notes;
+  }
+  const preview = previewLine.length > 140 ? previewLine.slice(0, 137) + '…' : previewLine;
+  const hasGoal = !!notes;
+  el.innerHTML = `
+    <span class="goal-icon">${hasGoal ? '📝' : '✨'}</span>
+    <div class="goal-body">
+      <div class="goal-label">Goal · ${escapeHtml(project.title || 'untitled project')}</div>
+      <div class="goal-preview ${hasGoal ? '' : 'is-empty'}"></div>
+    </div>
+  `;
+  el.querySelector('.goal-preview').textContent = hasGoal
+    ? preview
+    : 'Click to describe what this project is for…';
+  el.addEventListener('click', () => setSettingsView(true));
+  return el;
 }
 
 function buildStepEl(step, depth) {
