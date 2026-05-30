@@ -34,12 +34,56 @@ What stays:
 - The invoice format (described as "near perfect" in refinement).
 - Hours tracking on the unit of work (now the stream, not the task).
 - Per-cwd lock (one client's workspace = one Claude writer at a time).
-- The MCP permission gate.
+- The MCP permission gate (see section 2 — non-negotiable).
 - Plan-then-apply approval flow.
 
 ---
 
-## 2. UX shape
+## 2. Hard constraints (non-negotiable)
+
+These are not features — they are the security boundary. Every other
+decision yields to them.
+
+**All tool access goes through MCP. No raw shell into client networks.
+No raw SSH.**
+
+The old Runn already routed every Write/Edit/Bash through a custom
+permission MCP server (`mcp__runn__ask_permission`). Runn 2 extends this
+and treats it as load-bearing:
+
+- The permission gate is mandatory for every spawn. Not optional, not a
+  user-toggle, not a per-client override.
+- Each client workspace gets its own MCP ops server (`<client>-ops`)
+  exposing a curated set of tools — e.g. `ssh_exec_on_known_host(host,
+  command)`, `read_zfs_status(pool)`, `restart_named_service(name)`. These
+  are the **only** way the spawned Claude reaches the client's networked
+  machines.
+- The spawned Claude cannot type `ssh user@host …` in Bash and have it
+  work. The MCP layer intercepts. Bash is for local-workspace operations
+  only (file edits, npm, git inside the worktree). Anything that crosses
+  a network boundary must be a curated MCP tool call.
+- The `raw_ssh_exec` escape hatch from the old Runn (carried over from
+  commit `9771080`) is preserved for cases where no curated tool fits.
+  It is human-gated per call and blocked from blanket approval, exactly
+  like `apply_plan`. Use is auditable in stderr.
+- A new client onboarded without an ops MCP server can read its own
+  workspace and edit files there, but reaches no networked machine until
+  a curated ops server is written. This is a feature, not a gap — it
+  forces the per-client tool surface to be deliberate.
+
+**Why this matters.** A spawned Claude with `bypassPermissions` AND raw
+shell access AND the operator's SSH keys is a pivot point into every
+client network simultaneously. The MCP layer is the only thing that
+prevents a hallucinated `ssh root@prod-db rm -rf /` from being
+executable. Runn 2 must not trade this for ergonomics.
+
+**Build implication.** MCP scaffolding is **step 1** of the build
+sequence below — before the frontend, before `/streams` CRUD. The
+frontend can be sketchy while MCP is solid; never the inverse.
+
+---
+
+## 3. UX shape
 
 **Two panes** (was three):
 - **Left**: chat input at the top, always focused. List of streams below,
@@ -64,7 +108,7 @@ turn too).
 
 ---
 
-## 3. Data model
+## 4. Data model
 
 ```
 streams/<id>.json
@@ -97,7 +141,7 @@ settings.json
 
 ---
 
-## 4. What carries forward from the old machine
+## 5. What carries forward from the old machine
 
 ```
 ~/runn-data/clients/         → import as-is
@@ -110,7 +154,7 @@ settings.json
 /etc/wireguard/              → copy configs as root; re-bring-up tunnels
 ```
 
-## 5. What gets archived but NOT imported
+## 6. What gets archived but NOT imported
 
 ```
 ~/runn-data/cards/           → tar+gzip into /home/waz/runn-archive/cards-YYYYMMDD.tar.gz
@@ -123,7 +167,7 @@ settings.json
 
 ---
 
-## 6. NUC bootstrap
+## 7. NUC bootstrap
 
 1. Install Debian 12 (stable) or Ubuntu 24.04 LTS to the NVMe.
 2. Create user `waz` with sudo. SSH-copy-id the existing public key so the
@@ -138,7 +182,7 @@ settings.json
 
 ---
 
-## 7. Data copy (run on NUC, pulling from old host)
+## 8. Data copy (run on NUC, pulling from old host)
 
 ```bash
 # From the NUC, with ssh access to the old host:
@@ -158,7 +202,7 @@ ssh $OLD 'tar -czf - -C /home/waz/runn-data cards' > /home/waz/runn-archive/card
 
 ---
 
-## 8. Build sequence for Runn 2
+## 9. Build sequence for Runn 2
 
 Greenfield repo: `~/projects/runn2/`. Suggested stack — same pattern as old
 Runn (proven, simple):
@@ -172,29 +216,49 @@ Runn (proven, simple):
 
 Build order (incremental, each step shippable):
 
-1. **Backend skeleton**: `/streams` CRUD, `/clients` (already populated by
+1. **MCP scaffolding first** (section 2 — non-negotiable; the rest of the
+   stack assumes it). Bring up before any UI:
+   - `worker/mcp-permission.js` — the `ask_permission` gate. Copy verbatim
+     from old Runn; this code is proven and the protocol shape matters more
+     than its prettiness.
+   - Per-client ops server template (`worker/lthcs-ops.js` style). Port
+     each existing client's curated tool set (`lthcs-ops-tools/*.js` etc.).
+   - Per-cwd MCP config generation in `bridge.js` (the `/tmp` config-file
+     pattern). The spawned Claude gets the permission gate + the matching
+     `<client>-ops` server based on cwd prefix.
+   - The `raw_ssh_exec` human-gated escape hatch (carried from old Runn
+     commit `9771080`). Blocked from blanket approval like `apply_plan`.
+   - **Acceptance test**: a spawned Claude in any client workspace, asked
+     to `ssh user@host echo hi` via Bash, gets routed through
+     `ask_permission` and the operator can decline. No path bypasses this.
+2. **Backend skeleton**: `/streams` CRUD, `/clients` (already populated by
    the copy step), `/settings`. WebSocket broadcaster.
-2. **Frontend skeleton**: 2-pane layout. Left = chat input + stream list
+3. **Frontend skeleton**: 2-pane layout. Left = chat input + stream list
    (no search yet, just chronological). Right = stream chat view (read-only
    for now).
-3. **Send turn**: typing in the chat input creates a new stream (no client
+4. **Send turn**: typing in the chat input creates a new stream (no client
    assigned) and posts the first turn. AI is NOT spawned yet — just storage.
-4. **AI client proposal**: after first turn, call Claude with a tiny prompt
+5. **AI client proposal**: after first turn, call Claude with a tiny prompt
    ("given this first message, which client?") and surface a confirm chip.
-5. **AI spawn**: assigned-client streams spawn Claude in the client's cwd,
-   stream-json output parsed like old Runn.
-6. **Heuristic search**: fuzzy text match in the list. Lowercase substring +
+6. **AI spawn**: assigned-client streams spawn Claude in the client's cwd,
+   stream-json output parsed like old Runn. The MCP config from step 1
+   is wired into every spawn — no spawn without the permission gate.
+7. **Plan-then-apply approval** (carry from old Runn commit `995623c`).
+   Mutating tool calls go through plan storage → human approval → apply.
+   Non-trivial to design from scratch but proven in old Runn's code; port
+   `worker/server.js:875–921` and the matching frontend modal.
+8. **Heuristic search**: fuzzy text match in the list. Lowercase substring +
    recency ranking is fine; no fancy lib needed.
-7. **Hours tracking**: live timer same shape as old Runn (start when AI is
+9. **Hours tracking**: live timer same shape as old Runn (start when AI is
    spawned or user starts typing; stop on done / blur for human streams).
-8. **Status & lifecycle**: status chip on each stream; transitions.
-9. **Billing view**: outstanding rollup per client; reuse old Runn's
-   formulas (hours × rate, GST, currency).
-10. **Invoice composer**: pull done+unbilled streams for a client. AI
+10. **Status & lifecycle**: status chip on each stream; transitions.
+11. **Billing view**: outstanding rollup per client; reuse old Runn's
+    formulas (hours × rate, GST, currency).
+12. **Invoice composer**: pull done+unbilled streams for a client. AI
     suggests project groupings; user can drag streams between groupings.
-11. **Invoice issue**: POST `/invoices`; flip stream status to `invoiced`.
+13. **Invoice issue**: POST `/invoices`; flip stream status to `invoiced`.
     Reuse the existing invoice JSON shape (with `items[].stream_id`).
-12. **Worktree per stream** (was Phase B in the old plan):
+14. **Worktree per stream** (was Phase B in the old plan):
     - For streams whose client workspace is a git repo, create a worktree
       at `~/runn-worktrees/<stream-id>/` on branch `runn/<stream-id>`.
     - Auto-commit at end of each AI session; auto-push to GitHub
@@ -204,14 +268,21 @@ Build order (incremental, each step shippable):
 
 Skip from old Runn (intentionally not carried):
 - `worker/cron.js` sketch (never wired in old Runn either).
-- The plan-then-apply tier — revisit later if needed; not core to v1.
 - Drag-to-reorder (no task list to reorder anymore).
 - Project-level Runn-mode switch (replaced by per-stream status).
+- The old "client" → workspace migration scripts (one-shot, done on old
+  machine, not relevant to NUC).
 
 ---
 
-## 9. Cutover
+## 10. Cutover
 
+- **Hard prerequisite for cutover**: every client that the operator
+  actively works with must have its ops MCP server ported to Runn 2
+  before the NUC takes over for that client. A spawn into a client
+  workspace without its ops server can only edit local files; it cannot
+  reach the client's machines. Triage list: LTHCS, ZIS, and any client
+  with networked-host tools in `lthcs-ops-tools/` style today.
 - Old machine stays running and read-only — no new streams created there.
 - New work goes straight to the NUC.
 - Run both for ~1 week. Migrate any half-done streams manually by copying
@@ -222,7 +293,7 @@ Skip from old Runn (intentionally not carried):
 
 ---
 
-## 10. Open decisions during build
+## 11. Open decisions during build
 
 These were discussed but not fully resolved — let them surface as the user
 hits them in practice rather than deciding upfront:
@@ -242,7 +313,7 @@ hits them in practice rather than deciding upfront:
 
 ---
 
-## 11. Memory to carry forward
+## 12. Memory to carry forward
 
 The auto-loaded memory at `~/.claude/projects/-home-waz-projects-runn/memory/`
 on the old machine should be copied to the equivalent path on the NUC. Key
@@ -256,6 +327,8 @@ memories already relevant to Runn 2:
 - `project_runn_mission.md` — household + client mix, "illusion of security".
 - `runn_spawn_env_node_only.md` — Runn-spawned containers are Node-only
   (no python3/jq/column).
+- `project_mcp_only_access.md` — MCP is the security boundary; no raw SSH
+  or shell to client networks; per-client ops servers define what's reachable.
 
 The path will need updating if the new repo lives at `~/projects/runn2/`
 instead of `~/projects/runn/` — Claude Code derives the memory project
@@ -263,6 +336,7 @@ slug from cwd.
 
 ---
 
-TL;DR: clean rebuild on NUC; stream-only data model; copy clients +
-invoices + settings + workspaces + .claude verbatim; archive old cards
-unimported; build new Runn in 12 incremental shippable steps.
+TL;DR: clean rebuild on NUC; MCP-only tool access is the load-bearing
+constraint; stream-only data model; copy clients + invoices + settings +
+workspaces + .claude verbatim; archive old cards unimported; build new
+Runn in 14 incremental shippable steps starting with MCP scaffolding.
