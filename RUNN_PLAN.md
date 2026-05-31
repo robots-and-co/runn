@@ -1,8 +1,11 @@
-# Runn 2.0 — fresh build on the NUC
+# Runn — clean-room rebuild on the NUC
 
 A clean-room rebuild of Runn from a refinement conversation that radically
-simplified the data model. Hardware moves from the current big box to a
-Gen 12 i5 NUC with 64GB / Gen4 NVMe.
+simplified the data model. It keeps the name **Runn** (not "Runn 2"): the new
+build replaces the old one in place — same repo, same canonical
+`~/projects/runn` path — with the old card-based code retained only as git
+history. Hardware moves from the current big box to a Gen 12 i5 NUC with
+64GB / Gen4 NVMe.
 
 This doc briefs the host's Claude Code desktop session: model + migration +
 build sequence. Self-contained — does not require reading the old codebase.
@@ -77,7 +80,7 @@ decision yields to them.
 No raw SSH.**
 
 The old Runn already routed every Write/Edit/Bash through a custom
-permission MCP server (`mcp__runn__ask_permission`). Runn 2 extends this
+permission MCP server (`mcp__runn__ask_permission`). The rebuild extends this
 and treats it as load-bearing:
 
 - The permission gate is mandatory for every spawn. Not optional, not a
@@ -107,7 +110,7 @@ and treats it as load-bearing:
 shell access AND the operator's SSH keys is a pivot point into every
 client network simultaneously. The MCP layer is the only thing that
 prevents a hallucinated `ssh root@prod-db rm -rf /` from being
-executable. Runn 2 must not trade this for ergonomics.
+executable. The rebuild must not trade this for ergonomics.
 
 **Build implication.** MCP scaffolding is **step 1** of the build
 sequence below — before the frontend, before `/jobs` CRUD. The
@@ -230,11 +233,10 @@ drag-between-groups.
                                 (b) PATH FIDELITY — sessions + memory are keyed
                                     by cwd slug (e.g. -home-waz-projects-runn).
                                     They only resolve if /home/waz/... paths are
-                                    identical. Because RUNN2 lives at
-                                    ~/projects/runn2, copy the old
-                                    -home-waz-projects-runn memory slug folder
-                                    to -home-waz-projects-runn2 or it won't
-                                    auto-load (see section 12).
+                                    identical. Because the rebuild keeps the
+                                    ~/projects/runn path, the slug is unchanged
+                                    and memory just auto-loads — no rename
+                                    needed (see section 12).
 ~/.ssh/                      → rsync (keys; known_hosts will rebuild on first use)
 /etc/wireguard/              → copy configs as root; re-bring-up tunnels
 ```
@@ -246,8 +248,11 @@ drag-between-groups.
                                 Old card model doesn't fit the new schema.
                                 Keep the archive for reference / future grep if needed.
 ~/runn-data/projects/        → already retired in the old Runn; ignore.
-~/projects/runn/             → the OLD Runn codebase. Don't run it on the NUC.
-                                Keep the repo on GitHub as historical reference.
+old card-based Runn code     → it's the PRIOR HISTORY of this same repo (we keep
+                                the name "Runn"). Tag it before the rewrite
+                                (e.g. `git tag v1-cards`) so it's recoverable,
+                                then build the new Runn over it in place. Don't
+                                check out / run the old commits on the NUC.
 ```
 
 ---
@@ -283,13 +288,9 @@ rsync -avzP --delete $OLD:/home/waz/.ssh/       /home/waz/.ssh/
 # AUTH: don't trust the copied token — re-sign-in on the NUC (same account):
 claude   # then complete the sign-in / OAuth flow once
 
-# MEMORY SLUG: RUNN2 lives at ~/projects/runn2, so the old runn memory won't
-# auto-load there. Copy the slug folder to the new name (keep the old too):
-cp -a /home/waz/.claude/projects/-home-waz-projects-runn/memory \
-      /home/waz/.claude/projects/-home-waz-projects-runn2/memory 2>/dev/null \
-  || mkdir -p /home/waz/.claude/projects/-home-waz-projects-runn2 && \
-     cp -a /home/waz/.claude/projects/-home-waz-projects-runn/memory \
-           /home/waz/.claude/projects/-home-waz-projects-runn2/memory
+# MEMORY SLUG: the rebuild keeps the ~/projects/runn path, so the
+# -home-waz-projects-runn memory slug is unchanged and auto-loads as-is.
+# No rename needed (this is why keeping the name "Runn" simplifies migration).
 
 # Archive (NOT import) the old cards:
 mkdir -p /home/waz/runn-archive
@@ -298,17 +299,27 @@ ssh $OLD 'tar -czf - -C /home/waz/runn-data cards' > /home/waz/runn-archive/card
 
 ---
 
-## 9. Build sequence for Runn 2
+## 9. Build sequence for Runn
 
-Greenfield repo: `~/projects/runn2/`. Suggested stack — same pattern as old
+Clean-room rewrite in place at `~/projects/runn/` (same repo, old card-based
+code tagged in history — see section 6). Suggested stack — same pattern as old
 Runn (proven, simple):
 
-- Single-file vanilla-JS frontend (`frontend/index.html`)
+- Single-file vanilla-JS frontend (`frontend/index.html`),
+  **mobile-breakpoint first-class** (see below)
 - Small Node backend (`worker/server.js`) on port `17777`
-- Docker container `runn2` with bind-mounts for `frontend/`, `~/runn-data/`,
+- Docker container `runn` with bind-mounts for `frontend/`, `~/runn-data/`,
   `~/.claude/`, `~/projects/`, `~/.ssh:ro`
 - WebSocket for live UI updates
 - MCP permission server (reuse the pattern — `worker/mcp-permission.js`)
+
+**Mobile is a first-class target, not a retrofit.** The "fix server A"
+emergency case is often typed from a phone. Build the two-pane layout
+responsive from step 3: on a narrow viewport the two panes collapse to one
+(job list ↔ open chat) with a back gesture, the chat input stays thumb-
+reachable and always focused, tap targets are finger-sized, and the
+billing/invoice views reflow to a single column. Design the breakpoints up
+front; never bolt them on after a desktop-only build.
 
 Build order (incremental, each step shippable):
 
@@ -329,9 +340,11 @@ Build order (incremental, each step shippable):
      `ask_permission` and the operator can decline. No path bypasses this.
 2. **Backend skeleton**: `/jobs` CRUD, `/clients` (already populated by
    the copy step), `/settings`. WebSocket broadcaster.
-3. **Frontend skeleton**: 2-pane layout. Left = job list + "+ Job" button
-   (no search yet, just chronological). Right = job chat view (read-only
-   for now).
+3. **Frontend skeleton**: 2-pane layout, **responsive from the start**. Left =
+   job list + "+ Job" button (no search yet, just chronological). Right = job
+   chat view (read-only for now). On a narrow (phone) viewport the two panes
+   collapse to one with a back gesture; chat input stays thumb-reachable.
+   Establish the breakpoints here, before any view is built desktop-only.
 4. **Send turn**: "+ Job" creates a new job (no client assigned) and posts
    the first turn; typing into an open job's chat continues it. AI is NOT
    spawned yet — just storage.
@@ -415,7 +428,7 @@ Skip from old Runn (intentionally not carried):
 ## 10. Cutover
 
 - **Hard prerequisite for cutover**: every client that the operator
-  actively works with must have its ops MCP server ported to Runn 2
+  actively works with must have its ops MCP server ported to the rebuild
   before the NUC takes over for that client. A spawn into a client
   workspace without its ops server can only edit local files; it cannot
   reach the client's machines. Triage list: LTHCS, ZIS, and any client
@@ -462,7 +475,7 @@ hits them in practice rather than deciding upfront:
 
 The auto-loaded memory at `~/.claude/projects/-home-waz-projects-runn/memory/`
 on the old machine should be copied to the equivalent path on the NUC. Key
-memories already relevant to Runn 2:
+memories already relevant to the rebuild:
 
 - `feedback_git_github_default.md` — push to GitHub is the backup default;
   never expose raw git terms.
@@ -475,6 +488,6 @@ memories already relevant to Runn 2:
 - `project_mcp_only_access.md` — MCP is the security boundary; no raw SSH
   or shell to client networks; per-client ops servers define what's reachable.
 
-The path will need updating if the new repo lives at `~/projects/runn2/`
-instead of `~/projects/runn/` — Claude Code derives the memory project
-slug from cwd.
+No path update needed: the rebuild keeps the canonical `~/projects/runn`
+cwd, so the memory project slug Claude Code derives from cwd is unchanged
+and these memories auto-load as-is.
