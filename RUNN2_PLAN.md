@@ -41,12 +41,17 @@ belt-and-braces:
 - *Compaction* — Claude Code's built-in auto-compaction summarises older
   turns when the window fills. It is automatic; no manual trigger. To the
   user the chat still looks continuous.
-- *AI-run notes file* — compaction is lossy, so each job keeps a lossless
-  running-notes markdown file the **AI maintains itself, updated after every
-  turn** (key decisions, current state, what's done, open threads). On every
-  resume it reads this file first. Even if compaction forgets the
-  play-by-play, the load-bearing facts survive. Cost is a little extra
-  time/tokens per turn — accepted, for never losing the thread.
+- *Runn-driven notes file* — compaction is lossy, so each job keeps a
+  lossless running-notes markdown file (key decisions, current state, what's
+  done, open threads). It is **not** left to the main agent's self-discipline
+  (a directive can slip); instead **Runn drives it**: after each turn lands,
+  Runn fires a small dedicated step that rewrites the notes from the latest
+  turn + the current notes. On every resume the file is injected first so the
+  agent starts with current state. Even if compaction forgets the
+  play-by-play, the load-bearing facts survive. It's a living document
+  (rewritten/condensed), not an append-only log. Cost: one cheap extra call
+  per turn (small model, minimal context) — accepted, for never losing the
+  thread.
 
 What goes away from the old Runn:
 - The "+ Project" button and the project layer as a thing you create.
@@ -172,10 +177,13 @@ jobs/<id>.json            (the billable unit = one long multi-day chat)
   invoice_id?, invoice_line_id?,
   archived: bool
 
-jobs/<id>.notes.md        (the AI-run running-notes file for this job)
-  Lossless companion to the chat. The AI maintains it ITSELF, updated after
-  every turn: key decisions, current state, what's done, open threads. Read
-  first on every resume so the load-bearing facts survive compaction.
+jobs/<id>.notes.md        (the Runn-driven running-notes file for this job)
+  Lossless companion to the chat. RUNN drives the update (not the main agent's
+  self-discipline): after each turn lands, a small dedicated call rewrites it
+  from the latest turn + current notes. A living document (rewritten/condensed,
+  not append-only): key decisions, current state, what's done, open threads.
+  Injected first on every resume so the load-bearing facts survive compaction.
+  Source for the job's invoice_summary.
 
 clients/<id>.json
   Carry forward verbatim from old Runn — schema is fine.
@@ -304,6 +312,13 @@ Build order (incremental, each step shippable):
 6. **AI spawn**: assigned-client jobs spawn Claude in the client's cwd,
    stream-json output parsed like old Runn. The MCP config from step 1
    is wired into every spawn — no spawn without the permission gate.
+6b. **Runn-driven notes file** (build alongside step 6; see section 1
+   "Context"). After each turn lands, Runn fires a small dedicated call
+   (cheap model, minimal context = latest turn + current notes) that rewrites
+   `jobs/<id>.notes.md` as a living document. Inject that file first on every
+   resume so the agent always starts with current state. Best-effort: if the
+   update call fails, the chat still proceeds on the last good notes. This is
+   what makes a multi-day job survive compaction losslessly.
 7. **Plan-then-apply approval** (carry from old Runn commit `995623c`).
    Mutating tool calls go through plan storage → human approval → apply.
    Non-trivial to design from scratch but proven in old Runn's code; port
