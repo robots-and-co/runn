@@ -217,24 +217,22 @@ function dispatchPendingForCwd(cwd) {
 // Always-on response-format directive, appended to every spawn AND re-asserted
 // on every resume (claude --resume *replaces* the append, so the resume caller
 // must pass the full context+directive or it's lost — see composeAppend callers).
-// Runn collapses each reply to its trailing "TL;DR:" line in the transcript.
-const TLDR_DIRECTIVE = [
+// The transcript collapses each reply to a one-line summary derived from the
+// first line / trailing question (frontend fallbackSummary), so lead with the
+// answer and keep it tight.
+const RESPONSE_DIRECTIVE = [
   '# Response format',
   '',
-  'Every message you send to the human must end with a one-line summary, on its',
-  'own final line, in exactly this form:',
+  'Keep replies really tight. Lead with the answer on the first line and stop as',
+  'soon as the question is fully answered — usually one or two lines. No preamble,',
+  'no recap of what was asked, no closing summary, no "TL;DR" line.',
   '',
-  'TL;DR: <one plain-English sentence, 15 words or fewer>',
+  'Ask one question at a time; when you need a decision, end on that single',
+  'question so it reads as the point of the message.',
   '',
-  'This applies to EVERY reply addressed to the human — answers, recommendations,',
-  'and messages that ask the human a question or propose next steps. When you are',
-  'asking the human something, the TL;DR states that question or the decision you',
-  'need (e.g. "TL;DR: Bare metal is simpler — want me to proceed?"). The ONLY',
-  'messages without a TL;DR are intermediate progress notes written between tool',
-  'calls while you are still working; the final message of your turn always has one.',
-  '',
-  'Runn collapses your reply to this single line (a chevron expands the rest), so',
-  'write it to stand on its own for a reader who never expands the detail.',
+  'Only expand into detail, lists, or step-by-step when the human explicitly asks',
+  'for it (e.g. "details", "explain", "why", "show me"). Until then, shortest',
+  'reply that fully answers wins.',
 ].join('\n');
 
 // Combine the per-card context (client/project notes, or null) with the always-on
@@ -242,7 +240,7 @@ const TLDR_DIRECTIVE = [
 function composeAppend(systemPromptAppend) {
   const parts = [];
   if (systemPromptAppend && String(systemPromptAppend).trim()) parts.push(String(systemPromptAppend).trim());
-  parts.push(TLDR_DIRECTIVE);
+  parts.push(RESPONSE_DIRECTIVE);
   return parts.join('\n\n');
 }
 

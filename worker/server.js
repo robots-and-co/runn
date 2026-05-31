@@ -385,8 +385,9 @@ async function resolveCardSystemContext(card) {
       );
     }
   }
-  // The always-on TL;DR directive is appended in bridge.js (composeAppend) on
-  // every spawn AND resume, so it's not added here — this stays context-only.
+  // The always-on response-format directive is appended in bridge.js
+  // (composeAppend) on every spawn AND resume, so it's not added here — this
+  // stays context-only.
   return parts.length ? parts.join('\n\n') : null;
 }
 
