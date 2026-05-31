@@ -148,7 +148,12 @@ ever, no template, no required title (AI names the job from the first turn).
 ```
 jobs/<id>.json            (the billable unit = one long multi-day chat)
   id, client_id, title (AI-named, user-editable),
-  status: open | doing | review | done | invoice | invoiced | paid | blocked | hold,
+  status: open | doing | review | done | invoiced | paid | blocked | hold,
+            (review = AI is waiting on the HUMAN's response — a question,
+             approval, or decision. The AI sets it ONLY when it genuinely
+             needs the human to reply, never just to say "have a look".
+             blocked = waiting on something/someone OTHER than the human —
+             a third party, an outage. The two are distinct.)
   created_at, updated_at, done_at,
   hours (number),
   turns: [{ role: 'user' | 'ai', text, at, session_event?, ... }],
@@ -359,10 +364,14 @@ Skip from old Runn (intentionally not carried):
 These were discussed but not fully resolved — let them surface as the user
 hits them in practice rather than deciding upfront:
 
-- **Status set granularity**. Probably: `open / doing / review / done /
-  invoiced / paid / blocked / hold`. Drop `queued` (no queue concept anymore
-  without the task layer). Drop `invoice` (the staging status — folded into
-  `done`).
+- **Status set granularity** — DECIDED. The conveyor is `open / doing /
+  review / done / invoiced / paid / blocked / hold`. Dropped `queued` (no
+  queue concept without the task layer) and `invoice` (staging status folded
+  into `done`). Key marking rule: the AI sets `review` ONLY when it needs the
+  human's response (question/approval/decision), and `blocked` when waiting on
+  something/someone other than the human. This rule must live in the spawn
+  directive / status-update tool semantics so the AI follows it (see
+  section 4).
 - **Long-job context limits**. The primary approach is now decided (see
   section 1, "Context"): built-in compaction + an AI-run lossless notes
   file. This open item is only the escape hatch if a single job still grows
