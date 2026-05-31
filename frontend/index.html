@@ -98,6 +98,34 @@
   .chip.st-blocked  { background:#ffe1dc; color:#b23b2a; }
   .chip.st-hold     { background:#ececec; color:#777; }
 
+  /* left-pane subheader: client filter + running $ total */
+  .list-sub {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .client-filter {
+    flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 8px; -webkit-appearance: none; appearance: none;
+  }
+  .total { text-align: right; line-height: 1.05; white-space: nowrap; }
+  .total .amt { font-size: 15px; font-weight: 700; color: var(--brand); }
+  .total .cap { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
+
+  /* + Job → client picker */
+  .picker { max-width: 520px; margin: 4px auto; }
+  .picker-head { font-size: 14px; color: var(--muted); margin: 4px 4px 14px; }
+  .choice {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 16px; margin-bottom: 10px; color: var(--ink); font: inherit;
+  }
+  .choice:hover { background: var(--surface-2); border-color: var(--brand); }
+  .choice:active { transform: translateY(1px); }
+  .choice .nm { font-size: 15px; font-weight: 600; }
+  .choice .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .choice.personal .nm { color: var(--muted); }
+
   /* ── Right: chat ────────────────────────────────── */
   .chat-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .chat-head {
@@ -168,6 +196,15 @@
         <div class="logo">R</div>
         <h1>Runn</h1>
       </div>
+      <div class="list-sub">
+        <select class="client-filter" id="clientFilter" aria-label="Filter by client">
+          <option value="">All clients</option>
+        </select>
+        <div class="total">
+          <span class="amt" id="valueTotal">$0</span>
+          <span class="cap">outstanding</span>
+        </div>
+      </div>
       <div class="job-list" id="jobList"></div>
       <div class="list-foot">
         <button class="btn-newjob" id="newJobBtn">+ Job</button>
@@ -201,6 +238,9 @@
     clients: new Map(),    // id -> client
     currentId: null,
     sending: false,
+    filterClient: '',      // '' = all clients
+    picking: false,        // choosing a client for a new job
+    draftClientId: null,   // client chosen for the not-yet-saved draft
   };
 
   const $ = (id) => document.getElementById(id);
@@ -213,6 +253,14 @@
   const mdToHtml = (s) => DOMPurify.sanitize(marked.parse(s || ''));
 
   const clientName = (id) => (id && state.clients.get(id)?.name) || null;
+  const clientOf = (id) => (id ? state.clients.get(id) : null);
+  function jobValue(j) {
+    const c = clientOf(j.client_id);
+    if (!c || c.non_billable || !c.rate_per_hour) return 0;
+    if (j.status === 'paid') return 0;             // already settled
+    return (Number(j.hours) || 0) * Number(c.rate_per_hour);
+  }
+  const fmtMoney = (n) => '$' + Math.round(n).toLocaleString();
   const titleOf = (j) => j.title || firstUserText(j) || null;
   function firstUserText(j) {
     const t = (j.turns || []).find((x) => x.role === 'user' && x.text);
@@ -227,18 +275,36 @@
   }
 
   // ── List rendering ──────────────────────────────
-  function sortedJobs() {
-    return [...state.jobs.values()].sort((a, b) =>
-      String(b.updated_at).localeCompare(String(a.updated_at)));
+  function visibleJobs() {
+    let jobs = [...state.jobs.values()];
+    if (state.filterClient) jobs = jobs.filter((j) => j.client_id === state.filterClient);
+    return jobs.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  }
+  function renderTotal(jobs) {
+    const total = jobs.reduce((s, j) => s + jobValue(j), 0);
+    $('valueTotal').textContent = fmtMoney(total);
+  }
+  function renderFilterOptions() {
+    const sel = $('clientFilter');
+    const clients = [...state.clients.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    sel.innerHTML = '<option value="">All clients</option>';
+    for (const c of clients) {
+      const o = document.createElement('option');
+      o.value = c.id; o.textContent = c.name;
+      sel.appendChild(o);
+    }
+    sel.value = state.filterClient;        // preserve, or fall back to All if gone
+    state.filterClient = sel.value;
   }
   function renderList() {
-    const jobs = sortedJobs();
+    const jobs = visibleJobs();
+    renderTotal(jobs);
     jobListEl.innerHTML = '';
     if (!jobs.length) {
       const e = document.createElement('div');
       e.className = 'empty';
       e.style.padding = '40px 24px';
-      e.textContent = 'No jobs yet — hit + Job to start.';
+      e.textContent = state.filterClient ? 'No jobs for this client yet.' : 'No jobs yet — hit + Job to start.';
       jobListEl.appendChild(e);
       return;
     }
@@ -281,9 +347,47 @@
     renderChat();
     if (window.matchMedia('(min-width: 721px)').matches) msgInput.focus();
   }
-  function startDraft() {
-    state.currentId = DRAFT;
+  function startNewJob() {
+    state.picking = true;
+    state.draftClientId = null;
+    state.currentId = null;
     document.body.classList.add('show-chat');
+    renderList();
+    renderPicker();
+  }
+  function renderPicker() {
+    $('chatTitle').textContent = 'New job';
+    $('chatClient').hidden = true;
+    $('chatStatus').hidden = true;
+    $('chatHours').textContent = '';
+    setComposer(false, 'Pick a client to begin…');
+    const clients = [...state.clients.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    turnsEl.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'picker';
+    const head = document.createElement('div');
+    head.className = 'picker-head';
+    head.textContent = 'Who is this job for?';
+    wrap.appendChild(head);
+    wrap.appendChild(choiceEl(null, 'Personal', 'No client — household / personal', true));
+    for (const c of clients) {
+      wrap.appendChild(choiceEl(c.id, c.name, c.workspace || c.company || '', false));
+    }
+    turnsEl.appendChild(wrap);
+  }
+  function choiceEl(id, name, sub, personal) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'choice' + (personal ? ' personal' : '');
+    const n = document.createElement('div'); n.className = 'nm'; n.textContent = name; b.appendChild(n);
+    if (sub) { const s = document.createElement('div'); s.className = 'sub'; s.textContent = sub; b.appendChild(s); }
+    b.addEventListener('click', () => beginDraft(id));
+    return b;
+  }
+  function beginDraft(clientId) {
+    state.picking = false;
+    state.draftClientId = clientId;
+    state.currentId = DRAFT;
     renderList();
     renderChat();
     msgInput.focus();
@@ -291,6 +395,8 @@
   function closeChat() {
     document.body.classList.remove('show-chat');
     state.currentId = null;
+    state.picking = false;
+    state.draftClientId = null;
     renderList();
     renderChat();
   }
@@ -301,9 +407,12 @@
   }
 
   function renderChat() {
+    if (state.picking) { renderPicker(); return; }
     if (state.currentId === DRAFT) {
       $('chatTitle').textContent = 'New job';
-      $('chatClient').hidden = true;
+      const clEl = $('chatClient');
+      clEl.textContent = clientName(state.draftClientId) || 'Personal';
+      clEl.hidden = false;
       $('chatStatus').hidden = true;
       $('chatHours').textContent = '';
       turnsEl.innerHTML = '<div class="empty">Type your first message to start this job.</div>';
@@ -368,6 +477,7 @@
       ]);
       for (const c of clients) state.clients.set(c.id, c);
       for (const j of jobs) state.jobs.set(j.id, j);
+      renderFilterOptions();
       renderList();
       renderChat();
     } catch (e) {
@@ -391,10 +501,10 @@
         renderList();
       } else if (m.type === 'client.added' || m.type === 'client.changed') {
         state.clients.set(m.client.id, m.client);
-        renderList(); renderChat();
+        renderFilterOptions(); renderList(); renderChat();
       } else if (m.type === 'client.removed') {
         state.clients.delete(m.client.id);
-        renderList(); renderChat();
+        renderFilterOptions(); renderList(); renderChat();
       }
     };
     ws.onclose = () => setTimeout(connectWS, 1500);
@@ -419,9 +529,10 @@
     try {
       let id = state.currentId;
       if (id === DRAFT) {
-        const job = await postJson('/jobs', {});   // new job, no client yet
+        const job = await postJson('/jobs', { client_id: state.draftClientId });
         state.jobs.set(job.id, job);
         id = job.id; state.currentId = job.id;
+        state.draftClientId = null;
       }
       const updated = await postJson(`/jobs/${id}/turn`, { role: 'user', text });
       state.jobs.set(updated.id, updated);
@@ -442,7 +553,8 @@
 
   // ── Wiring ──────────────────────────────────────
   $('backBtn').addEventListener('click', closeChat);
-  $('newJobBtn').addEventListener('click', startDraft);
+  $('newJobBtn').addEventListener('click', startNewJob);
+  $('clientFilter').addEventListener('change', (e) => { state.filterClient = e.target.value; renderList(); });
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
   msgInput.addEventListener('input', autoGrow);
   msgInput.addEventListener('keydown', (e) => {
