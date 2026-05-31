@@ -11,28 +11,51 @@ build sequence. Self-contained — does not require reading the old codebase.
 
 ## 1. The new model (locked)
 
-**One object: the stream.** A stream is a chat is the atomic billable unit.
-No separate "task" or "project" layer.
+**One object: the job. A job _is_ one long chat that spans days.** The unit
+of work, the unit of conversation, and the unit of billing are the same
+object. No separate "task" or "card" layer.
 
-- **Stream** = a chat with AI. Has turns, hours, status, client, optional
-  cosmetic project tag. Billable on its own.
+We pressure-tested the earlier "one object: the stream" idea (one chat = one
+billable line) and it broke: in real work a billable job commonly sprawls
+across several sittings over days. Making each chat its own invoice line
+produced many fragments that only the project grouping tied together — so
+that grouping was load-bearing, not cosmetic. The fix is to define the object
+as the **job**, where what used to be "several chats" become dated
+session-dividers inside a single continuous thread. Billing-atom and
+conversation-atom are the same thing again; the only real cost is the
+context-window limit on a long thread (see "Context", below).
+
+- **Job** = one long chat with AI, spanning multiple days/sessions. Has
+  turns, hours, status, client, billing identity. **This is the billable
+  unit** — one invoice line per job. Sessions within it are just dated
+  dividers in the thread, not separate objects.
 - **Client** = who it's for. Carries billing identity (rate, currency, GST,
   invoice prefix, workspace slug). One client = one cwd (per Claude Code
   conventions — the cwd is what Claude Code calls a "project").
-- **Project** = a cosmetic billing grouping of streams. AI suggests groupings
-  at invoice time; user can override. Streams stay individually billable but
-  group together on the invoice layout for neatness.
-- **Invoice** = one line item per stream, grouped under project headings.
+- **Invoice** = one line item per job, optionally grouped under client/topic
+  headings for layout neatness.
+
+**Context (how a single long chat survives the window).** Two mechanisms,
+belt-and-braces:
+- *Compaction* — Claude Code's built-in auto-compaction summarises older
+  turns when the window fills. It is automatic; no manual trigger. To the
+  user the chat still looks continuous.
+- *AI-run notes file* — compaction is lossy, so each job keeps a lossless
+  running-notes markdown file the **AI maintains itself, updated after every
+  turn** (key decisions, current state, what's done, open threads). On every
+  resume it reads this file first. Even if compaction forgets the
+  play-by-play, the load-bearing facts survive. Cost is a little extra
+  time/tokens per turn — accepted, for never losing the thread.
 
 What goes away from the old Runn:
-- The "+ Project" button. There are no projects to create directly.
-- The task layer. No subtasks under projects.
+- The "+ Project" button and the project layer as a thing you create.
+- The task/card layer. No subtasks, no cards under anything.
 - Pane 2 navigation through projects.
 
 What stays:
 - Per-client billing identity (`rate_per_hour`, `currency`, `gst_rate`, etc.).
 - The invoice format (described as "near perfect" in refinement).
-- Hours tracking on the unit of work (now the stream, not the task).
+- Hours tracking on the unit of work (now the job).
 - Per-cwd lock (one client's workspace = one Claude writer at a time).
 - The MCP permission gate (see section 2 — non-negotiable).
 - Plan-then-apply approval flow.
@@ -86,58 +109,78 @@ frontend can be sketchy while MCP is solid; never the inverse.
 ## 3. UX shape
 
 **Two panes** (was three):
-- **Left**: chat input at the top, always focused. List of streams below,
-  search-filtered (heuristic fuzzy text on title + body + client name, ranked
-  by recency).
-- **Right**: the open stream's chat (turn-by-turn bubbles), or the
-  billing/invoice view when you're in those.
+- **Left**: a list of **jobs** (jobs only — no nested chat/card rows, because
+  a job _is_ the chat). Search-filtered (heuristic fuzzy text on title + body
+  + client name, ranked by recency). At the bottom: a **"+ Job"** action that
+  starts a new job.
+- **Right**: the open job's chat (turn-by-turn bubbles, with dated session
+  dividers), or the billing/invoice view when you're in those. Its own chat
+  input lives here.
 
-**Stream metadata** (client chip, status, hours, due) lives in the chat's
+**Job metadata** (client chip, status, hours, due) lives in the chat's
 header — not in a sidebar.
 
+**Two inputs — the gesture decides new-vs-continue.** This is the key
+simplification over the original single-input plan, which forced the AI to
+guess whether each message started a new job or continued one:
+- **"+ Job"** (left pane) → unambiguously starts a **new** job.
+- Typing into the **open chat** (right pane) → unambiguously **continues**
+  that job.
+
+So the AI never has to infer new-vs-continue. Its only entry-time inference
+shrinks to proposing **which client** a brand-new job belongs to.
+
 **Entry flow** (the "fix server A" emergency case):
-1. Open Runn → cursor is already in the chat input.
+1. Open Runn → hit "+ Job", cursor lands in a fresh chat input.
 2. Type the question and send.
 3. AI reads the first turn and proposes a client ("looks like ZIS — confirm?").
 4. User accepts or picks a different client with one tap.
-5. Stream is now classified and recorded.
+5. Job is now classified and recorded; the AI names it from the first turn.
 
 **No upfront ceremony.** No client picker before typing, no project picker
-ever, no template, no required title (AI can name the stream from the first
-turn too).
+ever, no template, no required title (AI names the job from the first turn).
 
 ---
 
 ## 4. Data model
 
 ```
-streams/<id>.json
+jobs/<id>.json            (the billable unit = one long multi-day chat)
   id, client_id, title (AI-named, user-editable),
   status: open | doing | review | done | invoice | invoiced | paid | blocked | hold,
   created_at, updated_at, done_at,
   hours (number),
   turns: [{ role: 'user' | 'ai', text, at, session_event?, ... }],
+            (session_event marks dated session/day dividers within the one
+             continuous thread — sessions are not separate objects)
   session_id?  (Claude Code session, for --resume),
-  billing_project_id? (the cosmetic grouping),
+  invoice_group? (optional cosmetic grouping of jobs on an invoice — layout
+                  only, not load-bearing; refined later, see section 11),
   invoice_id?, invoice_line_id?,
   archived: bool
+
+jobs/<id>.notes.md        (the AI-run running-notes file for this job)
+  Lossless companion to the chat. The AI maintains it ITSELF, updated after
+  every turn: key decisions, current state, what's done, open threads. Read
+  first on every resume so the load-bearing facts survive compaction.
 
 clients/<id>.json
   Carry forward verbatim from old Runn — schema is fine.
   id, name, workspace (slug under ~/projects/), rate_per_hour, currency,
   gst_rate, non_billable, invoice_prefix, invoice_seq, notes_md.
 
-billing_projects/<id>.json
-  id, name, client_id, created_at, ai_suggested: bool, archived: bool.
-  Pure presentation — no logic depends on this object.
-
 invoices/<id>.json
-  Carry forward; items[].stream_id replaces items[].card_id.
+  Carry forward; items[].job_id replaces items[].card_id. One item per job.
   Otherwise identical: snapshot, subtotal_ex_gst, gst, total_inc_gst, paid, etc.
 
 settings.json
   Carry forward verbatim — business info, defaults.
 ```
+
+Note: the old `billing_projects/<id>.json` object is dropped. With jobs now
+multi-day chats, the job _is_ the grouping; any on-invoice grouping of
+multiple jobs is pure layout (`invoice_group` label above) and refined when
+we get to the invoice composer.
 
 ---
 
