@@ -310,8 +310,11 @@ Build order (incremental, each step shippable):
    `worker/server.js:875–921` and the matching frontend modal.
 8. **Heuristic search**: fuzzy text match in the list. Lowercase substring +
    recency ranking is fine; no fancy lib needed.
-9. **Hours tracking**: live timer same shape as old Runn (start when AI is
-   spawned or user starts typing; stop on done / blur for human jobs).
+9. **Hours tracking**: live timer that accrues **active work only**, never
+   calendar time (a job spans days but isn't worked continuously). Runs while
+   the AI is processing OR the user is in the open job (typing/reading);
+   **auto-pauses after a short idle gap** so walking away with a chat open
+   doesn't bill. Accumulates into the job's `hours`.
 10. **Status & lifecycle**: status chip on each job; transitions.
 11. **Billing view**: outstanding rollup per client; reuse old Runn's
     formulas (hours × rate, GST, currency).
@@ -377,8 +380,10 @@ hits them in practice rather than deciding upfront:
   file. This open item is only the escape hatch if a single job still grows
   monstrous despite that — options: (a) "fork job" button, (b) heavier
   manual summarisation, (c) just trim. Add when needed.
-- **Hours: live timer vs estimate**. Old Runn ran a live timer; keep that
-  shape unless it proves annoying.
+- **Hours timer** — DECIDED. Live timer counting **active work only** (AI
+  processing OR user in the open job), auto-pausing after a short idle gap so
+  calendar time isn't billed. Open sub-details: exact idle threshold, and
+  whether hours are hand-editable before invoicing (see build step 9).
 - **Permission mode default per client**. Inherit per-client setting like
   old Runn. Default `default` (ask each time) for new clients.
 
