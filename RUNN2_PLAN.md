@@ -154,6 +154,12 @@ jobs/<id>.json            (the billable unit = one long multi-day chat)
             (session_event marks dated session/day dividers within the one
              continuous thread — sessions are not separate objects)
   session_id?  (Claude Code session, for --resume),
+  invoice_summary? (client-facing one-line description of the work, SEPARATE
+                    from `title`: title is the short internal nav label
+                    ("ZIS tunnel"), invoice_summary is the billing line
+                    ("Diagnosed and fixed recurring WireGuard tunnel drops").
+                    AI maintains it live from the notes file as the chat
+                    evolves; regenerate/edit at invoice time),
   invoice_group? (optional cosmetic grouping of jobs on an invoice — layout
                   only, not load-bearing; refined later, see section 11),
   invoice_id?, invoice_line_id?,
@@ -301,8 +307,11 @@ Build order (incremental, each step shippable):
 11. **Billing view**: outstanding rollup per client; reuse old Runn's
     formulas (hours × rate, GST, currency).
 12. **Invoice composer**: pull done+unbilled jobs for a client; one line per
-    job. AI suggests cosmetic `invoice_group` headings; user can drag jobs
-    between groupings. (Grouping is layout-only — to be refined here.)
+    job. Each line's text is the job's `invoice_summary` (AI-maintained
+    client-facing one-liner, distinct from the internal `title`); the
+    composer can regenerate or let the user edit it before issuing. AI
+    suggests cosmetic `invoice_group` headings; user can drag jobs between
+    groupings. (Grouping is layout-only — to be refined here.)
 13. **Invoice issue**: POST `/invoices`; flip job status to `invoiced`.
     Reuse the existing invoice JSON shape (with `items[].job_id`).
 14. **Worktree per job** (was Phase B in the old plan):
