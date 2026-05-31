@@ -381,12 +381,3 @@ memories already relevant to Runn 2:
 The path will need updating if the new repo lives at `~/projects/runn2/`
 instead of `~/projects/runn/` — Claude Code derives the memory project
 slug from cwd.
-
----
-
-TL;DR: clean rebuild on NUC; MCP-only tool access is the load-bearing
-constraint; job-centric data model (a job _is_ one long multi-day chat, the
-billable unit; context held by compaction + an AI-run notes file); copy
-clients + invoices + settings + workspaces + .claude verbatim; archive old
-cards unimported; build new Runn in 14 incremental shippable steps starting
-with MCP scaffolding.
