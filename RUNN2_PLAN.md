@@ -101,7 +101,7 @@ prevents a hallucinated `ssh root@prod-db rm -rf /` from being
 executable. Runn 2 must not trade this for ergonomics.
 
 **Build implication.** MCP scaffolding is **step 1** of the build
-sequence below — before the frontend, before `/streams` CRUD. The
+sequence below — before the frontend, before `/jobs` CRUD. The
 frontend can be sketchy while MCP is solid; never the inverse.
 
 ---
@@ -274,16 +274,19 @@ Build order (incremental, each step shippable):
    - **Acceptance test**: a spawned Claude in any client workspace, asked
      to `ssh user@host echo hi` via Bash, gets routed through
      `ask_permission` and the operator can decline. No path bypasses this.
-2. **Backend skeleton**: `/streams` CRUD, `/clients` (already populated by
+2. **Backend skeleton**: `/jobs` CRUD, `/clients` (already populated by
    the copy step), `/settings`. WebSocket broadcaster.
-3. **Frontend skeleton**: 2-pane layout. Left = chat input + stream list
-   (no search yet, just chronological). Right = stream chat view (read-only
+3. **Frontend skeleton**: 2-pane layout. Left = job list + "+ Job" button
+   (no search yet, just chronological). Right = job chat view (read-only
    for now).
-4. **Send turn**: typing in the chat input creates a new stream (no client
-   assigned) and posts the first turn. AI is NOT spawned yet — just storage.
-5. **AI client proposal**: after first turn, call Claude with a tiny prompt
-   ("given this first message, which client?") and surface a confirm chip.
-6. **AI spawn**: assigned-client streams spawn Claude in the client's cwd,
+4. **Send turn**: "+ Job" creates a new job (no client assigned) and posts
+   the first turn; typing into an open job's chat continues it. AI is NOT
+   spawned yet — just storage.
+5. **AI client proposal**: after the first turn of a new job, call Claude
+   with a tiny prompt ("given this first message, which client?") and
+   surface a confirm chip. (New-vs-continue is decided by the gesture, not
+   inferred — see section 3.)
+6. **AI spawn**: assigned-client jobs spawn Claude in the client's cwd,
    stream-json output parsed like old Runn. The MCP config from step 1
    is wired into every spawn — no spawn without the permission gate.
 7. **Plan-then-apply approval** (carry from old Runn commit `995623c`).
@@ -293,26 +296,27 @@ Build order (incremental, each step shippable):
 8. **Heuristic search**: fuzzy text match in the list. Lowercase substring +
    recency ranking is fine; no fancy lib needed.
 9. **Hours tracking**: live timer same shape as old Runn (start when AI is
-   spawned or user starts typing; stop on done / blur for human streams).
-10. **Status & lifecycle**: status chip on each stream; transitions.
+   spawned or user starts typing; stop on done / blur for human jobs).
+10. **Status & lifecycle**: status chip on each job; transitions.
 11. **Billing view**: outstanding rollup per client; reuse old Runn's
     formulas (hours × rate, GST, currency).
-12. **Invoice composer**: pull done+unbilled streams for a client. AI
-    suggests project groupings; user can drag streams between groupings.
-13. **Invoice issue**: POST `/invoices`; flip stream status to `invoiced`.
-    Reuse the existing invoice JSON shape (with `items[].stream_id`).
-14. **Worktree per stream** (was Phase B in the old plan):
-    - For streams whose client workspace is a git repo, create a worktree
-      at `~/runn-worktrees/<stream-id>/` on branch `runn/<stream-id>`.
+12. **Invoice composer**: pull done+unbilled jobs for a client; one line per
+    job. AI suggests cosmetic `invoice_group` headings; user can drag jobs
+    between groupings. (Grouping is layout-only — to be refined here.)
+13. **Invoice issue**: POST `/invoices`; flip job status to `invoiced`.
+    Reuse the existing invoice JSON shape (with `items[].job_id`).
+14. **Worktree per job** (was Phase B in the old plan):
+    - For jobs whose client workspace is a git repo, create a worktree
+      at `~/runn-worktrees/<job-id>/` on branch `runn/<job-id>`.
     - Auto-commit at end of each AI session; auto-push to GitHub
       (`feedback-git-github-default` memory: push is the backup).
-    - "Mark stream done" button = merge branch to main, push, delete worktree.
+    - "Mark job done" button = merge branch to main, push, delete worktree.
     - UI language: "saved" / "backed up" / "merged" — never "commit/push/merge".
 
 Skip from old Runn (intentionally not carried):
 - `worker/cron.js` sketch (never wired in old Runn either).
 - Drag-to-reorder (no task list to reorder anymore).
-- Project-level Runn-mode switch (replaced by per-stream status).
+- Project-level Runn-mode switch (replaced by per-job status).
 - The old "client" → workspace migration scripts (one-shot, done on old
   machine, not relevant to NUC).
 
@@ -326,10 +330,10 @@ Skip from old Runn (intentionally not carried):
   workspace without its ops server can only edit local files; it cannot
   reach the client's machines. Triage list: LTHCS, ZIS, and any client
   with networked-host tools in `lthcs-ops-tools/` style today.
-- Old machine stays running and read-only — no new streams created there.
+- Old machine stays running and read-only — no new jobs created there.
 - New work goes straight to the NUC.
-- Run both for ~1 week. Migrate any half-done streams manually by copying
-  the conversation into a new NUC stream.
+- Run both for ~1 week. Migrate any half-done jobs manually by copying
+  the conversation into a new NUC job.
 - When confident: snapshot the old machine (`tar -czf` of `~/runn-data`,
   `~/projects`, `~/.claude`) to external storage, then power down the big
   box.
@@ -345,10 +349,11 @@ hits them in practice rather than deciding upfront:
   invoiced / paid / blocked / hold`. Drop `queued` (no queue concept anymore
   without the task layer). Drop `invoice` (the staging status — folded into
   `done`).
-- **Long-stream context limits**. A single chat that gets very long will
-  eventually strain Claude's context window. Not solving upfront. When user
-  hits it, options are: (a) "fork stream" button, (b) auto-summarise older
-  turns, (c) just trim. Add when needed.
+- **Long-job context limits**. The primary approach is now decided (see
+  section 1, "Context"): built-in compaction + an AI-run lossless notes
+  file. This open item is only the escape hatch if a single job still grows
+  monstrous despite that — options: (a) "fork job" button, (b) heavier
+  manual summarisation, (c) just trim. Add when needed.
 - **Hours: live timer vs estimate**. Old Runn ran a live timer; keep that
   shape unless it proves annoying.
 - **Permission mode default per client**. Inherit per-client setting like
@@ -380,6 +385,8 @@ slug from cwd.
 ---
 
 TL;DR: clean rebuild on NUC; MCP-only tool access is the load-bearing
-constraint; stream-only data model; copy clients + invoices + settings +
-workspaces + .claude verbatim; archive old cards unimported; build new
-Runn in 14 incremental shippable steps starting with MCP scaffolding.
+constraint; job-centric data model (a job _is_ one long multi-day chat, the
+billable unit; context held by compaction + an AI-run notes file); copy
+clients + invoices + settings + workspaces + .claude verbatim; archive old
+cards unimported; build new Runn in 14 incremental shippable steps starting
+with MCP scaffolding.
