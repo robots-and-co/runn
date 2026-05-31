@@ -86,7 +86,10 @@ and treats it as load-bearing:
   exposing a curated set of tools — e.g. `ssh_exec_on_known_host(host,
   command)`, `read_zfs_status(pool)`, `restart_named_service(name)`. These
   are the **only** way the spawned Claude reaches the client's networked
-  machines.
+  machines. Because per-job worktrees let multiple jobs run in parallel for
+  one client (see step 14), the ops server **serializes its tool calls per
+  client** — a per-client mutex so sibling jobs can't fire ops against the
+  same live infrastructure simultaneously; concurrent calls queue.
 - The spawned Claude cannot type `ssh user@host …` in Bash and have it
   work. The MCP layer intercepts. Bash is for local-workspace operations
   only (file edits, npm, git inside the worktree). Anything that crosses
@@ -350,7 +353,19 @@ Build order (incremental, each step shippable):
     - Auto-commit at end of each AI session; auto-push to GitHub
       (`feedback-git-github-default` memory: push is the backup).
     - "Mark job done" button = merge branch to main, push, delete worktree.
+      If the merge can't apply cleanly, surface it in plain language ("these
+      changes overlap — need a hand") — never auto-discard either side.
     - UI language: "saved" / "backed up" / "merged" — never "commit/push/merge".
+    - **Two-tier concurrency** (supersedes old Runn's single per-cwd lock —
+      see `project_no_parallel_ai`): because each job has its own worktree,
+      jobs in the SAME client run **in parallel** at the file level — the
+      lock moves from per-client-tree to **per-worktree**. BUT worktrees
+      isolate files, not the client's live machines: every sibling job hits
+      the same `<client>-ops` MCP server. So ops-MCP calls (and
+      `raw_ssh_exec`) are **serialized per client** — a per-client mutex
+      around ops-tool execution; concurrent calls from sibling jobs queue and
+      fire one at a time. Net: think/edit/plan in parallel; touch the live
+      infrastructure one action at a time, in order.
 
 Skip from old Runn (intentionally not carried):
 - `worker/cron.js` sketch (never wired in old Runn either).
