@@ -221,6 +221,20 @@ drag-between-groups.
 ~/projects/<slug>/           → rsync (already pushed to GitHub, but copy local
                                  to preserve uncommitted state if any)
 ~/.claude/                   → rsync (sessions, history, memory all carry)
+                                ~565 MB of plain files (305 MB is projects/).
+                                No keychain in play — even .credentials.json is
+                                a file. Two caveats:
+                                (a) AUTH — .credentials.json copies, but don't
+                                    trust the copied token; re-run `claude`
+                                    sign-in on the NUC (same Anthropic account).
+                                (b) PATH FIDELITY — sessions + memory are keyed
+                                    by cwd slug (e.g. -home-waz-projects-runn).
+                                    They only resolve if /home/waz/... paths are
+                                    identical. Because RUNN2 lives at
+                                    ~/projects/runn2, copy the old
+                                    -home-waz-projects-runn memory slug folder
+                                    to -home-waz-projects-runn2 or it won't
+                                    auto-load (see section 12).
 ~/.ssh/                      → rsync (keys; known_hosts will rebuild on first use)
 /etc/wireguard/              → copy configs as root; re-bring-up tunnels
 ```
@@ -265,6 +279,17 @@ rsync -avzP          $OLD:/home/waz/runn-data/settings.json /home/waz/runn-data/
 rsync -avzP --delete $OLD:/home/waz/projects/   /home/waz/projects/
 rsync -avzP --delete $OLD:/home/waz/.claude/    /home/waz/.claude/
 rsync -avzP --delete $OLD:/home/waz/.ssh/       /home/waz/.ssh/
+
+# AUTH: don't trust the copied token — re-sign-in on the NUC (same account):
+claude   # then complete the sign-in / OAuth flow once
+
+# MEMORY SLUG: RUNN2 lives at ~/projects/runn2, so the old runn memory won't
+# auto-load there. Copy the slug folder to the new name (keep the old too):
+cp -a /home/waz/.claude/projects/-home-waz-projects-runn/memory \
+      /home/waz/.claude/projects/-home-waz-projects-runn2/memory 2>/dev/null \
+  || mkdir -p /home/waz/.claude/projects/-home-waz-projects-runn2 && \
+     cp -a /home/waz/.claude/projects/-home-waz-projects-runn/memory \
+           /home/waz/.claude/projects/-home-waz-projects-runn2/memory
 
 # Archive (NOT import) the old cards:
 mkdir -p /home/waz/runn-archive
