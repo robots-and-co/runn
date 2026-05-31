@@ -189,9 +189,11 @@ jobs/<id>.notes.md        (the Runn-driven running-notes file for this job)
   Source for the job's invoice_summary.
 
 clients/<id>.json
-  Carry forward verbatim from old Runn — schema is fine.
+  Carry forward from old Runn — schema is fine, plus backup fields below.
   id, name, workspace (slug under ~/projects/), rate_per_hour, currency,
-  gst_rate, non_billable, invoice_prefix, invoice_seq, notes_md.
+  gst_rate, non_billable, invoice_prefix, invoice_seq, notes_md,
+  backup_repo? (private GitHub repo under robots-and-co, set up on first use),
+  backup_ready? (bool — true once init+push done, so setup runs once).
 
 invoices/<id>.json
   Carry forward; items[].job_id replaces items[].card_id. One item per job.
@@ -348,6 +350,15 @@ Build order (incremental, each step shippable):
 13. **Invoice issue**: POST `/invoices`; flip job status to `invoiced`.
     Reuse the existing invoice JSON shape (with `items[].job_id`).
 14. **Worktree per job** (was Phase B in the old plan):
+    - **Ensure backup first.** The first time a job touches a client
+      workspace that isn't yet a git repo, Runn quietly **sets up backup**:
+      `git init` → create a **private** GitHub repo under the
+      **`robots-and-co`** org (named from the workspace slug) → initial
+      commit + push + set upstream. Private is non-negotiable (client data).
+      In plain language only ("setting up backup") — never raw git terms
+      (`feedback-git-github-default`). Store the repo URL / backup status on
+      `clients/<id>.json` so it's a one-time setup. This makes the worktree
+      flow below universal — every workspace becomes git-backed.
     - For jobs whose client workspace is a git repo, create a worktree
       at `~/runn-worktrees/<job-id>/` on branch `runn/<job-id>`.
     - Auto-commit at end of each AI session; auto-push to GitHub
