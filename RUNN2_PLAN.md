@@ -32,8 +32,9 @@ context-window limit on a long thread (see "Context", below).
 - **Client** = who it's for. Carries billing identity (rate, currency, GST,
   invoice prefix, workspace slug). One client = one cwd (per Claude Code
   conventions — the cwd is what Claude Code calls a "project").
-- **Invoice** = one line item per job, optionally grouped under client/topic
-  headings for layout neatness.
+- **Invoice** = a flat one-line-per-job list. No topic headings or grouping
+  object; when jobs are related, the AI shows it inline in the line text via
+  a shared context phrase ("— internet down") at invoice time.
 
 **Context (how a single long chat survives the window).** Two mechanisms,
 belt-and-braces:
@@ -159,9 +160,10 @@ jobs/<id>.json            (the billable unit = one long multi-day chat)
                     ("ZIS tunnel"), invoice_summary is the billing line
                     ("Diagnosed and fixed recurring WireGuard tunnel drops").
                     AI maintains it live from the notes file as the chat
-                    evolves; regenerate/edit at invoice time),
-  invoice_group? (optional cosmetic grouping of jobs on an invoice — layout
-                  only, not load-bearing; refined later, see section 11),
+                    evolves; regenerate/edit at invoice time. Relatedness
+                    between jobs is shown INLINE here via a shared context
+                    phrase ("— internet down"), added by an AI pass at
+                    invoice time — there is no separate grouping object),
   invoice_id?, invoice_line_id?,
   archived: bool
 
@@ -183,10 +185,12 @@ settings.json
   Carry forward verbatim — business info, defaults.
 ```
 
-Note: the old `billing_projects/<id>.json` object is dropped. With jobs now
-multi-day chats, the job _is_ the grouping; any on-invoice grouping of
-multiple jobs is pure layout (`invoice_group` label above) and refined when
-we get to the invoice composer.
+Note: the old `billing_projects/<id>.json` object is dropped, and there is no
+grouping object at all. With jobs now multi-day chats, the job _is_ the
+grouping. An invoice is a flat one-line-per-job list; when jobs are related,
+the AI expresses that inline in `invoice_summary` via a shared context phrase
+(e.g. "— internet down") during a pass at invoice creation. No headings, no
+drag-between-groups.
 
 ---
 
@@ -306,12 +310,13 @@ Build order (incremental, each step shippable):
 10. **Status & lifecycle**: status chip on each job; transitions.
 11. **Billing view**: outstanding rollup per client; reuse old Runn's
     formulas (hours × rate, GST, currency).
-12. **Invoice composer**: pull done+unbilled jobs for a client; one line per
-    job. Each line's text is the job's `invoice_summary` (AI-maintained
+12. **Invoice composer**: pull done+unbilled jobs for a client; one flat line
+    per job. Each line's text is the job's `invoice_summary` (AI-maintained
     client-facing one-liner, distinct from the internal `title`); the
-    composer can regenerate or let the user edit it before issuing. AI
-    suggests cosmetic `invoice_group` headings; user can drag jobs between
-    groupings. (Grouping is layout-only — to be refined here.)
+    composer can regenerate or let the user edit it before issuing. With all
+    the client's jobs visible, an AI pass tags related jobs with a shared
+    inline context phrase ("— internet down") — editable. No headings, no
+    grouping object, no drag-between-groups.
 13. **Invoice issue**: POST `/invoices`; flip job status to `invoiced`.
     Reuse the existing invoice JSON shape (with `items[].job_id`).
 14. **Worktree per job** (was Phase B in the old plan):
