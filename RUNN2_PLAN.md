@@ -314,7 +314,9 @@ Build order (incremental, each step shippable):
    calendar time (a job spans days but isn't worked continuously). Runs while
    the AI is processing OR the user is in the open job (typing/reading);
    **auto-pauses after a short idle gap** so walking away with a chat open
-   doesn't bill. Accumulates into the job's `hours`.
+   doesn't bill. Accumulates into the job's `hours`, which stays
+   **hand-editable** — the timer proposes, the user can round/correct before
+   invoicing.
 10. **Status & lifecycle**: status chip on each job; transitions.
 11. **Billing view**: outstanding rollup per client; reuse old Runn's
     formulas (hours × rate, GST, currency).
@@ -382,8 +384,9 @@ hits them in practice rather than deciding upfront:
   manual summarisation, (c) just trim. Add when needed.
 - **Hours timer** — DECIDED. Live timer counting **active work only** (AI
   processing OR user in the open job), auto-pausing after a short idle gap so
-  calendar time isn't billed. Open sub-details: exact idle threshold, and
-  whether hours are hand-editable before invoicing (see build step 9).
+  calendar time isn't billed. `hours` is **hand-editable** before invoicing —
+  the timer proposes, the user can round or correct. Only open sub-detail: the
+  exact idle threshold (tune in build step 9).
 - **Permission mode default per client**. Inherit per-client setting like
   old Runn. Default `default` (ask each time) for new clients.
 
