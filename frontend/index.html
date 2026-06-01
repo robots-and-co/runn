@@ -3362,6 +3362,10 @@
     <div id="compClientHint" style="font-size:12px;color:var(--ink-3);"></div>
     <div class="form-field-row">
       <div class="form-field">
+        <label>Invoice #</label>
+        <input type="text" id="compInvoiceNum" placeholder="e.g. ZIS260601" autocomplete="off">
+      </div>
+      <div class="form-field">
         <label>Issued</label>
         <input type="date" id="compIssued">
       </div>
@@ -3387,7 +3391,7 @@
   </div>
   <div class="modal-footer">
     <button class="detail-btn" onclick="closeAllModals()">cancel</button>
-    <button class="detail-btn primary" id="compIssue">issue invoice</button>
+    <button class="detail-btn primary" id="compIssue">save</button>
   </div>
 </div>
 
@@ -9026,41 +9030,80 @@ chatClientEdit.addEventListener('click', () => {
 });
 
 // ── Invoice composer ──────────────────────────────────────
-async function openComposer(clientId, scopeProjectId, discount, notes) {
+// opts: { clientId, projectId?, existingDraft? }
+//   existingDraft = a persisted backend draft to edit (status='draft', has id+items).
+//   When given, items/discount/notes/dates/id come from the saved draft.
+//   Otherwise items are pulled live from the client's billable cards.
+async function openComposer(opts) {
+  // Back-compat: positional clientId still accepted from older call sites.
+  if (typeof opts === 'string') opts = { clientId: opts };
+  const { clientId, projectId = null, existingDraft = null } = opts;
   const client = clients.get(clientId) || await api('GET', `/clients/${encodeURIComponent(clientId)}`).catch(() => null);
   if (!client) { alert(`Client not found: ${clientId}`); return; }
   const s = await api('GET', '/settings');
   const rate = (client.rate_per_hour != null) ? client.rate_per_hour : (s.default_rate_per_hour || 0);
-  // Collect this client's billable cards (status 'invoice' = ready to bill),
-  // across any project owned by the client — or, when scopeProjectId is set,
-  // only that project's subtree (so the composer matches the draft preview).
-  const items = [];
-  for (const c of cards.values()) {
-    if (c.status !== 'invoice') continue;
-    if (resolveClientId(c) !== clientId) continue;
-    if (scopeProjectId && !descendsFrom(c, scopeProjectId)) continue;
-    const hours = (typeof c.hours === 'number') ? c.hours : 0;
-    const amount = round2(hours * rate);
-    items.push({
-      card_id: c.id,
-      description: c.title,
-      // Prefer the explicit completion stamp (settable per task via the
-      // header `done` field). Fall back to updated_at for historical cards
-      // that pre-date the done_at field.
-      date: (c.done_at || c.updated_at || '').slice(0, 10) || todayISOC(),
-      amount_ex_gst: amount,
-    });
-  }
   const gstRate = (client.gst_rate != null) ? client.gst_rate : (s.default_gst_rate || 0.10);
-  const disc = Math.max(0, Number(discount) || 0);
-  composerCtx = { client_id: clientId, items, gstRate, currencySymbol: s.currency_symbol || '$', discount: disc };
+
+  let items, disc, notes, issuedAt, dueAt, invNum;
+  if (existingDraft) {
+    // Editing a saved draft: items are whatever's on the draft (not re-pulled
+    // from cards — the saved draft is the source of truth).
+    items = (existingDraft.items || []).map(it => ({
+      card_id: it.card_id || null,
+      description: it.description || '',
+      date: it.date || todayISOC(),
+      amount_ex_gst: Number(it.amount_ex_gst) || 0,
+    }));
+    disc     = Math.max(0, Number(existingDraft.discount_ex_gst) || 0);
+    notes    = existingDraft.notes || '';
+    issuedAt = existingDraft.issued_at || todayISOC();
+    dueAt    = existingDraft.due_at    || addDaysISO(issuedAt, s.default_due_days || 14);
+    invNum   = existingDraft.id;
+  } else {
+    // New draft: pull this client's billable cards, optionally narrowed to a
+    // project subtree so the composer matches the draft preview.
+    items = [];
+    for (const c of cards.values()) {
+      if (c.status !== 'invoice') continue;
+      if (c.draft_id) continue;                       // already on another saved draft
+      if (resolveClientId(c) !== clientId) continue;
+      if (projectId && !descendsFrom(c, projectId)) continue;
+      const hours = (typeof c.hours === 'number') ? c.hours : 0;
+      const amount = round2(hours * rate);
+      items.push({
+        card_id: c.id,
+        description: c.title,
+        date: (c.done_at || c.updated_at || '').slice(0, 10) || todayISOC(),
+        amount_ex_gst: amount,
+      });
+    }
+    disc     = 0;
+    notes    = '';
+    issuedAt = todayISOC();
+    dueAt    = addDaysISO(issuedAt, s.default_due_days || 14);
+    invNum   = (draftInvoice && draftInvoice.id) || '';   // pre-fill from preview if user typed one there
+  }
+
+  composerCtx = {
+    client_id: clientId,
+    project_id: projectId,
+    existing_draft_id: existingDraft ? existingDraft.id : null,
+    items,
+    gstRate,
+    currencySymbol: s.currency_symbol || '$',
+    discount: disc,
+  };
+  document.getElementById('compInvoiceNum').value = invNum || '';
+  document.getElementById('compInvoiceNum').disabled = !!existingDraft;   // id is the filename — immutable once saved
   document.getElementById('compDiscount').value = disc > 0 ? disc : '';
-  document.getElementById('compTitle').textContent = `New invoice for ${client.name || client.id}`;
+  document.getElementById('compTitle').textContent = existingDraft
+    ? `Edit draft ${existingDraft.id}`
+    : `New invoice for ${client.name || client.id}`;
   document.getElementById('compClientHint').textContent =
     client.company ? `To: ${client.company}` : `(No company set — click ⚙ to add details)`;
-  document.getElementById('compIssued').value = todayISOC();
-  document.getElementById('compDue').value    = addDaysISO(todayISOC(), s.default_due_days || 14);
-  document.getElementById('compNotes').value  = notes || '';
+  document.getElementById('compIssued').value = issuedAt;
+  document.getElementById('compDue').value    = dueAt;
+  document.getElementById('compNotes').value  = notes;
   renderComposerItems();
   openModal(modalComposer);
 }
@@ -9129,25 +9172,44 @@ document.getElementById('compDiscount').addEventListener('input', (e) => {
 document.getElementById('compIssue').addEventListener('click', async () => {
   if (!composerCtx) return;
   const btn = document.getElementById('compIssue');
+  const invNum = (document.getElementById('compInvoiceNum').value || '').trim();
+  if (!invNum && !composerCtx.existing_draft_id) {
+    alert('Enter an invoice number first.');
+    return;
+  }
+  const items = composerCtx.items.filter(it => Number(it.amount_ex_gst) > 0);   // drop $0 rows
+  const body = {
+    items,
+    issued_at: document.getElementById('compIssued').value,
+    due_at:    document.getElementById('compDue').value,
+    notes:     document.getElementById('compNotes').value,
+    gst_rate:  composerCtx.gstRate,
+    discount_ex_gst: composerCtx.discount || 0,
+  };
   btn.disabled = true;
-  btn.textContent = 'issuing…';
+  btn.textContent = 'saving…';
   try {
-    // The server flips each line item's card to 'invoiced' (+ records invoice_id).
-    const inv = await api('POST', '/invoices', {
-      client_id: composerCtx.client_id,
-      items: composerCtx.items.filter(it => Number(it.amount_ex_gst) > 0),   // drop $0 rows
-      issued_at: document.getElementById('compIssued').value,
-      due_at:    document.getElementById('compDue').value,
-      notes:     document.getElementById('compNotes').value,
-      gst_rate:  composerCtx.gstRate,
-      discount_ex_gst: composerCtx.discount || 0,
-    });
-    draftEdits.delete(billingScopeProjectId); persistDraftEdits();   // issued → drop the overlay
+    let inv;
+    if (composerCtx.existing_draft_id) {
+      inv = await api('PATCH', `/invoices/${encodeURIComponent(composerCtx.existing_draft_id)}`, body);
+    } else {
+      // Brand-new draft: stamp client_id, project_id, id, and status='draft'.
+      inv = await api('POST', '/invoices', {
+        ...body,
+        id: invNum,
+        client_id: composerCtx.client_id,
+        project_id: composerCtx.project_id,
+        status: 'draft',
+      });
+      // Drop the localStorage overlay for the synthetic preview — the backend
+      // draft is now the source of truth.
+      draftEdits.delete(billingScopeProjectId); persistDraftEdits();
+    }
     closeAllModals();
     openInvoice(inv.id);
   } catch (err) {
-    alert(`Issue failed: ${err.message}`);
-    btn.disabled = false; btn.textContent = 'issue invoice';
+    alert(`Save failed: ${err.message}`);
+    btn.disabled = false; btn.textContent = 'save';
   }
 });
 
@@ -9194,7 +9256,7 @@ function renderOutstandingTab() {
       const genBtn = document.createElement('button');
       genBtn.className = 'detail-btn primary gen-invoice-btn';
       genBtn.textContent = 'generate invoice';
-      genBtn.addEventListener('click', () => openComposer(clientId));
+      genBtn.addEventListener('click', () => openComposer({ clientId }));
       actions.insertBefore(genBtn, actions.firstChild);
     }
   }
@@ -9231,12 +9293,27 @@ async function renderInvoicesTab() {
 // Invoices render inside pane 3, replacing the billing list. The "← back"
 // button in the invoice header takes the user back to billing with the same
 // scope they came from.
-function openInvoice(id) {
-  draftInvoice = null;
+async function openInvoice(id) {
   currentInvoiceId = id;
   setPane3('invoice', id);
   if (isMobileLayout()) goPane(3);
-  renderInvoicePage(id);
+  invoiceDoc.innerHTML = '<div style="text-align:center;padding:40px;color:#8c8578;">Loading…</div>';
+  let inv;
+  try { inv = await api('GET', `/invoices/${encodeURIComponent(id)}`); }
+  catch (err) {
+    draftInvoice = null;
+    invoiceDoc.innerHTML = `<div style="text-align:center;padding:40px;color:var(--overdue);">Invoice not found: ${escapeHtml(err.message)}</div>`;
+    return;
+  }
+  // Drafts get the editable preview UI; sent/paid get the static view.
+  if (inv.status === 'draft') {
+    billingScopeProjectId = inv.project_id || null;
+    draftInvoice = inv;
+    renderInvoiceDoc(inv, { draft: true });
+  } else {
+    draftInvoice = null;
+    renderInvoiceDoc(inv, { draft: false });
+  }
 }
 
 // Synthesise an invoice-shaped object from a client's billable ('invoice'-
@@ -9253,6 +9330,7 @@ function buildDraftInvoice(clientId, scopeProjectId) {
   const items = [];
   for (const c of cards.values()) {
     if (c.status !== 'invoice') continue;            // 'invoice' = ready to bill
+    if (c.draft_id) continue;                        // already claimed by a saved draft
     if (resolveClientId(c) !== clientId) continue;
     if (scopeProjectId && !descendsFrom(c, scopeProjectId)) continue;
     const hours = (typeof c.hours === 'number') ? c.hours : 0;
@@ -9336,8 +9414,9 @@ function applyDraftEdits(inv, pid) {
   if (!ov) return inv;
   if (typeof ov.id === 'string')    inv.id = ov.id;
   if (typeof ov.notes === 'string') inv.notes = ov.notes;
-  if (ov.discount != null) {
-    inv.discount_ex_gst = Math.max(0, round2(Number(ov.discount) || 0));
+  const ovDisc = (ov.discount_ex_gst != null) ? ov.discount_ex_gst : ov.discount;   // legacy key
+  if (ovDisc != null) {
+    inv.discount_ex_gst = Math.max(0, round2(Number(ovDisc) || 0));
     const taxable = round2(Math.max(0, inv.subtotal_ex_gst - inv.discount_ex_gst));
     inv.gst = round2(taxable * inv.gst_rate);
     inv.total_inc_gst = round2(taxable + inv.gst);
@@ -9349,15 +9428,34 @@ function applyDraftEdits(inv, pid) {
 // Pane-2 bill button entry point: show the project's live draft invoice. Falls
 // back to the billing list for projects with no billable client (shouldn't
 // happen — the button is hidden for those — but keeps the click safe).
-function openProjectInvoice(projectId) {
+//
+// Prefers a saved backend draft (status='draft' matching this client + project
+// scope). Falls back to a synthetic preview built live from billable cards when
+// no saved draft exists yet — the composer's "save" turns that into a real draft.
+async function openProjectInvoice(projectId) {
   const project = projectId ? cards.get(projectId) : null;
   const clientId = resolveClientId(project);
   if (!clientId || projectNonBillable(project)) { openBilling(projectId); return; }
   billingScopeProjectId = projectId || null;
-  draftInvoice = buildDraftInvoice(clientId, billingScopeProjectId);
-  if (!draftInvoice) { openBilling(projectId); return; }
-  applyDraftEdits(draftInvoice, billingScopeProjectId);   // restore any in-progress edits
-  currentInvoiceId = null;
+
+  // Look for a saved draft matching this scope. If found, it IS the draft.
+  let saved = null;
+  try {
+    const all = await api('GET', '/invoices');
+    saved = all.find(i => i.status === 'draft'
+      && i.client_id === clientId
+      && (i.project_id || null) === (billingScopeProjectId || null));
+  } catch {}
+
+  if (saved) {
+    draftInvoice = saved;
+    currentInvoiceId = saved.id;
+  } else {
+    draftInvoice = buildDraftInvoice(clientId, billingScopeProjectId);
+    if (!draftInvoice) { openBilling(projectId); return; }
+    applyDraftEdits(draftInvoice, billingScopeProjectId);   // restore any in-progress edits
+    currentInvoiceId = null;
+  }
   setPane3('invoice', draftInvoice.id);
   if (isMobileLayout()) goPane(3);
   if (history.state?.runnPane !== 3) {
@@ -9382,9 +9480,15 @@ function closeInvoice() {
 // ── Draft action handlers ─────────────────────────────────
 document.getElementById('invEditDraft').addEventListener('click', () => {
   if (!draftInvoice) return;
-  // Open the existing composer scoped to the same project so its rows match
-  // the draft the user is looking at, carrying discount + notes through.
-  openComposer(draftInvoice.client_id, billingScopeProjectId, draftInvoice.discount_ex_gst, draftInvoice.notes);
+  // For a persisted draft, hand the composer the saved record so it loads
+  // those exact items (instead of re-pulling from cards). For a synthetic
+  // preview, pass scope so the composer matches the preview's auto-pull.
+  const persisted = currentInvoiceId === draftInvoice.id ? draftInvoice : null;
+  openComposer({
+    clientId: draftInvoice.client_id,
+    projectId: billingScopeProjectId,
+    existingDraft: persisted,
+  });
 });
 document.getElementById('invIssueDraft').addEventListener('click', async () => {
   if (!draftInvoice || !draftInvoice.items.length) return;
@@ -9392,24 +9496,33 @@ document.getElementById('invIssueDraft').addEventListener('click', async () => {
   if (!invNum) { alert('Enter an invoice number first.'); return; }
   const btn = document.getElementById('invIssueDraft');
   btn.disabled = true; btn.textContent = 'issuing…';
+  const isPersisted = currentInvoiceId === draftInvoice.id;
   try {
-    // The server flips each line item's card to 'invoiced' (+ records invoice_id).
-    const inv = await api('POST', '/invoices', {
-      id:        invNum,                              // manual number; server uses it as-is
-      client_id: draftInvoice.client_id,
-      items: draftInvoice.items
-        .filter(it => Number(it.amount_ex_gst) > 0)   // never put a $0 line on the invoice
-        .map(it => ({
-          card_id: it.card_id, description: it.description,
-          date: it.date, amount_ex_gst: it.amount_ex_gst,
-        })),
-      issued_at: draftInvoice.issued_at,
-      due_at:    draftInvoice.due_at,
-      notes:     draftInvoice.notes || '',
-      gst_rate:  draftInvoice.gst_rate,
-      discount_ex_gst: draftInvoice.discount_ex_gst || 0,
-    });
-    draftEdits.delete(billingScopeProjectId); persistDraftEdits();   // issued → drop the overlay
+    let inv;
+    if (isPersisted) {
+      // Persisted draft → just flip status. Server flips cards to 'invoiced'.
+      inv = await api('PATCH', `/invoices/${encodeURIComponent(invNum)}`, { status: 'sent' });
+    } else {
+      // Synthetic preview → POST without status='draft' creates and issues in
+      // one step (server flips cards to 'invoiced').
+      inv = await api('POST', '/invoices', {
+        id:        invNum,
+        client_id: draftInvoice.client_id,
+        project_id: billingScopeProjectId,
+        items: draftInvoice.items
+          .filter(it => Number(it.amount_ex_gst) > 0)
+          .map(it => ({
+            card_id: it.card_id, description: it.description,
+            date: it.date, amount_ex_gst: it.amount_ex_gst,
+          })),
+        issued_at: draftInvoice.issued_at,
+        due_at:    draftInvoice.due_at,
+        notes:     draftInvoice.notes || '',
+        gst_rate:  draftInvoice.gst_rate,
+        discount_ex_gst: draftInvoice.discount_ex_gst || 0,
+      });
+      draftEdits.delete(billingScopeProjectId); persistDraftEdits();   // issued → drop the overlay
+    }
     openInvoice(inv.id);
   } catch (err) {
     alert(`Issue failed: ${err.message}`);
@@ -9436,14 +9549,9 @@ function printInvoice() {
 }
 
 async function renderInvoicePage(id) {
-  invoiceDoc.innerHTML = '<div style="text-align:center;padding:40px;color:#8c8578;">Loading…</div>';
-  let inv;
-  try { inv = await api('GET', `/invoices/${encodeURIComponent(id)}`); }
-  catch (err) {
-    invoiceDoc.innerHTML = `<div style="text-align:center;padding:40px;color:var(--overdue);">Invoice not found: ${escapeHtml(err.message)}</div>`;
-    return;
-  }
-  renderInvoiceDoc(inv, { draft: false });
+  // Thin wrapper that re-uses openInvoice's load+route logic, so a status flip
+  // (sent/paid) refreshes the same page without duplicating the GET/dispatch.
+  return openInvoice(id);
 }
 
 // Pure renderer for an invoice-shaped object into pane 3's invoice doc. Used
@@ -9580,14 +9688,30 @@ function renderInvoiceDoc(inv, opts) {
   issueBtn.hidden  = !isDraft;
 
   if (isDraft) {
-    invStatusBadge.innerHTML = `<span class="billing-invoice-status draft">draft · preview</span>`;
+    const isPersisted = currentInvoiceId === inv.id;
+    invStatusBadge.innerHTML = `<span class="billing-invoice-status draft">${isPersisted ? 'draft' : 'draft · preview'}</span>`;
     issueBtn.textContent = 'issue invoice';
-    // Persist hand-entered fields to the per-project overlay so they survive
-    // navigating away from the draft and back.
+    // Edit persistence:
+    //   - Synthetic preview (not yet saved): write to per-project localStorage
+    //     overlay so edits survive navigation. They commit to the backend on
+    //     "save" in the composer.
+    //   - Persisted draft: debounced PATCH to the backend; localStorage is bypassed.
     const pid = billingScopeProjectId;
+    let patchTimer = null;
+    let pendingPatch = {};
     const saveEdit = (patch) => {
-      draftEdits.set(pid, { ...(draftEdits.get(pid) || {}), ...patch });
-      persistDraftEdits();
+      if (isPersisted) {
+        Object.assign(pendingPatch, patch);
+        if (patchTimer) clearTimeout(patchTimer);
+        patchTimer = setTimeout(async () => {
+          const body = pendingPatch; pendingPatch = {}; patchTimer = null;
+          try { await api('PATCH', `/invoices/${encodeURIComponent(inv.id)}`, body); }
+          catch (err) { console.error('[runn] draft autosave failed:', err); }
+        }, 400);
+      } else {
+        draftEdits.set(pid, { ...(draftEdits.get(pid) || {}), ...patch });
+        persistDraftEdits();
+      }
     };
     const numInput = document.getElementById('invNumInput');
     // Issue needs at least one line item AND an invoice number.
@@ -9596,7 +9720,9 @@ function renderInvoiceDoc(inv, opts) {
       issueBtn.disabled = !(inv.items.length > 0 && hasNum);
     };
     if (numInput) {
-      numInput.addEventListener('input', () => {
+      // Persisted drafts: id is the filename — locked once saved.
+      if (isPersisted) numInput.disabled = true;
+      else numInput.addEventListener('input', () => {
         if (draftInvoice) draftInvoice.id = numInput.value;
         saveEdit({ id: numInput.value });
         refreshIssuable();
@@ -9621,7 +9747,7 @@ function renderInvoiceDoc(inv, opts) {
         if (print) print.textContent = '−' + fmt$(draftInvoice.discount_ex_gst);
         const row = document.getElementById('invDiscountRow');
         if (row) row.classList.toggle('is-empty', !(draftInvoice.discount_ex_gst > 0));
-        saveEdit({ discount: draftInvoice.discount_ex_gst });
+        saveEdit({ discount_ex_gst: draftInvoice.discount_ex_gst });
       });
     }
     // Notes: editable on the draft, rendered on the invoice, persisted live.

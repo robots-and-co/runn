@@ -197,9 +197,12 @@ function addDays(iso, days) {
 function round2(n) { return Math.round(n * 100) / 100; }
 
 async function createInvoice(body) {
-  // body: { client_id, items: [{card_id, description, date, amount_ex_gst}], notes?, due_at?, issued_at? }
+  // body: { client_id, items: [{card_id, description, date, amount_ex_gst}], notes?, due_at?, issued_at?, status?, project_id? }
   if (!body.client_id) throw new Error('client_id required');
-  if (!Array.isArray(body.items) || !body.items.length) throw new Error('items required');
+  if (!Array.isArray(body.items)) throw new Error('items required');
+  const status = body.status === 'draft' ? 'draft' : 'sent';
+  // Drafts can be empty (you might save before adding items). Issued invoices need ≥1 item.
+  if (status !== 'draft' && !body.items.length) throw new Error('items required');
 
   const settings = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
   const client = await readJson(clientPath(body.client_id));
@@ -208,6 +211,7 @@ async function createInvoice(body) {
   //  - Manual: caller supplies body.id (used as-is, client seq untouched). For
   //    hand-numbered invoices until auto-numbering is wired up.
   //  - Auto:   mint {prefix}{seq}, bump seq, persist back to the client file.
+  //    Drafts never auto-mint (they shouldn't burn a sequence number) — id must be supplied.
   let id;
   if (body.id != null && String(body.id).trim() !== '') {
     id = String(body.id).trim();
@@ -215,6 +219,8 @@ async function createInvoice(body) {
     if (!/^[A-Za-z0-9._-]+$/.test(id)) throw new Error('invalid invoice id');
     const exists = await fsp.access(invoicePath(id)).then(() => true, () => false);
     if (exists) throw new Error(`invoice ${id} already exists`);
+  } else if (status === 'draft') {
+    throw new Error('invoice id required for drafts');
   } else {
     const prefix = (client.invoice_prefix || (client.name || 'INV')).toUpperCase().replace(/[^A-Z0-9]/g, '');
     const seq = Number.isFinite(client.invoice_seq) ? client.invoice_seq : 1;
@@ -246,6 +252,7 @@ async function createInvoice(body) {
   const inv = {
     id,
     client_id: body.client_id,
+    project_id: body.project_id || null,
     issued_at: issued,
     due_at: due,
     items,
@@ -256,7 +263,7 @@ async function createInvoice(body) {
     total_inc_gst: total,
     paid: 0,
     balance: total,
-    status: 'draft',
+    status,
     notes: body.notes || '',
     snapshot: {
       from: {
@@ -280,7 +287,7 @@ async function createInvoice(body) {
     updated_at: nowIso(),
   };
   await atomicWriteJson(invoicePath(id), inv);
-  console.log(`[runn] issued invoice ${id} (${items.length} items, ${settings.currency_symbol || '$'}${total})`);
+  console.log(`[runn] ${status === 'draft' ? 'saved draft' : 'issued invoice'} ${id} (${items.length} items, ${settings.currency_symbol || '$'}${total})`);
   return inv;
 }
 
@@ -1728,15 +1735,32 @@ const server = http.createServer(async (req, res) => {
     if (m === 'POST' && url.pathname === '/invoices') {
       const body = await readBody(req);
       const inv = await createInvoice(body);
-      // Move referenced cards along the conveyor: → 'invoiced' + record invoice_id.
-      for (const item of inv.items) {
-        if (!item.card_id) continue;
-        try {
-          const cp = cardPath(item.card_id);
-          const c = await readJson(cp);
-          await atomicWriteJson(cp, { ...c, status: 'invoiced', invoice_id: inv.id, updated_at: nowIso() });
-        } catch (err) {
-          console.error(`[runn] failed to flip card ${item.card_id} → invoiced:`, err.message);
+      if (inv.status === 'draft') {
+        // Draft: stamp draft_id so the auto-pool stops offering these cards, but
+        // leave card status at 'invoice' (still editable until the draft is issued).
+        for (const item of inv.items) {
+          if (!item.card_id) continue;
+          try {
+            const cp = cardPath(item.card_id);
+            const c = await readJson(cp);
+            await atomicWriteJson(cp, { ...c, draft_id: inv.id, updated_at: nowIso() });
+          } catch (err) {
+            console.error(`[runn] failed to stamp draft_id on card ${item.card_id}:`, err.message);
+          }
+        }
+      } else {
+        // Issued: move referenced cards along the conveyor: → 'invoiced' + record invoice_id.
+        for (const item of inv.items) {
+          if (!item.card_id) continue;
+          try {
+            const cp = cardPath(item.card_id);
+            const c = await readJson(cp);
+            const next = { ...c, status: 'invoiced', invoice_id: inv.id, updated_at: nowIso() };
+            delete next.draft_id;
+            await atomicWriteJson(cp, next);
+          } catch (err) {
+            console.error(`[runn] failed to flip card ${item.card_id} → invoiced:`, err.message);
+          }
         }
       }
       return sendJson(res, 201, inv);
@@ -1746,12 +1770,82 @@ const server = http.createServer(async (req, res) => {
       const inv = await readJson(invoicePath(id));
       const body = await readBody(req);
       const merged = { ...inv, ...body, id: inv.id, updated_at: nowIso() };
-      // Recompute balance if paid changed
-      if (typeof merged.paid === 'number') merged.balance = (merged.total_inc_gst || 0) - merged.paid;
+
+      // Drafts: if items changed, normalize + recompute totals; also figure out
+      // which cards joined/left so draft_id stamps stay in sync.
+      const wasDraft = inv.status === 'draft';
+      let addedCards = [], removedCards = [];
+      if (wasDraft && Array.isArray(body.items)) {
+        merged.items = body.items.map(it => ({
+          card_id:        it.card_id || null,
+          description:    it.description || '',
+          date:           it.date || todayISO(),
+          amount_ex_gst:  round2(Number(it.amount_ex_gst) || 0),
+        }));
+        const prevIds = new Set((inv.items || []).map(i => i.card_id).filter(Boolean));
+        const nextIds = new Set(merged.items.map(i => i.card_id).filter(Boolean));
+        addedCards   = [...nextIds].filter(x => !prevIds.has(x));
+        removedCards = [...prevIds].filter(x => !nextIds.has(x));
+      }
+      if (wasDraft && (Array.isArray(body.items) || typeof body.discount_ex_gst === 'number' || typeof body.gst_rate === 'number')) {
+        const subtotal = round2(merged.items.reduce((s, it) => s + (Number(it.amount_ex_gst) || 0), 0));
+        const discount = Math.min(subtotal, Math.max(0, round2(Number(merged.discount_ex_gst) || 0)));
+        const gstRate  = typeof merged.gst_rate === 'number' ? merged.gst_rate : (inv.gst_rate || 0);
+        const taxable  = round2(subtotal - discount);
+        const gst      = round2(taxable * gstRate);
+        const total    = round2(taxable + gst);
+        merged.subtotal_ex_gst = subtotal;
+        merged.discount_ex_gst = discount;
+        merged.gst_rate        = gstRate;
+        merged.gst             = gst;
+        merged.total_inc_gst   = total;
+        merged.balance         = total - (merged.paid || 0);
+      }
+      // Recompute balance if paid changed (legacy behavior)
+      if (typeof merged.paid === 'number' && !Array.isArray(body.items)) {
+        merged.balance = (merged.total_inc_gst || 0) - merged.paid;
+      }
       await atomicWriteJson(invoicePath(id), merged);
+
+      // Draft item adds/removes: keep draft_id stamp on cards in sync.
+      for (const cid of addedCards) {
+        try {
+          const cp = cardPath(cid);
+          const c = await readJson(cp);
+          await atomicWriteJson(cp, { ...c, draft_id: id, updated_at: nowIso() });
+        } catch (err) {
+          console.error(`[runn] failed to stamp draft_id on card ${cid}:`, err.message);
+        }
+      }
+      for (const cid of removedCards) {
+        try {
+          const cp = cardPath(cid);
+          const c = await readJson(cp);
+          if (c.draft_id !== id) continue;   // someone else's draft (shouldn't happen) — don't steal
+          const next = { ...c, updated_at: nowIso() };
+          delete next.draft_id;
+          await atomicWriteJson(cp, next);
+        } catch {}
+      }
+
+      // Draft → sent: flip cards 'invoice' → 'invoiced', clear draft_id, stamp invoice_id.
+      if (wasDraft && body.status && body.status !== 'draft') {
+        for (const item of merged.items) {
+          if (!item.card_id) continue;
+          try {
+            const cp = cardPath(item.card_id);
+            const c = await readJson(cp);
+            const next = { ...c, status: 'invoiced', invoice_id: id, updated_at: nowIso() };
+            delete next.draft_id;
+            await atomicWriteJson(cp, next);
+          } catch (err) {
+            console.error(`[runn] failed to flip card ${item.card_id} → invoiced:`, err.message);
+          }
+        }
+      }
       // If the invoice flipped to paid, move its cards → 'paid' on the conveyor.
       if (body.status === 'paid' && inv.status !== 'paid') {
-        for (const item of inv.items) {
+        for (const item of merged.items) {
           if (!item.card_id) continue;
           try {
             const cp = cardPath(item.card_id);
@@ -1761,6 +1855,26 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return sendJson(res, 200, merged);
+    }
+    if (m === 'DELETE' && (mm = url.pathname.match(/^\/invoices\/([^/]+)$/))) {
+      const id = mm[1];
+      const inv = await readJson(invoicePath(id)).catch(() => null);
+      if (!inv) return sendJson(res, 404, { error: 'not found' });
+      if (inv.status !== 'draft') return sendJson(res, 400, { error: 'only drafts can be deleted' });
+      // Clear draft_id stamp from referenced cards.
+      for (const item of inv.items || []) {
+        if (!item.card_id) continue;
+        try {
+          const cp = cardPath(item.card_id);
+          const c = await readJson(cp);
+          if (c.draft_id !== id) continue;
+          const next = { ...c, updated_at: nowIso() };
+          delete next.draft_id;
+          await atomicWriteJson(cp, next);
+        } catch {}
+      }
+      await fsp.unlink(invoicePath(id)).catch(() => {});
+      return sendJson(res, 200, { ok: true });
     }
 
     if (m === 'POST' && url.pathname === '/sessions') {
