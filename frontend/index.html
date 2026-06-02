@@ -261,6 +261,7 @@
   </div>
   <div class="chip-menu" id="chipMenu" hidden></div>
   <div class="chip-menu" id="jobMenu" hidden></div>
+  <div class="chip-menu" id="clientMenu" hidden></div>
 
 <script>
 'use strict';
@@ -412,10 +413,10 @@
   }
 
   // ── Job actions menu (archive / delete) ──
-  function placeMenu(menu, anchorEl) {
+  function placeMenu(menu, anchorEl, align = 'left') {
     const r = anchorEl.getBoundingClientRect();
     const mw = menu.offsetWidth, mh = menu.offsetHeight;
-    let left = r.right - mw;                              // right-align to the button
+    let left = align === 'right' ? r.right - mw : r.left;
     let top = r.bottom + 4;
     if (left + mw > window.innerWidth - 8) left = window.innerWidth - 8 - mw;
     if (top + mh > window.innerHeight - 8) top = r.top - 4 - mh;
@@ -438,9 +439,36 @@
     menu.appendChild(archive);
     menu.appendChild(del);
     menu.hidden = false;
-    placeMenu(menu, anchorEl);
+    placeMenu(menu, anchorEl, 'right');
   }
   function closeJobMenu() { $('jobMenu').hidden = true; }
+
+  // ── Client picker (click the client chip to re-assign the job) ──
+  let clientMenuJobId = null;
+  function openClientMenu(anchorEl, jobId, currentClientId) {
+    const menu = $('clientMenu');
+    clientMenuJobId = jobId;
+    menu.innerHTML = '';
+    const mk = (value, label, isCurrent) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'chip-menu-item' + (isCurrent ? ' is-current' : '');
+      item.dataset.client = value;          // '' = Personal (no client)
+      item.textContent = label;
+      menu.appendChild(item);
+    };
+    mk('', 'Personal', !currentClientId);
+    const clients = [...state.clients.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    for (const c of clients) mk(c.id, c.name, c.id === currentClientId);
+    menu.hidden = false;
+    placeMenu(menu, anchorEl);
+  }
+  function closeClientMenu() { $('clientMenu').hidden = true; clientMenuJobId = null; }
+  async function setJobClient(id, clientId) {
+    const j = await patchJson('/jobs/' + id, { client_id: clientId || null });
+    state.jobs.set(j.id, j);
+    renderList(); renderChat();
+  }
   async function archiveCurrentJob() {
     const id = state.currentId;
     if (!id || id === DRAFT) return;
@@ -540,6 +568,7 @@
       $('chatTitle').textContent = 'New job';
       const clEl = $('chatClient');
       clEl.textContent = clientName(state.draftClientId) || 'Personal';
+      clEl.className = 'chip client';
       clEl.hidden = false;
       $('chatStatus').hidden = true;
       $('chatHours').textContent = '';
@@ -561,7 +590,9 @@
     $('chatTitle').textContent = titleOf(j) || 'Untitled job';
     const cn = clientName(j.client_id);
     const clEl = $('chatClient');
-    if (cn) { clEl.textContent = cn; clEl.hidden = false; } else clEl.hidden = true;
+    clEl.textContent = cn || 'Personal';
+    clEl.className = 'chip client pick';
+    clEl.hidden = false;
     const stEl = $('chatStatus');
     stEl.textContent = j.status || 'open';
     stEl.className = 'chip pick st-' + (j.status || 'open');
@@ -736,6 +767,20 @@
     ev.stopPropagation();
     if ($('jobMenu').hidden) openJobMenu($('jobMenuBtn')); else closeJobMenu();
   });
+  $('chatClient').addEventListener('click', (ev) => {
+    if (!state.currentId || state.currentId === DRAFT) return;
+    ev.stopPropagation();
+    const j = state.jobs.get(state.currentId);
+    openClientMenu($('chatClient'), state.currentId, j ? (j.client_id || null) : null);
+  });
+  $('clientMenu').addEventListener('click', (ev) => {
+    const item = ev.target.closest('.chip-menu-item');
+    if (!item || !clientMenuJobId) return;
+    const id = clientMenuJobId;
+    const next = item.dataset.client || null;
+    closeClientMenu();
+    setJobClient(id, next).catch((e) => console.error('client change failed', e));
+  });
   $('jobMenu').addEventListener('click', (ev) => {
     const item = ev.target.closest('.chip-menu-item');
     if (!item) return;
@@ -749,11 +794,14 @@
     if (!cm.hidden && !cm.contains(ev.target)) closeChipMenu();
     const jm = $('jobMenu');
     if (!jm.hidden && !jm.contains(ev.target)) closeJobMenu();
+    const clm = $('clientMenu');
+    if (!clm.hidden && !clm.contains(ev.target)) closeClientMenu();
   });
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
     if (!$('chipMenu').hidden) { ev.stopPropagation(); closeChipMenu(); }
     if (!$('jobMenu').hidden) { ev.stopPropagation(); closeJobMenu(); }
+    if (!$('clientMenu').hidden) { ev.stopPropagation(); closeClientMenu(); }
   });
   $('clientFilter').addEventListener('change', (e) => { state.filterClient = e.target.value; renderList(); });
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
