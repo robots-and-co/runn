@@ -97,6 +97,27 @@
   .chip.st-paid     { background:#d7efe0; color:#1f7a55; }
   .chip.st-blocked  { background:#ffe1dc; color:#b23b2a; }
   .chip.st-hold     { background:#ececec; color:#777; }
+  /* selectable status chip — click opens the status picker */
+  .chip.pick { cursor: pointer; }
+  .chip.pick::after { content: '▾'; margin-left: 3px; font-size: 9px; opacity: .55; }
+
+  /* status picker menu (shared, body-level, fixed-positioned at the chip) */
+  .chip-menu {
+    position: fixed; z-index: 200; min-width: 150px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    padding: 4px; display: flex; flex-direction: column; gap: 2px;
+  }
+  .chip-menu[hidden] { display: none; }
+  .chip-menu-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; background: none; border: 0; border-radius: 6px;
+    cursor: pointer; font: inherit; font-size: 13px; color: var(--ink);
+    text-align: left; width: 100%;
+  }
+  .chip-menu-item:hover { background: var(--surface-2); }
+  .chip-menu-item.is-current { background: var(--surface-2); font-weight: 600; }
+  .chip-menu-item .chip { pointer-events: none; }
 
   /* left-pane subheader: client filter + running $ total */
   .list-sub {
@@ -108,9 +129,16 @@
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
     padding: 6px 8px; -webkit-appearance: none; appearance: none;
   }
-  .total { text-align: right; line-height: 1.05; white-space: nowrap; }
-  .total .amt { font-size: 15px; font-weight: 700; color: var(--brand); }
-  .total .cap { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
+  .total { flex-shrink: 0; }
+  .total .amt {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 32px; padding: 0 12px;
+    background: var(--surface); border: 1px solid #dbe3ec; border-radius: 8px;
+    color: var(--brand);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px; font-weight: 600; white-space: nowrap;
+  }
+  .total .amt::before { content: '$'; opacity: .6; }
 
   /* + Job → client picker */
   .picker { max-width: 520px; margin: 4px auto; }
@@ -201,8 +229,7 @@
           <option value="">All clients</option>
         </select>
         <div class="total">
-          <span class="amt" id="valueTotal">$0</span>
-          <span class="cap">outstanding</span>
+          <span class="amt" id="valueTotal" title="Outstanding — done work not yet invoiced">0.00</span>
         </div>
       </div>
       <div class="job-list" id="jobList"></div>
@@ -228,6 +255,7 @@
       </form>
     </main>
   </div>
+  <div class="chip-menu" id="chipMenu" hidden></div>
 
 <script>
 'use strict';
@@ -282,7 +310,7 @@
   }
   function renderTotal(jobs) {
     const total = jobs.reduce((s, j) => s + jobValue(j), 0);
-    $('valueTotal').textContent = fmtMoney(total);
+    $('valueTotal').textContent = total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
   function renderFilterOptions() {
     const sel = $('clientFilter');
@@ -321,7 +349,7 @@
 
       const meta = document.createElement('div');
       meta.className = 'meta';
-      meta.appendChild(statusChip(j.status));
+      meta.appendChild(statusChip(j.status, j.id));
       const cn = clientName(j.client_id);
       if (cn) { const c = document.createElement('span'); c.className = 'chip client'; c.textContent = cn; meta.appendChild(c); }
       const t = document.createElement('span'); t.textContent = fmtTime(j.updated_at); meta.appendChild(t);
@@ -332,11 +360,50 @@
     }
   }
 
-  function statusChip(status) {
+  function statusChip(status, jobId) {
     const c = document.createElement('span');
-    c.className = 'chip st-' + (status || 'open');
-    c.textContent = status || 'open';
+    const st = status || 'open';
+    c.className = 'chip st-' + st + (jobId ? ' pick' : '');
+    c.textContent = st;
+    if (jobId) {
+      c.addEventListener('click', (ev) => {
+        ev.stopPropagation();          // don't open the job row
+        openChipMenu(c, jobId, st);
+      });
+    }
     return c;
+  }
+
+  // ── Status picker (selectable chip → dropdown) ──
+  const STATUS_ORDER = ['open', 'doing', 'review', 'blocked', 'hold', 'done', 'invoiced', 'paid'];
+  let chipMenuJobId = null;
+  function openChipMenu(anchorEl, jobId, current) {
+    const menu = $('chipMenu');
+    chipMenuJobId = jobId;
+    menu.innerHTML = '';
+    for (const st of STATUS_ORDER) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'chip-menu-item' + (st === current ? ' is-current' : '');
+      item.dataset.status = st;
+      item.appendChild(statusChip(st));   // static colored chip (no jobId)
+      menu.appendChild(item);
+    }
+    menu.hidden = false;
+    const r = anchorEl.getBoundingClientRect();
+    const mw = menu.offsetWidth, mh = menu.offsetHeight;
+    let left = r.left;
+    let top = r.bottom + 4;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - 8 - mw;
+    if (top + mh > window.innerHeight - 8) top = r.top - 4 - mh;  // flip above if no room below
+    menu.style.left = Math.max(8, left) + 'px';
+    menu.style.top = Math.max(8, top) + 'px';
+  }
+  function closeChipMenu() { $('chipMenu').hidden = true; chipMenuJobId = null; }
+  async function setJobStatus(id, status) {
+    const j = await patchJson('/jobs/' + id, { status });
+    state.jobs.set(j.id, j);
+    renderList(); renderChat();
   }
 
   // ── Chat rendering ──────────────────────────────
@@ -436,7 +503,7 @@
     if (cn) { clEl.textContent = cn; clEl.hidden = false; } else clEl.hidden = true;
     const stEl = $('chatStatus');
     stEl.textContent = j.status || 'open';
-    stEl.className = 'chip st-' + (j.status || 'open');
+    stEl.className = 'chip pick st-' + (j.status || 'open');
     stEl.hidden = false;
     $('chatHours').textContent = j.hours ? `${j.hours}h` : '';
 
@@ -521,6 +588,15 @@
     if (!r.ok) throw new Error(`${url} → ${r.status}`);
     return r.json();
   }
+  async function patchJson(url, body) {
+    const r = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`${url} → ${r.status}`);
+    return r.json();
+  }
   async function sendCurrent() {
     const text = msgInput.value.trim();
     if (!text || state.sending) return;
@@ -554,6 +630,28 @@
   // ── Wiring ──────────────────────────────────────
   $('backBtn').addEventListener('click', closeChat);
   $('newJobBtn').addEventListener('click', startNewJob);
+  $('chipMenu').addEventListener('click', (ev) => {
+    const item = ev.target.closest('.chip-menu-item');
+    if (!item || !chipMenuJobId) return;
+    const id = chipMenuJobId;
+    const next = item.dataset.status;
+    closeChipMenu();
+    setJobStatus(id, next).catch((e) => console.error('status change failed', e));
+  });
+  $('chatStatus').addEventListener('click', (ev) => {
+    if (!state.currentId || state.currentId === DRAFT) return;
+    ev.stopPropagation();
+    const j = state.jobs.get(state.currentId);
+    openChipMenu($('chatStatus'), state.currentId, j ? (j.status || 'open') : 'open');
+  });
+  document.addEventListener('click', (ev) => {
+    const menu = $('chipMenu');
+    if (menu.hidden || menu.contains(ev.target)) return;
+    closeChipMenu();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !$('chipMenu').hidden) { ev.stopPropagation(); closeChipMenu(); }
+  });
   $('clientFilter').addEventListener('change', (e) => { state.filterClient = e.target.value; renderList(); });
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
   msgInput.addEventListener('input', autoGrow);
