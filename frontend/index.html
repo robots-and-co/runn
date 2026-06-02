@@ -154,6 +154,17 @@
   .total .amt::before { content: '$'; opacity: .6; }
   .total.clickable { cursor: pointer; }
   .total.clickable:hover .amt { border-color: var(--brand); }
+  /* active = the left pane is currently flipped to invoices */
+  .total.is-active .amt { background: var(--brand); color: #fff; border-color: var(--brand); }
+  .total.is-active .amt::before { opacity: .8; }
+
+  /* Left pane flips between jobs and invoices (toggled by the $ total) */
+  .billing-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px; display: none; }
+  body.show-invoices #jobList,
+  body.show-invoices .list-sub,
+  body.show-invoices .list-foot { display: none; }
+  body.show-invoices .billing-list { display: block; }
+  .bill-entry.active { border-color: var(--brand); box-shadow: inset 3px 0 0 var(--brand); }
 
   /* ── Billing pane ───────────────────────────────── */
   .billing-pane { flex: 1; display: none; flex-direction: column; min-width: 0; }
@@ -338,7 +349,7 @@
       <div class="list-head">
         <button class="logo" id="logoReset" type="button" title="Reload — clears cached copies for a clean test">R</button>
         <h1>Runn</h1>
-        <button class="total clickable" id="billingBtn" type="button" title="Billing — outstanding work">
+        <button class="total clickable" id="billingBtn" type="button" title="Invoices — tap to flip this list to billing">
           <span class="amt" id="valueTotal">0.00</span>
         </button>
       </div>
@@ -348,6 +359,7 @@
         </select>
       </div>
       <div class="job-list" id="jobList"></div>
+      <div class="billing-list" id="billingList"></div>
       <div class="list-foot">
         <button class="btn-newjob" id="newJobBtn">+ Job</button>
         <select class="client-filter newjob-picker" id="newJobPicker" aria-label="Pick a client for the new job" hidden></select>
@@ -396,7 +408,7 @@
     filterClient: '',      // '' = all clients
     picking: false,        // choosing a client for a new job
     draftClientId: null,   // client chosen for the not-yet-saved draft
-    view: 'chat',          // 'chat' | 'billing' — what the main pane shows
+    invoicesPane: false,   // left pane flipped from jobs → invoices (tap the $ total)
     invoices: new Map(),   // id -> issued invoice record
     billingSel: null,      // null = list; {kind:'draft',clientId} | {kind:'invoice',id}
     editing: null,         // working copy of the draft being composed
@@ -676,37 +688,60 @@
   }
 
   // ── Billing ─────────────────────────────────────
-  // Opens in the main pane (same surface as a job). On mobile it's a slide-over
-  // like the chat, with its own history entry so the device back button returns
-  // to the list.
-  function openBilling() {
-    state.view = 'billing';
+  // The $ total in the list header flips the LEFT pane between jobs and invoices.
+  // The invoice list lives in the left pane; selecting an entry opens its document
+  // in the main pane (a slide-over on mobile, the right column on desktop).
+  const isMobile = () => window.matchMedia('(max-width: 720px)').matches;
+
+  function toggleInvoices() {
+    if (state.invoicesPane) exitInvoices();
+    else enterInvoices();
+  }
+  function enterInvoices() {
+    state.invoicesPane = true;
     state.currentId = null;
     state.picking = false;
     state.billingSel = null;
     state.editing = null;
     resetNewJobPicker();
-    document.body.classList.add('show-billing');
-    if (window.matchMedia('(max-width: 720px)').matches &&
-        !(history.state && history.state.runnBilling)) {
-      history.pushState({ runnBilling: true }, '');
+    document.body.classList.add('show-invoices');
+    $('billingBtn').classList.add('is-active');
+    if (isMobile()) {
+      if (!(history.state && history.state.runnInvoices)) history.pushState({ runnInvoices: true }, '');
+    } else {
+      document.body.classList.add('show-billing');   // desktop: doc/placeholder fills the main column
     }
     renderList();
     renderBilling();
   }
-  function closeBilling(opts) {
+  function exitInvoices(opts) {
     const fromPop = opts === true || (opts && opts.fromPop === true);
-    state.view = 'chat';
+    state.invoicesPane = false;
     state.billingSel = null;
     state.editing = null;
-    document.body.classList.remove('show-billing');
+    document.body.classList.remove('show-invoices', 'show-billing');
+    $('billingBtn').classList.remove('is-active');
     renderList();
     renderChat();
-    if (!fromPop && history.state && history.state.runnBilling) history.back();
+    if (!fromPop && history.state && history.state.runnInvoices) history.back();
+  }
+  // Open one invoice/draft document in the main pane.
+  function openInvoiceDoc(sel) {
+    state.billingSel = sel;
+    document.body.classList.add('show-billing');
+    renderBilling();
+  }
+  // Close the open document, returning to the invoice list (mobile slides back;
+  // desktop falls to the placeholder).
+  function closeBillingDoc() {
+    state.billingSel = null;
+    state.editing = null;
+    if (isMobile()) document.body.classList.remove('show-billing');
+    renderBilling();
   }
   // Don't auto-rerender billing out from under an in-progress draft edit.
   function maybeRenderBilling() {
-    if (state.view !== 'billing') return;
+    if (!state.invoicesPane) return;
     if (state.billingSel && state.billingSel.kind === 'draft') return;
     renderBilling();
   }
@@ -726,15 +761,20 @@
     out.forEach((g) => g.rows.sort((a, b) => String(a.job.done_at || a.job.updated_at).localeCompare(String(b.job.done_at || b.job.updated_at))));
     return out.sort((a, b) => b.total - a.total);
   }
-  // Dispatcher: list ⇆ open document (a live draft, or an issued invoice).
+  // Two surfaces: the list (left pane) and the open document (main pane).
   function renderBilling() {
+    if (!state.invoicesPane) return;
+    renderBillingList($('billingList'));
+    renderBillingDoc();
+  }
+  function renderBillingDoc() {
     const body = $('billingBody');
     const titleEl = $('billingTitle');
     body.innerHTML = '';
     if (state.billingSel && state.billingSel.kind === 'draft') return renderDraftDoc(body, titleEl);
     if (state.billingSel && state.billingSel.kind === 'invoice') return renderIssuedDoc(body, titleEl);
     titleEl.textContent = 'Billing';
-    renderBillingList(body);
+    body.innerHTML = '<div class="empty">Select a draft or an invoice to open it.</div>';
   }
 
   function renderBillingList(body) {
@@ -753,6 +793,7 @@
           title: g.client.name || 'Client',
           sub: `${n} ${n === 1 ? 'item' : 'items'} · not yet invoiced`,
           sum: money(g.total),
+          active: !!(state.billingSel && state.billingSel.kind === 'draft' && state.billingSel.clientId === g.client.id),
           onClick: () => openDraft(g.client.id),
         }));
       }
@@ -771,14 +812,15 @@
           sub: `${company} · ${fmtDate(inv.issued_at)}`,
           badge: inv.status,
           sum: money(inv.total),
-          onClick: () => { state.billingSel = { kind: 'invoice', id: inv.id }; renderBilling(); },
+          active: !!(state.billingSel && state.billingSel.kind === 'invoice' && state.billingSel.id === inv.id),
+          onClick: () => openInvoiceDoc({ kind: 'invoice', id: inv.id }),
         }));
       }
     }
   }
 
-  function billEntry({ title, sub, sum, badge, onClick }) {
-    const e = document.createElement('button'); e.type = 'button'; e.className = 'bill-entry';
+  function billEntry({ title, sub, sum, badge, active, onClick }) {
+    const e = document.createElement('button'); e.type = 'button'; e.className = 'bill-entry' + (active ? ' active' : '');
     const main = document.createElement('div'); main.className = 'main';
     const t = document.createElement('div'); t.className = 'ttl'; t.textContent = title;
     const s = document.createElement('div'); s.className = 'sub'; s.textContent = sub;
@@ -793,7 +835,7 @@
   // Build the working copy for a client's live draft and open the editable doc.
   function openDraft(clientId) {
     const group = billingGroups().find((g) => g.client.id === clientId);
-    if (!group) { state.billingSel = null; return renderBilling(); }
+    if (!group) { state.billingSel = null; state.editing = null; return renderBilling(); }
     const s = state.settings || {};
     const c = group.client;
     const gstRate = (typeof c.gst_rate === 'number') ? c.gst_rate
@@ -812,8 +854,7 @@
         amount: round2(r.amount),
       })),
     };
-    state.billingSel = { kind: 'draft', clientId };
-    renderBilling();
+    openInvoiceDoc({ kind: 'draft', clientId });
   }
 
   function calcTotals(items, discountRaw, gstRate) {
@@ -1038,8 +1079,7 @@
     try {
       await delJson('/invoices/' + id);
       state.invoices.delete(id);
-      state.billingSel = null;
-      renderBilling();
+      closeBillingDoc();
     } catch (e) { alert('Could not void: ' + e.message); btn.disabled = false; }
   }
 
@@ -1117,7 +1157,13 @@
     }
   }
   function openJob(id) {
-    if (state.view === 'billing') { state.view = 'chat'; state.billingSel = null; state.editing = null; document.body.classList.remove('show-billing'); }
+    if (state.invoicesPane) {
+      state.invoicesPane = false;
+      state.billingSel = null;
+      state.editing = null;
+      document.body.classList.remove('show-invoices', 'show-billing');
+      $('billingBtn').classList.remove('is-active');
+    }
     state.currentId = id;
     state.picking = false;
     resetNewJobPicker();
@@ -1378,16 +1424,13 @@
 
   // ── Wiring ──────────────────────────────────────
   $('backBtn').addEventListener('click', () => closeChat());
-  $('billingBtn').addEventListener('click', openBilling);
-  // Back: a deeper view (open doc) returns to the billing list; the list closes billing.
-  $('billingBack').addEventListener('click', () => {
-    if (state.billingSel) { state.billingSel = null; state.editing = null; renderBilling(); }
-    else closeBilling();
-  });
-  // Device/browser back button: pop back to the list instead of leaving.
+  $('billingBtn').addEventListener('click', toggleInvoices);
+  // The doc-pane chevron (mobile only) returns to the invoice list.
+  $('billingBack').addEventListener('click', closeBillingDoc);
+  // Device/browser back button: pop back toward the jobs list instead of leaving.
   window.addEventListener('popstate', () => {
-    if (document.body.classList.contains('show-billing')) closeBilling({ fromPop: true });
-    else if (document.body.classList.contains('show-chat')) closeChat({ fromPop: true });
+    if (document.body.classList.contains('show-chat')) closeChat({ fromPop: true });
+    else if (state.invoicesPane) exitInvoices({ fromPop: true });
   });
   $('newJobBtn').addEventListener('click', startNewJob);
   $('newJobPicker').addEventListener('change', (e) => {
