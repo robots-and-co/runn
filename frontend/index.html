@@ -142,7 +142,7 @@
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
     padding: 6px 8px; -webkit-appearance: none; appearance: none;
   }
-  .total { flex-shrink: 0; margin-left: auto; }
+  .total { flex-shrink: 0; margin-left: auto; border: 0; background: none; padding: 0; }
   .total .amt {
     display: inline-flex; align-items: center; gap: 4px;
     height: 32px; padding: 0 12px;
@@ -152,6 +152,44 @@
     font-size: 13px; font-weight: 600; white-space: nowrap;
   }
   .total .amt::before { content: '$'; opacity: .6; }
+  .total.clickable { cursor: pointer; }
+  .total.clickable:hover .amt { border-color: var(--brand); }
+
+  /* ── Billing pane ───────────────────────────────── */
+  .billing-pane { flex: 1; display: none; flex-direction: column; min-width: 0; }
+  body.show-billing .billing-pane { display: flex; }
+  body.show-billing .chat-pane { display: none; }
+  .billing-tabs {
+    display: flex; gap: 6px; padding: 8px 16px;
+    border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .billing-tab {
+    flex: 1; font: inherit; font-size: 14px; padding: 10px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--muted); cursor: pointer;
+  }
+  .billing-tab.is-active { background: var(--brand); color: #fff; border-color: var(--brand); }
+  .billing-body { flex: 1; overflow: auto; padding: 12px 16px; }
+  .bill-group { margin-bottom: 20px; }
+  .bill-group-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    padding: 8px 0; border-bottom: 2px solid var(--border); margin-bottom: 4px;
+  }
+  .bill-group-head .name { font-weight: 700; font-size: 15px; }
+  .bill-group-head .sum {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 700; color: var(--brand); white-space: nowrap;
+  }
+  .bill-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 4px; border-bottom: 1px solid var(--border);
+  }
+  .bill-row .desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bill-row .hrs { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .bill-row .amt {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    min-width: 88px; text-align: right; white-space: nowrap;
+  }
 
   /* + Job → client picker (lives in the left column footer) */
   .newjob-picker { width: 100%; font-size: 15px; padding: 12px; cursor: pointer; }
@@ -227,6 +265,12 @@
     body.show-chat .chat-pane { transform: translateX(0); }
     .chat-head .back { display: block; }
 
+    .billing-pane { display: flex; position: fixed; inset: 0; background: var(--bg);
+      transform: translateX(100%); transition: transform 0.22s ease; z-index: 6; }
+    body.show-billing .billing-pane { transform: translateX(0); }
+    body.show-billing .chat-pane { display: flex; }   /* don't fight the overlay on mobile */
+    .billing-tab { padding: 14px; font-size: 16px; }
+
     /* bigger chips + menus = easier taps on a phone */
     .chip { font-size: 15px; padding: 6px 14px; }
     .chip.pick::after { font-size: 12px; margin-left: 6px; }
@@ -243,9 +287,9 @@
       <div class="list-head">
         <button class="logo" id="logoReset" type="button" title="Reload — clears cached copies for a clean test">R</button>
         <h1>Runn</h1>
-        <div class="total">
-          <span class="amt" id="valueTotal" title="Outstanding — done work not yet invoiced">0.00</span>
-        </div>
+        <button class="total clickable" id="billingBtn" type="button" title="Billing — outstanding work">
+          <span class="amt" id="valueTotal">0.00</span>
+        </button>
       </div>
       <div class="list-sub">
         <select class="client-filter" id="clientFilter" aria-label="Filter by client">
@@ -276,6 +320,18 @@
         <button type="submit" id="sendBtn" disabled>Send</button>
       </form>
     </main>
+
+    <section class="billing-pane" id="billingPane">
+      <div class="chat-head billing-head">
+        <button class="back" id="billingBack" type="button" aria-label="Back">‹</button>
+        <span class="ttl">Billing</span>
+      </div>
+      <div class="billing-tabs">
+        <button class="billing-tab is-active" data-tab="outstanding" type="button">Outstanding</button>
+        <button class="billing-tab" data-tab="invoices" type="button">Invoices</button>
+      </div>
+      <div class="billing-body" id="billingBody"></div>
+    </section>
   </div>
   <div class="chip-menu" id="chipMenu" hidden></div>
   <div class="chip-menu" id="jobMenu" hidden></div>
@@ -293,6 +349,8 @@
     filterClient: '',      // '' = all clients
     picking: false,        // choosing a client for a new job
     draftClientId: null,   // client chosen for the not-yet-saved draft
+    view: 'chat',          // 'chat' | 'billing' — what the main pane shows
+    billingTab: 'outstanding', // 'outstanding' | 'invoices'
   };
 
   const $ = (id) => document.getElementById(id);
@@ -306,13 +364,16 @@
 
   const clientName = (id) => (id && state.clients.get(id)?.name) || null;
   const clientOf = (id) => (id ? state.clients.get(id) : null);
+  // Outstanding = done work not yet invoiced. Only 'done' billable jobs with a
+  // rate and hours count toward the running $ total and the Outstanding tab.
   function jobValue(j) {
     const c = clientOf(j.client_id);
     if (!c || c.non_billable || !c.rate_per_hour) return 0;
-    if (j.status === 'paid') return 0;             // already settled
+    if (j.status !== 'done') return 0;
     return (Number(j.hours) || 0) * Number(c.rate_per_hour);
   }
   const fmtMoney = (n) => '$' + Math.round(n).toLocaleString();
+  const money = (n) => '$' + (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const titleOf = (j) => j.title || firstUserText(j) || null;
   function firstUserText(j) {
     const t = (j.turns || []).find((x) => x.role === 'user' && x.text);
@@ -546,6 +607,93 @@
     el.classList.toggle('running', jobRunning(j));
   }
 
+  // ── Billing ─────────────────────────────────────
+  // Opens in the main pane (same surface as a job). On mobile it's a slide-over
+  // like the chat, with its own history entry so the device back button returns
+  // to the list.
+  function openBilling() {
+    state.view = 'billing';
+    state.currentId = null;
+    state.picking = false;
+    resetNewJobPicker();
+    document.body.classList.add('show-billing');
+    if (window.matchMedia('(max-width: 720px)').matches &&
+        !(history.state && history.state.runnBilling)) {
+      history.pushState({ runnBilling: true }, '');
+    }
+    renderList();
+    renderBilling();
+  }
+  function closeBilling(opts) {
+    const fromPop = opts === true || (opts && opts.fromPop === true);
+    state.view = 'chat';
+    document.body.classList.remove('show-billing');
+    renderList();
+    renderChat();
+    if (!fromPop && history.state && history.state.runnBilling) history.back();
+  }
+  function billingGroups() {
+    const groups = new Map();   // clientId -> { client, rows:[], total }
+    for (const j of state.jobs.values()) {
+      if (j.archived) continue;
+      const v = jobValue(j);
+      if (v <= 0) continue;     // jobValue already gates on done + billable client
+      const c = clientOf(j.client_id);
+      let g = groups.get(c.id);
+      if (!g) { g = { client: c, rows: [], total: 0 }; groups.set(c.id, g); }
+      g.rows.push({ job: j, hours: Number(j.hours) || 0, amount: v });
+      g.total += v;
+    }
+    const out = [...groups.values()];
+    out.forEach((g) => g.rows.sort((a, b) => String(a.job.done_at || a.job.updated_at).localeCompare(String(b.job.done_at || b.job.updated_at))));
+    return out.sort((a, b) => b.total - a.total);
+  }
+  function renderBilling() {
+    document.querySelectorAll('.billing-tab').forEach((b) =>
+      b.classList.toggle('is-active', b.dataset.tab === state.billingTab));
+    const body = $('billingBody');
+    body.innerHTML = '';
+    if (state.billingTab === 'invoices') {
+      body.innerHTML = '<div class="empty">No invoices yet.</div>';
+      return;
+    }
+    const groups = billingGroups();
+    if (!groups.length) {
+      body.innerHTML = '<div class="empty">Nothing to bill yet. Mark a job “done” and it lands here.</div>';
+      return;
+    }
+    for (const g of groups) {
+      const sec = document.createElement('div');
+      sec.className = 'bill-group';
+      const head = document.createElement('div');
+      head.className = 'bill-group-head';
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = g.client.name || 'Client';
+      const sum = document.createElement('span');
+      sum.className = 'sum';
+      sum.textContent = money(g.total);
+      head.append(name, sum);
+      sec.appendChild(head);
+      for (const r of g.rows) {
+        const row = document.createElement('div');
+        row.className = 'bill-row';
+        const desc = document.createElement('span');
+        desc.className = 'desc';
+        desc.textContent = titleOf(r.job) || 'Untitled job';
+        const hrs = document.createElement('span');
+        hrs.className = 'hrs';
+        hrs.textContent = r.hours + 'h';
+        const amt = document.createElement('span');
+        amt.className = 'amt';
+        amt.textContent = money(r.amount);
+        row.append(desc, hrs, amt);
+        sec.appendChild(row);
+      }
+      body.appendChild(sec);
+    }
+  }
+
   // ── Chat rendering ──────────────────────────────
   // On mobile the chat is a slide-over. Push a history entry when it opens so
   // the device back button returns to the list instead of leaving the app.
@@ -557,6 +705,7 @@
     }
   }
   function openJob(id) {
+    if (state.view === 'billing') { state.view = 'chat'; document.body.classList.remove('show-billing'); }
     state.currentId = id;
     state.picking = false;
     resetNewJobPicker();
@@ -726,16 +875,20 @@
         state.jobs.set(m.job.id, m.job);
         renderList();
         if (m.job.id === state.currentId) renderChat();
+        if (state.view === 'billing') renderBilling();
       } else if (m.type === 'job.removed') {
         state.jobs.delete(m.job.id);
         if (m.job.id === state.currentId) closeChat();
         renderList();
+        if (state.view === 'billing') renderBilling();
       } else if (m.type === 'client.added' || m.type === 'client.changed') {
         state.clients.set(m.client.id, m.client);
         renderFilterOptions(); renderList(); renderChat();
+        if (state.view === 'billing') renderBilling();
       } else if (m.type === 'client.removed') {
         state.clients.delete(m.client.id);
         renderFilterOptions(); renderList(); renderChat();
+        if (state.view === 'billing') renderBilling();
       }
     };
     ws.onclose = () => setTimeout(connectWS, 1500);
@@ -798,9 +951,14 @@
 
   // ── Wiring ──────────────────────────────────────
   $('backBtn').addEventListener('click', () => closeChat());
+  $('billingBtn').addEventListener('click', openBilling);
+  $('billingBack').addEventListener('click', () => closeBilling());
+  document.querySelectorAll('.billing-tab').forEach((b) =>
+    b.addEventListener('click', () => { state.billingTab = b.dataset.tab; renderBilling(); }));
   // Device/browser back button: pop back to the list instead of leaving.
   window.addEventListener('popstate', () => {
-    if (document.body.classList.contains('show-chat')) closeChat({ fromPop: true });
+    if (document.body.classList.contains('show-billing')) closeBilling({ fromPop: true });
+    else if (document.body.classList.contains('show-chat')) closeChat({ fromPop: true });
   });
   $('newJobBtn').addEventListener('click', startNewJob);
   $('newJobPicker').addEventListener('change', (e) => {
