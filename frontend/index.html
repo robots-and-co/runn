@@ -169,7 +169,17 @@
   }
   .chat-head .ttl { font-size: 16px; font-weight: 600; flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .chat-head .hours { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .chat-head .hours {
+    font-size: 13px; color: var(--muted); white-space: nowrap;
+    font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+  }
+  .chat-head .hours.running { color: #2f7a45; font-weight: 700; }
+  .chat-head .hours.running::before {
+    content: ''; display: inline-block; width: 7px; height: 7px;
+    border-radius: 50%; background: #2f7a45; margin-right: 5px; vertical-align: middle;
+    animation: timerpulse 1.2s ease-in-out infinite;
+  }
+  @keyframes timerpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 
   .turns { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 18px 16px; }
   .empty {
@@ -280,6 +290,7 @@
     clients: new Map(),    // id -> client
     currentId: null,
     sending: false,
+    aiActive: false,       // AI thinking/responding — keeps the work timer running
     filterClient: '',      // '' = all clients
     picking: false,        // choosing a client for a new job
     draftClientId: null,   // client chosen for the not-yet-saved draft
@@ -495,6 +506,70 @@
     closeChat();
   }
 
+  // ── Active-work timer ───────────────────────────
+  // Runs while the user is typing or the AI is working, accruing seconds onto
+  // the open job (→ job.hours → billing). timerSync() runs from renderChat, so
+  // it attaches/detaches as the open job changes.
+  const TIMER_IDLE_MS = 4000;      // a typing pause longer than this ends a span
+  const timer = { jobId: null, base: 0, spanStart: 0, typingUntil: 0, tickId: null };
+
+  function jobSeconds(j) {
+    if (!j) return 0;
+    if (j.work_seconds != null) return Number(j.work_seconds) || 0;
+    return Math.round((Number(j.hours) || 0) * 3600);   // back-fill from old jobs
+  }
+  function fmtDuration(totalSec) {
+    const s = Math.max(0, Math.floor(totalSec));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return h ? `${h}:${pad(m)}:${pad(ss)}` : `${m}:${pad(ss)}`;
+  }
+  function timerActive() {
+    return Date.now() < timer.typingUntil || state.sending || state.aiActive;
+  }
+  function timerNudge() { timer.typingUntil = Date.now() + TIMER_IDLE_MS; }
+  function timerSync() {
+    const id = (state.currentId && state.currentId !== DRAFT) ? state.currentId : null;
+    if (id === timer.jobId) { renderTimerDisplay(); return; }
+    flushSpan();                       // bank the previous job's open span
+    if (timer.tickId) { clearInterval(timer.tickId); timer.tickId = null; }
+    timer.jobId = id;
+    timer.spanStart = 0;
+    timer.typingUntil = 0;
+    timer.base = id ? jobSeconds(state.jobs.get(id)) : 0;
+    if (id) timer.tickId = setInterval(timerEvaluate, 500);
+    renderTimerDisplay();
+  }
+  function timerEvaluate() {
+    if (!timer.jobId) return;
+    const now = Date.now();
+    if (timerActive()) {
+      if (!timer.spanStart) timer.spanStart = now;
+      else if (now - timer.spanStart >= 60000) flushSpan(true);  // bound data loss
+    } else if (timer.spanStart) {
+      flushSpan();
+    }
+    renderTimerDisplay();
+  }
+  function flushSpan(keepRunning) {
+    if (!timer.spanStart || !timer.jobId) { timer.spanStart = 0; return; }
+    const elapsed = Math.round((Date.now() - timer.spanStart) / 1000);
+    timer.spanStart = keepRunning ? Date.now() : 0;
+    if (elapsed >= 1) {
+      timer.base += elapsed;
+      postJson(`/jobs/${timer.jobId}/time`, { seconds: elapsed })
+        .then((j) => { state.jobs.set(j.id, j); renderList(); })
+        .catch((e) => console.error('timer flush failed', e));
+    }
+  }
+  function renderTimerDisplay() {
+    const el = $('chatHours');
+    if (!timer.jobId) { el.textContent = ''; el.classList.remove('running'); return; }
+    const live = timer.base + (timer.spanStart ? (Date.now() - timer.spanStart) / 1000 : 0);
+    el.textContent = fmtDuration(live);
+    el.classList.toggle('running', !!timer.spanStart);
+  }
+
   // ── Chat rendering ──────────────────────────────
   // On mobile the chat is a slide-over. Push a history entry when it opens so
   // the device back button returns to the list instead of leaving the app.
@@ -575,6 +650,7 @@
 
   function renderChat() {
     $('jobMenuBtn').hidden = true;
+    timerSync();                 // attach/detach the work timer to the open job
     if (state.picking) {
       $('chatTitle').textContent = 'New job';
       $('chatClient').hidden = true;
@@ -617,8 +693,7 @@
     stEl.textContent = j.status || 'open';
     stEl.className = 'chip pick st-' + (j.status || 'open');
     stEl.hidden = false;
-    $('chatHours').textContent = j.hours ? `${j.hours}h` : '';
-    $('jobMenuBtn').hidden = false;
+    $('jobMenuBtn').hidden = false;     // #chatHours is the live timer, owned by renderTimerDisplay
 
     turnsEl.innerHTML = '';
     const turns = j.turns || [];
@@ -829,10 +904,14 @@
   });
   $('clientFilter').addEventListener('change', (e) => { state.filterClient = e.target.value; renderList(); });
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
-  msgInput.addEventListener('input', autoGrow);
+  msgInput.addEventListener('input', () => { autoGrow(); timerNudge(); });
   msgInput.addEventListener('keydown', (e) => {
+    timerNudge();
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendCurrent(); }
   });
+  // Bank the running span when the tab is hidden or closed so time isn't lost.
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushSpan(true); });
+  window.addEventListener('pagehide', () => flushSpan());
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 

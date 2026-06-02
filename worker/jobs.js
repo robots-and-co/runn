@@ -47,6 +47,7 @@ function freshJob({ client_id = null, title = null } = {}) {
     created_at: now,
     updated_at: now,
     done_at: null,
+    work_seconds: 0,       // accrued by the active-work timer; hours derives from it
     hours: 0,              // active-work hours, hand-editable before invoicing
     turns: [],             // [{ role:'user'|'ai', text, at, session_event? }]
     session_id: null,      // Claude Code session id, for --resume
@@ -120,6 +121,20 @@ async function setStatus(id, status) {
   return patchJob(id, { status });
 }
 
+// Add elapsed active-work seconds (from the live timer) and re-derive hours.
+// Back-fills work_seconds from any pre-existing hand-entered hours so older
+// jobs don't lose their value the first time the timer fires.
+async function addTime(id, seconds) {
+  const add = Math.max(0, Math.round(Number(seconds) || 0));
+  const job = await readJob(id);
+  if (job.work_seconds == null) job.work_seconds = Math.round((Number(job.hours) || 0) * 3600);
+  if (add) {
+    job.work_seconds += add;
+    job.hours = Math.round((job.work_seconds / 3600) * 100) / 100;
+  }
+  return writeJob(job);
+}
+
 // Hard delete: drop the record and its notes companion. The chokidar unlink
 // watcher broadcasts job.removed, so connected clients drop it live.
 async function deleteJob(id) {
@@ -155,6 +170,7 @@ module.exports = {
   appendTurn,
   patchJob,
   setStatus,
+  addTime,
   deleteJob,
   readNotes,
   writeNotes,

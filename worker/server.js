@@ -175,6 +175,12 @@ const server = http.createServer(async (req, res) => {
       await jobs.deleteJob(mm[1]);
       return sendJson(res, 200, { ok: true });
     }
+    if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/time$/))) {
+      const body = await readBody(req);
+      try {
+        return sendJson(res, 200, await jobs.addTime(mm[1], body.seconds));
+      } catch (e) { return badReq(res, e.message); }
+    }
     if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/turn$/))) {
       const body = await readBody(req);
       if (!body.role || typeof body.text !== 'string') return badReq(res, 'role and text required');
