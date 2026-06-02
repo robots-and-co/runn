@@ -147,16 +147,7 @@
   /* + Job → client picker */
   .picker { max-width: 520px; margin: 4px auto; }
   .picker-head { font-size: 14px; color: var(--muted); margin: 4px 4px 14px; }
-  .choice {
-    display: block; width: 100%; text-align: left; cursor: pointer;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-    padding: 12px 16px; margin-bottom: 10px; color: var(--ink); font: inherit;
-  }
-  .choice:hover { background: var(--surface-2); border-color: var(--brand); }
-  .choice:active { transform: translateY(1px); }
-  .choice .nm { font-size: 15px; font-weight: 600; }
-  .choice .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
-  .choice.personal .nm { color: var(--muted); }
+  .picker-select { width: 100%; font-size: 14px; padding: 10px 12px; cursor: pointer; }
 
   /* ── Right: chat ────────────────────────────────── */
   .chat-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -440,20 +431,25 @@
     head.className = 'picker-head';
     head.textContent = 'Who is this job for?';
     wrap.appendChild(head);
-    wrap.appendChild(choiceEl(null, 'Personal', 'No client — household / personal', true));
+    const sel = document.createElement('select');
+    sel.className = 'client-filter picker-select';
+    const ph = document.createElement('option');
+    ph.value = ''; ph.textContent = 'Choose a client…'; ph.disabled = true; ph.selected = true;
+    sel.appendChild(ph);
+    const personal = document.createElement('option');
+    personal.value = '__personal__'; personal.textContent = 'Personal — household / personal';
+    sel.appendChild(personal);
     for (const c of clients) {
-      wrap.appendChild(choiceEl(c.id, c.name, c.workspace || c.company || '', false));
+      const o = document.createElement('option');
+      o.value = c.id; o.textContent = c.name;
+      sel.appendChild(o);
     }
+    sel.addEventListener('change', () => {
+      if (!sel.value) return;
+      beginDraft(sel.value === '__personal__' ? null : sel.value);
+    });
+    wrap.appendChild(sel);
     turnsEl.appendChild(wrap);
-  }
-  function choiceEl(id, name, sub, personal) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'choice' + (personal ? ' personal' : '');
-    const n = document.createElement('div'); n.className = 'nm'; n.textContent = name; b.appendChild(n);
-    if (sub) { const s = document.createElement('div'); s.className = 'sub'; s.textContent = sub; b.appendChild(s); }
-    b.addEventListener('click', () => beginDraft(id));
-    return b;
   }
   function beginDraft(clientId) {
     state.picking = false;
