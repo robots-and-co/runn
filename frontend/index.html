@@ -53,8 +53,12 @@
   .list-head .logo {
     width: 26px; height: 26px; border-radius: 7px;
     background: var(--accent); color: var(--bg);
-    display: grid; place-items: center; font-weight: 700;
+    display: grid; place-items: center;
+    border: 0; padding: 0; cursor: pointer;
+    font-family: inherit; font-size: 15px; font-weight: 700; line-height: 1;
   }
+  .list-head .logo:hover { filter: brightness(0.92); }
+  .list-head .logo:active { transform: translateY(1px); }
   .list-head h1 { font-size: 17px; margin: 0; letter-spacing: -0.2px; }
   .job-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 
@@ -221,7 +225,7 @@
   <div class="app">
     <aside class="list-pane">
       <div class="list-head">
-        <div class="logo">R</div>
+        <button class="logo" id="logoReset" type="button" title="Reload — clears cached copies for a clean test">R</button>
         <h1>Runn</h1>
       </div>
       <div class="list-sub">
@@ -630,6 +634,22 @@
   // ── Wiring ──────────────────────────────────────
   $('backBtn').addEventListener('click', closeChat);
   $('newJobBtn').addEventListener('click', startNewJob);
+  // Logo = hard reset: drop the service worker + its caches, then reload, so a
+  // fresh deploy is never masked by a stale cached copy.
+  async function hardReset() {
+    try {
+      if (window.caches) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+      if (navigator.serviceWorker) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+    } catch {}            // best effort — reload regardless
+    location.reload();
+  }
+  $('logoReset').addEventListener('click', hardReset);
   $('chipMenu').addEventListener('click', (ev) => {
     const item = ev.target.closest('.chip-menu-item');
     if (!item || !chipMenuJobId) return;
