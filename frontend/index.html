@@ -133,7 +133,7 @@
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
     padding: 6px 8px; -webkit-appearance: none; appearance: none;
   }
-  .total { flex-shrink: 0; }
+  .total { flex-shrink: 0; margin-left: auto; }
   .total .amt {
     display: inline-flex; align-items: center; gap: 4px;
     height: 32px; padding: 0 12px;
@@ -227,14 +227,14 @@
       <div class="list-head">
         <button class="logo" id="logoReset" type="button" title="Reload — clears cached copies for a clean test">R</button>
         <h1>Runn</h1>
+        <div class="total">
+          <span class="amt" id="valueTotal" title="Outstanding — done work not yet invoiced">0.00</span>
+        </div>
       </div>
       <div class="list-sub">
         <select class="client-filter" id="clientFilter" aria-label="Filter by client">
           <option value="">All clients</option>
         </select>
-        <div class="total">
-          <span class="amt" id="valueTotal" title="Outstanding — done work not yet invoiced">0.00</span>
-        </div>
       </div>
       <div class="job-list" id="jobList"></div>
       <div class="list-foot">
