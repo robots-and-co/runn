@@ -159,37 +159,84 @@
   .billing-pane { flex: 1; display: none; flex-direction: column; min-width: 0; }
   body.show-billing .billing-pane { display: flex; }
   body.show-billing .chat-pane { display: none; }
-  .billing-tabs {
-    display: flex; gap: 6px; padding: 8px 16px;
-    border-bottom: 1px solid var(--border); background: var(--surface);
+  .billing-body { flex: 1; overflow: auto; padding: 16px; }
+
+  /* Billing list: draft + issued entries */
+  .bill-section-h {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); font-weight: 700; margin: 20px 2px 8px;
   }
-  .billing-tab {
-    flex: 1; font: inherit; font-size: 14px; padding: 10px;
-    border: 1px solid var(--border); border-radius: 8px;
-    background: var(--bg); color: var(--muted); cursor: pointer;
+  .bill-section-h:first-child { margin-top: 2px; }
+  .bill-entry {
+    display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+    padding: 14px; margin-bottom: 8px; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--surface); cursor: pointer; font: inherit;
   }
-  .billing-tab.is-active { background: var(--brand); color: #fff; border-color: var(--brand); }
-  .billing-body { flex: 1; overflow: auto; padding: 12px 16px; }
-  .bill-group { margin-bottom: 20px; }
-  .bill-group-head {
-    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-    padding: 8px 0; border-bottom: 2px solid var(--border); margin-bottom: 4px;
-  }
-  .bill-group-head .name { font-weight: 700; font-size: 15px; }
-  .bill-group-head .sum {
+  .bill-entry:hover { border-color: var(--brand); }
+  .bill-entry .main { flex: 1; min-width: 0; }
+  .bill-entry .ttl { font-weight: 600; font-size: 15px; }
+  .bill-entry .sub { color: var(--muted); font-size: 13px; margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bill-entry .sum {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-weight: 700; color: var(--brand); white-space: nowrap;
   }
-  .bill-row {
-    display: flex; align-items: center; gap: 12px;
-    padding: 10px 4px; border-bottom: 1px solid var(--border);
+  .bill-entry .badge {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    padding: 3px 9px; border-radius: 999px; white-space: nowrap;
   }
-  .bill-row .desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .bill-row .hrs { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .bill-row .amt {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    min-width: 88px; text-align: right; white-space: nowrap;
+  .badge.st-sent { background: #fdeede; color: #a85513; }
+  .badge.st-paid { background: #e2f3e6; color: #2f7a45; }
+
+  /* Invoice document (draft = editable, issued = read-only) */
+  .inv-doc { max-width: 720px; margin: 0 auto; }
+  .inv-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .inv-actions button {
+    font: inherit; font-size: 14px; font-weight: 600; padding: 10px 16px;
+    border-radius: 8px; cursor: pointer; border: 1px solid var(--border);
+    background: var(--surface); color: var(--ink);
   }
+  .inv-actions .primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .inv-actions .primary:disabled { opacity: .5; cursor: default; }
+  .inv-actions .danger { color: #a33; margin-left: auto; }
+  .inv-paper { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 28px; }
+  .inv-top { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-bottom: 16px; }
+  .inv-block .nm { font-weight: 700; font-size: 16px; }
+  .inv-block .ln, .inv-block .label { font-size: 13px; color: var(--ink); }
+  .inv-block .label { text-transform: uppercase; color: var(--muted); letter-spacing: .05em; font-size: 11px; margin-bottom: 4px; }
+  .inv-meta { text-align: right; min-width: 230px; }
+  .inv-meta .row { display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-bottom: 6px; }
+  .inv-meta label { font-size: 12px; color: var(--muted); }
+  .inv-meta input {
+    font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--bg); color: var(--ink); width: 150px;
+  }
+  .inv-lines { width: 100%; border-collapse: collapse; margin: 8px 0 4px; }
+  .inv-lines th {
+    text-align: left; font-size: 11px; text-transform: uppercase; color: var(--muted);
+    border-bottom: 2px solid var(--border); padding: 6px 4px; font-weight: 700;
+  }
+  .inv-lines th.r, .inv-lines td.r { text-align: right; }
+  .inv-lines td { padding: 9px 4px; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .inv-lines .rm { border: 0; background: none; color: #b33; cursor: pointer; font-size: 20px; line-height: 1; padding: 0 4px; }
+  .inv-tot { margin-left: auto; width: 280px; margin-top: 10px; }
+  .inv-tot .row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 14px; }
+  .inv-tot .row.grand { border-top: 2px solid var(--border); margin-top: 4px; padding-top: 8px; font-weight: 700; font-size: 16px; }
+  .inv-tot input {
+    width: 96px; text-align: right; font: inherit; font-size: 14px;
+    padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--ink);
+  }
+  .inv-notes { margin-top: 18px; }
+  .inv-notes textarea {
+    width: 100%; min-height: 60px; font: inherit; font-size: 14px; padding: 8px;
+    border: 1px solid var(--border); border-radius: 8px; resize: vertical;
+    background: var(--bg); color: var(--ink);
+  }
+  .inv-notes .label { text-transform: uppercase; color: var(--muted); letter-spacing: .05em; font-size: 11px; margin-bottom: 4px; }
+  .inv-notes .ro { white-space: pre-wrap; font-size: 14px; }
+  .inv-bank { margin-top: 16px; font-size: 13px; color: var(--ink); }
+  .inv-bank .label { text-transform: uppercase; color: var(--muted); letter-spacing: .05em; font-size: 11px; margin-bottom: 4px; }
 
   /* + Job → client picker (lives in the left column footer) */
   .newjob-picker { width: 100%; font-size: 15px; padding: 12px; cursor: pointer; }
@@ -269,7 +316,11 @@
       transform: translateX(100%); transition: transform 0.22s ease; z-index: 6; }
     body.show-billing .billing-pane { transform: translateX(0); }
     body.show-billing .chat-pane { display: flex; }   /* don't fight the overlay on mobile */
-    .billing-tab { padding: 14px; font-size: 16px; }
+    .inv-paper { padding: 16px; }
+    .inv-meta { min-width: 0; text-align: left; }
+    .inv-meta .row { justify-content: flex-start; }
+    .inv-meta input { width: 100%; }
+    .inv-actions .danger { margin-left: 0; }
 
     /* bigger chips + menus = easier taps on a phone */
     .chip { font-size: 15px; padding: 6px 14px; }
@@ -324,11 +375,7 @@
     <section class="billing-pane" id="billingPane">
       <div class="chat-head billing-head">
         <button class="back" id="billingBack" type="button" aria-label="Back">‹</button>
-        <span class="ttl">Billing</span>
-      </div>
-      <div class="billing-tabs">
-        <button class="billing-tab is-active" data-tab="outstanding" type="button">Outstanding</button>
-        <button class="billing-tab" data-tab="invoices" type="button">Invoices</button>
+        <span class="ttl" id="billingTitle">Billing</span>
       </div>
       <div class="billing-body" id="billingBody"></div>
     </section>
@@ -350,7 +397,10 @@
     picking: false,        // choosing a client for a new job
     draftClientId: null,   // client chosen for the not-yet-saved draft
     view: 'chat',          // 'chat' | 'billing' — what the main pane shows
-    billingTab: 'outstanding', // 'outstanding' | 'invoices'
+    invoices: new Map(),   // id -> issued invoice record
+    billingSel: null,      // null = list; {kind:'draft',clientId} | {kind:'invoice',id}
+    editing: null,         // working copy of the draft being composed
+    settings: {},          // business/bank/GST defaults for invoice snapshots
   };
 
   const $ = (id) => document.getElementById(id);
@@ -373,7 +423,25 @@
     return (Number(j.hours) || 0) * Number(c.rate_per_hour);
   }
   const fmtMoney = (n) => '$' + Math.round(n).toLocaleString();
-  const money = (n) => '$' + (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const money2 = (n) => (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const money = (n) => '$' + money2(n);
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const today = () => new Date().toISOString().slice(0, 10);
+  function addDays(iso, days) {
+    const d = new Date(iso + 'T00:00:00');
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  }
+  function fmtDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso.length === 10 ? iso + 'T00:00:00' : iso);
+    if (isNaN(d)) return iso;
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${dd}/${mm}/${d.getFullYear()}`;
+  }
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const titleOf = (j) => j.title || firstUserText(j) || null;
   function firstUserText(j) {
     const t = (j.turns || []).find((x) => x.role === 'user' && x.text);
@@ -615,6 +683,8 @@
     state.view = 'billing';
     state.currentId = null;
     state.picking = false;
+    state.billingSel = null;
+    state.editing = null;
     resetNewJobPicker();
     document.body.classList.add('show-billing');
     if (window.matchMedia('(max-width: 720px)').matches &&
@@ -627,10 +697,18 @@
   function closeBilling(opts) {
     const fromPop = opts === true || (opts && opts.fromPop === true);
     state.view = 'chat';
+    state.billingSel = null;
+    state.editing = null;
     document.body.classList.remove('show-billing');
     renderList();
     renderChat();
     if (!fromPop && history.state && history.state.runnBilling) history.back();
+  }
+  // Don't auto-rerender billing out from under an in-progress draft edit.
+  function maybeRenderBilling() {
+    if (state.view !== 'billing') return;
+    if (state.billingSel && state.billingSel.kind === 'draft') return;
+    renderBilling();
   }
   function billingGroups() {
     const groups = new Map();   // clientId -> { client, rows:[], total }
@@ -648,50 +726,384 @@
     out.forEach((g) => g.rows.sort((a, b) => String(a.job.done_at || a.job.updated_at).localeCompare(String(b.job.done_at || b.job.updated_at))));
     return out.sort((a, b) => b.total - a.total);
   }
+  // Dispatcher: list ⇆ open document (a live draft, or an issued invoice).
   function renderBilling() {
-    document.querySelectorAll('.billing-tab').forEach((b) =>
-      b.classList.toggle('is-active', b.dataset.tab === state.billingTab));
     const body = $('billingBody');
+    const titleEl = $('billingTitle');
     body.innerHTML = '';
-    if (state.billingTab === 'invoices') {
-      body.innerHTML = '<div class="empty">No invoices yet.</div>';
-      return;
-    }
+    if (state.billingSel && state.billingSel.kind === 'draft') return renderDraftDoc(body, titleEl);
+    if (state.billingSel && state.billingSel.kind === 'invoice') return renderIssuedDoc(body, titleEl);
+    titleEl.textContent = 'Billing';
+    renderBillingList(body);
+  }
+
+  function renderBillingList(body) {
     const groups = billingGroups();
-    if (!groups.length) {
-      body.innerHTML = '<div class="empty">Nothing to bill yet. Mark a job “done” and it lands here.</div>';
+    const invs = [...state.invoices.values()].sort((a, b) => String(b.issued_at).localeCompare(String(a.issued_at)));
+    if (!groups.length && !invs.length) {
+      body.innerHTML = '<div class="empty">Nothing to bill yet. Mark a job “done” and it lands here as a draft.</div>';
       return;
     }
-    for (const g of groups) {
-      const sec = document.createElement('div');
-      sec.className = 'bill-group';
-      const head = document.createElement('div');
-      head.className = 'bill-group-head';
-      const name = document.createElement('span');
-      name.className = 'name';
-      name.textContent = g.client.name || 'Client';
-      const sum = document.createElement('span');
-      sum.className = 'sum';
-      sum.textContent = money(g.total);
-      head.append(name, sum);
-      sec.appendChild(head);
-      for (const r of g.rows) {
-        const row = document.createElement('div');
-        row.className = 'bill-row';
-        const desc = document.createElement('span');
-        desc.className = 'desc';
-        desc.textContent = titleOf(r.job) || 'Untitled job';
-        const hrs = document.createElement('span');
-        hrs.className = 'hrs';
-        hrs.textContent = r.hours + 'h';
-        const amt = document.createElement('span');
-        amt.className = 'amt';
-        amt.textContent = money(r.amount);
-        row.append(desc, hrs, amt);
-        sec.appendChild(row);
+    if (groups.length) {
+      const h = document.createElement('div'); h.className = 'bill-section-h'; h.textContent = 'Drafts';
+      body.appendChild(h);
+      for (const g of groups) {
+        const n = g.rows.length;
+        body.appendChild(billEntry({
+          title: g.client.name || 'Client',
+          sub: `${n} ${n === 1 ? 'item' : 'items'} · not yet invoiced`,
+          sum: money(g.total),
+          onClick: () => openDraft(g.client.id),
+        }));
       }
-      body.appendChild(sec);
     }
+    const ih = document.createElement('div'); ih.className = 'bill-section-h'; ih.textContent = 'Invoices';
+    body.appendChild(ih);
+    if (!invs.length) {
+      const e = document.createElement('div'); e.className = 'empty'; e.style.padding = '20px 8px';
+      e.textContent = 'No issued invoices yet.';
+      body.appendChild(e);
+    } else {
+      for (const inv of invs) {
+        const company = inv.snapshot?.to?.company || clientName(inv.client_id) || '';
+        body.appendChild(billEntry({
+          title: '#' + inv.id,
+          sub: `${company} · ${fmtDate(inv.issued_at)}`,
+          badge: inv.status,
+          sum: money(inv.total),
+          onClick: () => { state.billingSel = { kind: 'invoice', id: inv.id }; renderBilling(); },
+        }));
+      }
+    }
+  }
+
+  function billEntry({ title, sub, sum, badge, onClick }) {
+    const e = document.createElement('button'); e.type = 'button'; e.className = 'bill-entry';
+    const main = document.createElement('div'); main.className = 'main';
+    const t = document.createElement('div'); t.className = 'ttl'; t.textContent = title;
+    const s = document.createElement('div'); s.className = 'sub'; s.textContent = sub;
+    main.append(t, s);
+    e.appendChild(main);
+    if (badge) { const b = document.createElement('span'); b.className = 'badge st-' + badge; b.textContent = badge; e.appendChild(b); }
+    const m = document.createElement('div'); m.className = 'sum'; m.textContent = sum; e.appendChild(m);
+    e.addEventListener('click', onClick);
+    return e;
+  }
+
+  // Build the working copy for a client's live draft and open the editable doc.
+  function openDraft(clientId) {
+    const group = billingGroups().find((g) => g.client.id === clientId);
+    if (!group) { state.billingSel = null; return renderBilling(); }
+    const s = state.settings || {};
+    const c = group.client;
+    const gstRate = (typeof c.gst_rate === 'number') ? c.gst_rate
+                  : (typeof s.default_gst_rate === 'number') ? s.default_gst_rate : 0;
+    const issued = today();
+    state.editing = {
+      clientId, client: c, gstRate,
+      number: issued,                            // date-coded default; hand-editable
+      issued, due: addDays(issued, s.default_due_days || 14),
+      discount: 0, notes: '',
+      items: group.rows.map((r) => ({
+        job_id: r.job.id,
+        description: titleOf(r.job) || 'Work',
+        date: (r.job.done_at || r.job.updated_at || '').slice(0, 10) || issued,
+        hours: r.hours,
+        amount: round2(r.amount),
+      })),
+    };
+    state.billingSel = { kind: 'draft', clientId };
+    renderBilling();
+  }
+
+  function calcTotals(items, discountRaw, gstRate) {
+    const subtotal = round2(items.reduce((acc, it) => acc + (Number(it.amount) || 0), 0));
+    const discount = Math.min(subtotal, Math.max(0, round2(discountRaw)));
+    const taxable = round2(subtotal - discount);
+    const gst = round2(taxable * (Number(gstRate) || 0));
+    const total = round2(taxable + gst);
+    return { subtotal, discount, taxable, gst, total };
+  }
+
+  // Inner HTML of .inv-paper. editable=true → draft (inputs + remove buttons);
+  // editable=false → issued (read-only, uses precomputed frozen totals).
+  function invPaperHtml(o) {
+    const sym = o.sym || '$';
+    const t = o.precomputed
+      ? { subtotal: o.precomputed.subtotal, discount: o.precomputed.discount, gst: o.precomputed.gst, total: o.precomputed.total }
+      : calcTotals(o.items, o.discount, o.gstRate);
+    const fromLines = (o.from.lines || []).map((l) => `<div class="ln">${esc(l)}</div>`).join('');
+    const toLines = (o.to.lines || []).map((l) => `<div class="ln">${esc(l)}</div>`).join('');
+    const gstPct = Math.round((Number(o.gstRate) || 0) * 100);
+
+    const meta = o.editable
+      ? `<div class="inv-meta">
+           <div class="label">Tax invoice</div>
+           <div class="row"><label>No.</label><input id="invNum" value="${esc(o.number)}"></div>
+           <div class="row"><label>Issued</label><input id="invIssued" type="date" value="${esc(o.issued)}"></div>
+           <div class="row"><label>Due</label><input id="invDue" type="date" value="${esc(o.due)}"></div>
+         </div>`
+      : `<div class="inv-meta">
+           <div class="label">Tax invoice</div>
+           <div class="row"><label>No.</label><span>${esc(o.number)}</span></div>
+           <div class="row"><label>Issued</label><span>${esc(fmtDate(o.issued))}</span></div>
+           <div class="row"><label>Due</label><span>${esc(fmtDate(o.due))}</span></div>
+         </div>`;
+
+    const rows = o.items.map((it, i) => `<tr>
+        <td>${esc(it.description)}</td>
+        <td>${esc(fmtDate(it.date))}</td>
+        <td class="r">${it.hours != null ? esc(it.hours) + 'h' : ''}</td>
+        <td class="r">${sym}${money2(it.amount)}</td>
+        ${o.editable ? `<td class="r"><button class="rm" type="button" data-i="${i}" title="Remove line">×</button></td>` : ''}
+      </tr>`).join('');
+
+    const discRow = o.editable
+      ? `<div class="row"><span>Discount</span><span>${sym}<input id="invDisc" type="number" min="0" step="0.01" value="${Number(o.discount) || 0}"></span></div>`
+      : (t.discount > 0 ? `<div class="row"><span>Discount</span><span id="totDisc">−${sym}${money2(t.discount)}</span></div>` : '');
+
+    const notes = o.editable
+      ? `<div class="inv-notes"><div class="label">Notes</div><textarea id="invNotes" placeholder="Optional note shown on the invoice">${esc(o.notes)}</textarea></div>`
+      : (o.notes ? `<div class="inv-notes"><div class="label">Notes</div><div class="ro">${esc(o.notes)}</div></div>` : '');
+
+    const bank = (!o.editable && o.bank && (o.bank.bank || o.bank.acc))
+      ? `<div class="inv-bank"><div class="label">Pay to</div>
+           <div>${esc(o.bank.bank || '')} ${esc(o.bank.name || '')}</div>
+           <div>BSB ${esc(o.bank.bsb || '')} · Acc ${esc(o.bank.acc || '')}</div></div>`
+      : '';
+
+    return `
+      <div class="inv-top">
+        <div class="inv-block">
+          <div class="nm">${esc(o.from.name) || '&nbsp;'}</div>${fromLines}
+          ${o.from.abn ? `<div class="ln">ABN ${esc(o.from.abn)}</div>` : ''}
+        </div>
+        ${meta}
+      </div>
+      <div class="inv-block">
+        <div class="label">Bill to</div>
+        <div class="nm">${esc(o.to.company) || '&nbsp;'}</div>
+        ${o.to.contact ? `<div class="ln">${esc(o.to.contact)}</div>` : ''}
+        ${toLines}
+        ${o.to.abn ? `<div class="ln">ABN ${esc(o.to.abn)}</div>` : ''}
+      </div>
+      <table class="inv-lines">
+        <thead><tr><th>Description</th><th>Date</th><th class="r">Hours</th><th class="r">Amount</th>${o.editable ? '<th></th>' : ''}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="inv-tot">
+        <div class="row"><span>Subtotal</span><span id="totSub">${sym}${money2(t.subtotal)}</span></div>
+        ${discRow}
+        <div class="row"><span>GST (${gstPct}%)</span><span id="totGst">${sym}${money2(t.gst)}</span></div>
+        <div class="row grand"><span>Total</span><span id="totGrand">${sym}${money2(t.total)}</span></div>
+      </div>
+      ${notes}
+      ${bank}`;
+  }
+
+  function updateDocTotals(paper, items, discount, gstRate, sym) {
+    const t = calcTotals(items, discount, gstRate);
+    const set = (id, v) => { const el = paper.querySelector('#' + id); if (el) el.textContent = v; };
+    set('totSub', sym + money2(t.subtotal));
+    set('totGst', sym + money2(t.gst));
+    set('totGrand', sym + money2(t.total));
+  }
+
+  function fromSnapshot(s) {
+    return { name: s.business_name || '', lines: s.business_address_lines || [], abn: s.business_abn_acn || '' };
+  }
+  function toSnapshot(c) {
+    return { company: c.company || c.name || '', contact: c.contact || '', lines: c.address_lines || [], abn: c.abn || '' };
+  }
+
+  function renderDraftDoc(body, titleEl) {
+    const ed = state.editing;
+    if (!ed) { state.billingSel = null; return renderBilling(); }
+    titleEl.textContent = 'New invoice — ' + (ed.client.name || '');
+    const s = state.settings || {};
+    const sym = s.currency_symbol || '$';
+
+    const wrap = document.createElement('div'); wrap.className = 'inv-doc';
+    const actions = document.createElement('div'); actions.className = 'inv-actions';
+    const issueBtn = document.createElement('button'); issueBtn.type = 'button'; issueBtn.className = 'primary'; issueBtn.textContent = 'Issue invoice';
+    actions.appendChild(issueBtn);
+    wrap.appendChild(actions);
+
+    const paper = document.createElement('div'); paper.className = 'inv-paper';
+    paper.innerHTML = invPaperHtml({
+      from: fromSnapshot(s), to: toSnapshot(ed.client), editable: true,
+      number: ed.number, issued: ed.issued, due: ed.due,
+      items: ed.items, gstRate: ed.gstRate, discount: ed.discount, notes: ed.notes, sym,
+    });
+    wrap.appendChild(paper);
+    body.appendChild(wrap);
+
+    paper.querySelectorAll('.inv-lines .rm').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        ed.items.splice(Number(btn.dataset.i), 1);
+        if (!ed.items.length) { state.billingSel = null; state.editing = null; }
+        renderBilling();   // trimming the last line drops the draft back to the list
+      });
+    });
+    const num = paper.querySelector('#invNum');
+    const iss = paper.querySelector('#invIssued');
+    const due = paper.querySelector('#invDue');
+    const disc = paper.querySelector('#invDisc');
+    const notes = paper.querySelector('#invNotes');
+    num.addEventListener('input', () => { ed.number = num.value.trim(); });
+    iss.addEventListener('input', () => { ed.issued = iss.value; });
+    due.addEventListener('input', () => { ed.due = due.value; });
+    notes.addEventListener('input', () => { ed.notes = notes.value; });
+    disc.addEventListener('input', () => {
+      ed.discount = Number(disc.value) || 0;
+      updateDocTotals(paper, ed.items, ed.discount, ed.gstRate, sym);
+    });
+    issueBtn.addEventListener('click', () => issueInvoice(issueBtn));
+  }
+
+  async function issueInvoice(btn) {
+    const ed = state.editing;
+    if (!ed) return;
+    const id = (ed.number || '').trim();
+    if (!id) { alert('Give the invoice a number first.'); return; }
+    if (!ed.items.length) { alert('There are no line items to invoice.'); return; }
+    btn.disabled = true;
+    try {
+      const inv = await postJson('/invoices', {
+        id, client_id: ed.clientId,
+        items: ed.items.map((it) => ({ job_id: it.job_id, description: it.description, date: it.date, amount: it.amount })),
+        discount: Number(ed.discount) || 0,
+        gst_rate: ed.gstRate,
+        notes: ed.notes || '',
+        issued_at: ed.issued, due_at: ed.due,
+      });
+      state.invoices.set(inv.id, inv);
+      state.editing = null;
+      state.billingSel = { kind: 'invoice', id: inv.id };   // land on the issued doc
+      renderBilling();
+    } catch (e) {
+      alert('Could not issue: ' + e.message);
+      btn.disabled = false;
+    }
+  }
+
+  function renderIssuedDoc(body, titleEl) {
+    const inv = state.invoices.get(state.billingSel.id);
+    if (!inv) { state.billingSel = null; return renderBilling(); }
+    titleEl.textContent = '#' + inv.id;
+    const sym = inv.snapshot?.currency_symbol || '$';
+
+    const wrap = document.createElement('div'); wrap.className = 'inv-doc';
+    const actions = document.createElement('div'); actions.className = 'inv-actions';
+    if (inv.status !== 'paid') {
+      const paid = document.createElement('button'); paid.type = 'button'; paid.className = 'primary'; paid.textContent = 'Mark paid';
+      paid.addEventListener('click', () => markPaid(inv.id, paid));
+      actions.appendChild(paid);
+    }
+    const print = document.createElement('button'); print.type = 'button'; print.textContent = 'Print / PDF';
+    print.addEventListener('click', () => printInvoice(inv));
+    actions.appendChild(print);
+    const voidBtn = document.createElement('button'); voidBtn.type = 'button'; voidBtn.className = 'danger'; voidBtn.textContent = 'Void';
+    voidBtn.addEventListener('click', () => voidInvoice(inv.id, voidBtn));
+    actions.appendChild(voidBtn);
+    wrap.appendChild(actions);
+
+    const paper = document.createElement('div'); paper.className = 'inv-paper';
+    const snap = inv.snapshot || {};
+    paper.innerHTML = invPaperHtml({
+      from: { name: snap.from?.name, lines: snap.from?.address_lines || [], abn: snap.from?.abn_acn },
+      to: { company: snap.to?.company, contact: snap.to?.contact, lines: snap.to?.address_lines || [], abn: snap.to?.abn },
+      bank: snap.bank,
+      number: inv.id, issued: inv.issued_at, due: inv.due_at,
+      items: inv.items, gstRate: inv.gst_rate,
+      precomputed: { subtotal: inv.subtotal, discount: inv.discount, gst: inv.gst, total: inv.total },
+      notes: inv.notes, sym, editable: false,
+    });
+    wrap.appendChild(paper);
+    body.appendChild(wrap);
+  }
+
+  async function markPaid(id, btn) {
+    btn.disabled = true;
+    try {
+      const inv = await patchJson('/invoices/' + id, { status: 'paid' });
+      state.invoices.set(inv.id, inv);
+      renderBilling();
+    } catch (e) { alert('Could not mark paid: ' + e.message); btn.disabled = false; }
+  }
+
+  async function voidInvoice(id, btn) {
+    if (!confirm(`Void invoice #${id}? Its jobs go back to “done” and roll into the next draft.`)) return;
+    btn.disabled = true;
+    try {
+      await delJson('/invoices/' + id);
+      state.invoices.delete(id);
+      state.billingSel = null;
+      renderBilling();
+    } catch (e) { alert('Could not void: ' + e.message); btn.disabled = false; }
+  }
+
+  function printInvoice(inv) {
+    const w = window.open('', '_blank');
+    if (!w) { alert('Allow pop-ups to print or save the PDF.'); return; }
+    w.document.write(invPrintHtml(inv));
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch {} }, 250);
+  }
+
+  function invPrintHtml(inv) {
+    const snap = inv.snapshot || {};
+    const sym = snap.currency_symbol || '$';
+    const from = { name: snap.from?.name, lines: snap.from?.address_lines || [], abn: snap.from?.abn_acn };
+    const to = { company: snap.to?.company, contact: snap.to?.contact, lines: snap.to?.address_lines || [], abn: snap.to?.abn };
+    const gstPct = Math.round((Number(inv.gst_rate) || 0) * 100);
+    const rows = inv.items.map((it) => `<tr>
+        <td>${esc(it.description)}</td><td>${esc(fmtDate(it.date))}</td>
+        <td class="r">${sym}${money2(it.amount)}</td></tr>`).join('');
+    const bank = (snap.bank && (snap.bank.bank || snap.bank.acc))
+      ? `<div class="bank"><strong>Pay to</strong><br>${esc(snap.bank.bank || '')} ${esc(snap.bank.name || '')}<br>BSB ${esc(snap.bank.bsb || '')} · Acc ${esc(snap.bank.acc || '')}</div>` : '';
+    return `<!doctype html><html><head><meta charset="utf-8"><title>Invoice ${esc(inv.id)}</title>
+      <style>
+        @page { size: A4; margin: 18mm; }
+        body { font: 13px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; color: #222; }
+        h1 { font-size: 22px; margin: 0 0 2px; }
+        .top { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+        .meta { text-align: right; }
+        .lbl { text-transform: uppercase; font-size: 10px; color: #888; letter-spacing: .05em; }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+        th { text-align: left; font-size: 10px; text-transform: uppercase; color: #888; border-bottom: 2px solid #ccc; padding: 6px 4px; }
+        th.r, td.r { text-align: right; }
+        td { padding: 8px 4px; border-bottom: 1px solid #eee; }
+        .tot { width: 280px; margin-left: auto; }
+        .tot .row { display: flex; justify-content: space-between; padding: 4px 0; }
+        .tot .grand { border-top: 2px solid #ccc; margin-top: 4px; padding-top: 8px; font-weight: 700; font-size: 15px; }
+        .notes, .bank { margin-top: 18px; }
+      </style></head><body>
+      <div class="top">
+        <div><h1>${esc(from.name) || 'Tax invoice'}</h1>
+          ${from.lines.map((l) => esc(l)).join('<br>')}
+          ${from.abn ? `<div>ABN ${esc(from.abn)}</div>` : ''}</div>
+        <div class="meta"><div class="lbl">Tax invoice</div>
+          <div><strong>#${esc(inv.id)}</strong></div>
+          <div>Issued ${esc(fmtDate(inv.issued_at))}</div>
+          <div>Due ${esc(fmtDate(inv.due_at))}</div></div>
+      </div>
+      <div><div class="lbl">Bill to</div><strong>${esc(to.company)}</strong><br>
+        ${to.contact ? esc(to.contact) + '<br>' : ''}
+        ${to.lines.map((l) => esc(l)).join('<br>')}
+        ${to.abn ? `<div>ABN ${esc(to.abn)}</div>` : ''}</div>
+      <table><thead><tr><th>Description</th><th>Date</th><th class="r">Amount</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+      <div class="tot">
+        <div class="row"><span>Subtotal</span><span>${sym}${money2(inv.subtotal)}</span></div>
+        ${inv.discount > 0 ? `<div class="row"><span>Discount</span><span>−${sym}${money2(inv.discount)}</span></div>` : ''}
+        <div class="row"><span>GST (${gstPct}%)</span><span>${sym}${money2(inv.gst)}</span></div>
+        <div class="row grand"><span>Total</span><span>${sym}${money2(inv.total)}</span></div>
+      </div>
+      ${inv.notes ? `<div class="notes"><div class="lbl">Notes</div>${esc(inv.notes)}</div>` : ''}
+      ${bank}
+      </body></html>`;
   }
 
   // ── Chat rendering ──────────────────────────────
@@ -705,7 +1117,7 @@
     }
   }
   function openJob(id) {
-    if (state.view === 'billing') { state.view = 'chat'; document.body.classList.remove('show-billing'); }
+    if (state.view === 'billing') { state.view = 'chat'; state.billingSel = null; state.editing = null; document.body.classList.remove('show-billing'); }
     state.currentId = id;
     state.picking = false;
     resetNewJobPicker();
@@ -851,12 +1263,16 @@
   // ── Data load ───────────────────────────────────
   async function load() {
     try {
-      const [jobs, clients] = await Promise.all([
+      const [jobs, clients, invoices, settings] = await Promise.all([
         fetch('/jobs').then((r) => r.json()),
         fetch('/clients').then((r) => r.json()),
+        fetch('/invoices').then((r) => r.json()),
+        fetch('/settings').then((r) => r.json()),
       ]);
       for (const c of clients) state.clients.set(c.id, c);
       for (const j of jobs) state.jobs.set(j.id, j);
+      for (const inv of invoices) state.invoices.set(inv.id, inv);
+      state.settings = settings || {};
       renderFilterOptions();
       renderList();
       renderChat();
@@ -875,20 +1291,27 @@
         state.jobs.set(m.job.id, m.job);
         renderList();
         if (m.job.id === state.currentId) renderChat();
-        if (state.view === 'billing') renderBilling();
+        maybeRenderBilling();
       } else if (m.type === 'job.removed') {
         state.jobs.delete(m.job.id);
         if (m.job.id === state.currentId) closeChat();
         renderList();
-        if (state.view === 'billing') renderBilling();
+        maybeRenderBilling();
       } else if (m.type === 'client.added' || m.type === 'client.changed') {
         state.clients.set(m.client.id, m.client);
         renderFilterOptions(); renderList(); renderChat();
-        if (state.view === 'billing') renderBilling();
+        maybeRenderBilling();
       } else if (m.type === 'client.removed') {
         state.clients.delete(m.client.id);
         renderFilterOptions(); renderList(); renderChat();
-        if (state.view === 'billing') renderBilling();
+        maybeRenderBilling();
+      } else if (m.type === 'invoice.added' || m.type === 'invoice.changed') {
+        state.invoices.set(m.invoice.id, m.invoice);
+        maybeRenderBilling();
+      } else if (m.type === 'invoice.removed') {
+        state.invoices.delete(m.invoice.id);
+        if (state.billingSel && state.billingSel.kind === 'invoice' && state.billingSel.id === m.invoice.id) state.billingSel = null;
+        maybeRenderBilling();
       }
     };
     ws.onclose = () => setTimeout(connectWS, 1500);
@@ -896,13 +1319,17 @@
   }
 
   // ── Send a turn (storage only; AI spawn comes later) ──
+  async function errMsg(r, url) {
+    try { const j = await r.json(); if (j && j.error) return j.error; } catch {}
+    return `${url} → ${r.status}`;
+  }
   async function postJson(url, body) {
     const r = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!r.ok) throw new Error(`${url} → ${r.status}`);
+    if (!r.ok) throw new Error(await errMsg(r, url));
     return r.json();
   }
   async function patchJson(url, body) {
@@ -911,12 +1338,12 @@
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!r.ok) throw new Error(`${url} → ${r.status}`);
+    if (!r.ok) throw new Error(await errMsg(r, url));
     return r.json();
   }
   async function delJson(url) {
     const r = await fetch(url, { method: 'DELETE' });
-    if (!r.ok) throw new Error(`${url} → ${r.status}`);
+    if (!r.ok) throw new Error(await errMsg(r, url));
     return r.json();
   }
   async function sendCurrent() {
@@ -952,9 +1379,11 @@
   // ── Wiring ──────────────────────────────────────
   $('backBtn').addEventListener('click', () => closeChat());
   $('billingBtn').addEventListener('click', openBilling);
-  $('billingBack').addEventListener('click', () => closeBilling());
-  document.querySelectorAll('.billing-tab').forEach((b) =>
-    b.addEventListener('click', () => { state.billingTab = b.dataset.tab; renderBilling(); }));
+  // Back: a deeper view (open doc) returns to the billing list; the list closes billing.
+  $('billingBack').addEventListener('click', () => {
+    if (state.billingSel) { state.billingSel = null; state.editing = null; renderBilling(); }
+    else closeBilling();
+  });
   // Device/browser back button: pop back to the list instead of leaving.
   window.addEventListener('popstate', () => {
     if (document.body.classList.contains('show-billing')) closeBilling({ fromPop: true });

@@ -22,6 +22,7 @@ const {
   DATA_ROOT, readJson, readJsonOr, atomicWriteJson, ensureDir,
 } = require('./store');
 const jobs = require('./jobs');
+const invoices = require('./invoices');
 
 // ── Config ───────────────────────────────────────────────────
 const CLIENTS_DIR = path.join(DATA_ROOT, 'clients');
@@ -193,6 +194,31 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
+    // ── Invoices (issued only; drafts are computed live in the frontend) ──
+    if (m === 'GET' && url.pathname === '/invoices') {
+      return sendJson(res, 200, await invoices.listInvoices());
+    }
+    if (m === 'POST' && url.pathname === '/invoices') {
+      const body = await readBody(req);
+      try {
+        return sendJson(res, 201, await invoices.createInvoice(body));
+      } catch (e) { return badReq(res, e.message); }
+    }
+    if (m === 'GET' && (mm = url.pathname.match(/^\/invoices\/([^/]+)$/))) {
+      const inv = await invoices.readInvoiceOr(mm[1]);
+      return inv ? sendJson(res, 200, inv) : notFound(res);
+    }
+    if (m === 'PATCH' && (mm = url.pathname.match(/^\/invoices\/([^/]+)$/))) {
+      const body = await readBody(req);
+      try {
+        return sendJson(res, 200, await invoices.patchInvoice(mm[1], body));
+      } catch (e) { return badReq(res, e.message); }
+    }
+    if (m === 'DELETE' && (mm = url.pathname.match(/^\/invoices\/([^/]+)$/))) {
+      await invoices.voidInvoice(mm[1]);
+      return sendJson(res, 200, { ok: true });
+    }
+
     // ── Clients (read-only here; CRUD ported with billing later) ──
     if (m === 'GET' && url.pathname === '/clients') {
       const files = await fsp.readdir(CLIENTS_DIR).catch(() => []);
@@ -289,9 +315,29 @@ clientsWatcher.on('add',    clientEvent('client.added'));
 clientsWatcher.on('change', clientEvent('client.changed'));
 clientsWatcher.on('unlink', clientEvent('client.removed'));
 
+const invoicesWatcher = chokidar.watch(invoices.INVOICES_DIR, {
+  ignored: (p) => p.endsWith('.tmp'),
+  ignoreInitial: true,
+  awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 25 },
+  depth: 0,
+});
+function invoiceEvent(type) {
+  return async (p) => {
+    if (!p.endsWith('.json') || p.endsWith('.tmp')) return;
+    const id = path.basename(p, '.json');
+    if (type === 'invoice.removed') return broadcast({ type, invoice: { id } });
+    const inv = await invoices.readInvoiceOr(id);
+    if (inv) broadcast({ type, invoice: inv });
+  };
+}
+invoicesWatcher.on('add',    invoiceEvent('invoice.added'));
+invoicesWatcher.on('change', invoiceEvent('invoice.changed'));
+invoicesWatcher.on('unlink', invoiceEvent('invoice.removed'));
+
 // ── Boot ─────────────────────────────────────────────────────
 (async () => {
   await jobs.init();
+  await invoices.init();
   await ensureDir(CLIENTS_DIR);
   server.listen(PORT, HOST, () => {
     const urls = [`http://localhost:${PORT}`];
