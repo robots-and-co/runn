@@ -45,6 +45,20 @@
     flex-direction: column;
     border-right: 1px solid var(--border);
     background: var(--surface);
+    perspective: 1600px;
+  }
+  /* The swappable list body (jobs ⇄ invoices). The $ total flips it on its
+     vertical axis; the fixed header stays put. */
+  .list-flip {
+    flex: 1; min-height: 0; display: flex; flex-direction: column;
+    transform-origin: center center; backface-visibility: hidden;
+  }
+  @keyframes listFlipOut { from { transform: rotateY(0); opacity: 1; } to { transform: rotateY(-90deg); opacity: 0; } }
+  @keyframes listFlipIn  { from { transform: rotateY(90deg); opacity: 0; } to { transform: rotateY(0); opacity: 1; } }
+  .list-flip.flip-out { animation: listFlipOut .15s ease-in forwards; }
+  .list-flip.flip-in  { animation: listFlipIn .26s ease-out forwards; }
+  @media (prefers-reduced-motion: reduce) {
+    .list-flip.flip-out, .list-flip.flip-in { animation: none; }
   }
   .list-head {
     display: flex; align-items: center; gap: 10px;
@@ -199,8 +213,9 @@
   .badge.st-sent { background: #fdeede; color: #a85513; }
   .badge.st-paid { background: #e2f3e6; color: #2f7a45; }
 
-  /* Invoice document (draft = editable, issued = read-only) */
-  .inv-doc { max-width: 720px; margin: 0 auto; }
+  /* Invoice document — mirrors the real Robots & Co. A4 tax invoice.
+     Draft = editable (number + due + line removal); issued = read-only. */
+  .inv-doc { max-width: 760px; margin: 0 auto; }
   .inv-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
   .inv-actions button {
     font: inherit; font-size: 14px; font-weight: 600; padding: 10px 16px;
@@ -210,44 +225,61 @@
   .inv-actions .primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   .inv-actions .primary:disabled { opacity: .5; cursor: default; }
   .inv-actions .danger { color: #a33; margin-left: auto; }
-  .inv-paper { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 28px; }
-  .inv-top { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-bottom: 16px; }
-  .inv-block .nm { font-weight: 700; font-size: 16px; }
-  .inv-block .ln, .inv-block .label { font-size: 13px; color: var(--ink); }
-  .inv-block .label { text-transform: uppercase; color: var(--muted); letter-spacing: .05em; font-size: 11px; margin-bottom: 4px; }
-  .inv-meta { text-align: right; min-width: 230px; }
-  .inv-meta .row { display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-bottom: 6px; }
-  .inv-meta label { font-size: 12px; color: var(--muted); }
-  .inv-meta input {
-    font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--border);
-    border-radius: 6px; background: var(--bg); color: var(--ink); width: 150px;
+
+  .inv-paper {
+    background: #fff; border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+    padding: 44px 46px; color: #222; min-height: 960px;
+    display: flex; flex-direction: column;
+    font: 13px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
-  .inv-lines { width: 100%; border-collapse: collapse; margin: 8px 0 4px; }
-  .inv-lines th {
-    text-align: left; font-size: 11px; text-transform: uppercase; color: var(--muted);
-    border-bottom: 2px solid var(--border); padding: 6px 4px; font-weight: 700;
+  .inv-head { display: flex; justify-content: space-between; gap: 28px; align-items: flex-start; }
+  .inv-from { max-width: 58%; }
+  .inv-logo { max-width: 240px; max-height: 76px; display: block; margin-bottom: 12px; }
+  .inv-from-name { font-size: 23px; font-weight: 700; color: var(--brand); margin-bottom: 12px; }
+  .inv-from-meta { font-size: 12.5px; color: #333; }
+  .inv-from-meta div { margin-bottom: 2px; }
+  .inv-to { text-align: right; min-width: 230px; }
+  .inv-title { font-size: 20px; font-weight: 700; color: #222; margin-bottom: 16px; white-space: nowrap; }
+  .inv-title input {
+    font: inherit; font-size: 20px; font-weight: 700; width: 132px; text-align: right;
+    border: 0; border-bottom: 1px dashed #bbb; background: transparent; color: inherit; padding: 0 0 1px;
   }
-  .inv-lines th.r, .inv-lines td.r { text-align: right; }
-  .inv-lines td { padding: 9px 4px; border-bottom: 1px solid var(--border); font-size: 14px; }
-  .inv-lines .rm { border: 0; background: none; color: #b33; cursor: pointer; font-size: 20px; line-height: 1; padding: 0 4px; }
-  .inv-tot { margin-left: auto; width: 280px; margin-top: 10px; }
-  .inv-tot .row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 14px; }
-  .inv-tot .row.grand { border-top: 2px solid var(--border); margin-top: 4px; padding-top: 8px; font-weight: 700; font-size: 16px; }
-  .inv-tot input {
-    width: 96px; text-align: right; font: inherit; font-size: 14px;
-    padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px;
-    background: var(--bg); color: var(--ink);
+  .inv-to div { margin-bottom: 2px; }
+  .inv-to .att { color: #555; }
+
+  .inv-rule { border: 0; border-top: 1px solid #b9b9b9; margin: 24px 0 0; }
+  .inv-items { width: 100%; border-collapse: collapse; }
+  .inv-items th {
+    font-style: italic; font-weight: 400; color: #8a8a8a; font-size: 12.5px;
+    text-align: left; padding: 12px 4px;
   }
-  .inv-notes { margin-top: 18px; }
-  .inv-notes textarea {
-    width: 100%; min-height: 60px; font: inherit; font-size: 14px; padding: 8px;
-    border: 1px solid var(--border); border-radius: 8px; resize: vertical;
-    background: var(--bg); color: var(--ink);
+  .inv-items th.r, .inv-items td.r { text-align: right; }
+  .inv-items td { padding: 8px 4px; font-size: 13px; vertical-align: top; }
+  .inv-items td.r { font-variant-numeric: tabular-nums; }
+  .inv-items .rm-cell { width: 26px; padding-left: 8px; }
+  .inv-items .rm { border: 0; background: none; color: #b33; cursor: pointer; font-size: 18px; line-height: 1; padding: 0 2px; }
+
+  .inv-spacer { flex: 1; min-height: 36px; }
+
+  .inv-foot {
+    display: flex; justify-content: space-between; gap: 28px;
+    border-top: 1px solid #b9b9b9; padding-top: 16px; font-size: 12.5px;
   }
-  .inv-notes .label { text-transform: uppercase; color: var(--muted); letter-spacing: .05em; font-size: 11px; margin-bottom: 4px; }
-  .inv-notes .ro { white-space: pre-wrap; font-size: 14px; }
-  .inv-bank { margin-top: 16px; font-size: 13px; color: var(--ink); }
-  .inv-bank .label { text-transform: uppercase; color: var(--muted); letter-spacing: .05em; font-size: 11px; margin-bottom: 4px; }
+  .inv-foot .fr, .inv-foot .tr { display: flex; margin-bottom: 4px; }
+  .inv-foot-left { min-width: 240px; }
+  .inv-foot-left .fr { gap: 8px; }
+  .inv-foot-left .k { color: #555; min-width: 42px; }
+  .inv-foot-left .inv-due input {
+    font: inherit; font-size: 12.5px; border: 0; border-bottom: 1px dashed #bbb;
+    background: transparent; color: inherit; padding: 0;
+  }
+  .inv-foot-right { text-align: right; min-width: 250px; }
+  .inv-foot-right .tr { justify-content: flex-end; gap: 18px; }
+  .inv-foot-right .k { color: #555; }
+  .inv-foot-right .v { min-width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
+  .inv-foot-right .tr.total .k, .inv-foot-right .tr.total .v { font-weight: 700; }
+  .inv-foot-right .tr.balance .v { color: #c0291f; font-weight: 700; }
 
   /* + Job → client picker (lives in the left column footer) */
   .newjob-picker { width: 100%; font-size: 15px; padding: 12px; cursor: pointer; }
@@ -327,10 +359,15 @@
       transform: translateX(100%); transition: transform 0.22s ease; z-index: 6; }
     body.show-billing .billing-pane { transform: translateX(0); }
     body.show-billing .chat-pane { display: flex; }   /* don't fight the overlay on mobile */
-    .inv-paper { padding: 16px; }
-    .inv-meta { min-width: 0; text-align: left; }
-    .inv-meta .row { justify-content: flex-start; }
-    .inv-meta input { width: 100%; }
+    .inv-paper { padding: 22px 20px; min-height: 0; }
+    .inv-head { flex-direction: column; gap: 16px; }
+    .inv-from { max-width: none; }
+    .inv-to { text-align: left; min-width: 0; }
+    .inv-title { white-space: normal; }
+    .inv-title input { text-align: left; }
+    .inv-foot { flex-direction: column; gap: 18px; }
+    .inv-foot-left, .inv-foot-right { min-width: 0; text-align: left; }
+    .inv-foot-right .tr { justify-content: space-between; gap: 18px; }
     .inv-actions .danger { margin-left: 0; }
 
     /* bigger chips + menus = easier taps on a phone */
@@ -353,16 +390,18 @@
           <span class="amt" id="valueTotal">0.00</span>
         </button>
       </div>
-      <div class="list-sub">
-        <select class="client-filter" id="clientFilter" aria-label="Filter by client">
-          <option value="">All clients</option>
-        </select>
-      </div>
-      <div class="job-list" id="jobList"></div>
-      <div class="billing-list" id="billingList"></div>
-      <div class="list-foot">
-        <button class="btn-newjob" id="newJobBtn">+ Job</button>
-        <select class="client-filter newjob-picker" id="newJobPicker" aria-label="Pick a client for the new job" hidden></select>
+      <div class="list-flip" id="listFlip">
+        <div class="list-sub">
+          <select class="client-filter" id="clientFilter" aria-label="Filter by client">
+            <option value="">All clients</option>
+          </select>
+        </div>
+        <div class="job-list" id="jobList"></div>
+        <div class="billing-list" id="billingList"></div>
+        <div class="list-foot">
+          <button class="btn-newjob" id="newJobBtn">+ Job</button>
+          <select class="client-filter newjob-picker" id="newJobPicker" aria-label="Pick a client for the new job" hidden></select>
+        </div>
       </div>
     </aside>
 
@@ -451,6 +490,14 @@
     const dd = String(d.getDate()).padStart(2, '0');
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     return `${dd}/${mm}/${d.getFullYear()}`;
+  }
+  // Invoice dates drop the leading zero on the day (e.g. 1/06/2026) to match the
+  // real Robots & Co. template.
+  function fmtDateInv(iso) {
+    if (!iso) return '';
+    const d = new Date(iso.length === 10 ? iso + 'T00:00:00' : iso);
+    if (isNaN(d)) return iso;
+    return `${d.getDate()}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
   }
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -694,8 +741,33 @@
   const isMobile = () => window.matchMedia('(max-width: 720px)').matches;
 
   function toggleInvoices() {
-    if (state.invoicesPane) exitInvoices();
-    else enterInvoices();
+    flipPane(() => {
+      if (state.invoicesPane) exitInvoices();
+      else enterInvoices();
+    });
+  }
+  // Half-flip the list body out (edge-on), run `applyChange` while it's hidden,
+  // then flip the new content back in. Honours reduced-motion (instant swap).
+  function flipPane(applyChange) {
+    const flip = $('listFlip');
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!flip || reduce) { applyChange(); return; }
+    flip.classList.remove('flip-in');
+    flip.classList.add('flip-out');
+    const onOut = (e) => {
+      if (e.target !== flip) return;
+      flip.removeEventListener('animationend', onOut);
+      applyChange();
+      flip.classList.remove('flip-out');
+      flip.classList.add('flip-in');
+      const onIn = (ev) => {
+        if (ev.target !== flip) return;
+        flip.removeEventListener('animationend', onIn);
+        flip.classList.remove('flip-in');
+      };
+      flip.addEventListener('animationend', onIn);
+    };
+    flip.addEventListener('animationend', onOut);
   }
   function enterInvoices() {
     state.invoicesPane = true;
@@ -866,95 +938,99 @@
     return { subtotal, discount, taxable, gst, total };
   }
 
-  // Inner HTML of .inv-paper. editable=true → draft (inputs + remove buttons);
-  // editable=false → issued (read-only, uses precomputed frozen totals).
+  // Inner HTML of .inv-paper, matching the real Robots & Co. A4 tax invoice:
+  // logo + address top-left, "Tax Invoice <no>" + Att block top-right, an
+  // italic-headed items table, then a bottom-pinned footer (bank left, totals
+  // right, Balance in red). editable=true → draft (number + due inputs, per-line
+  // remove); editable=false → issued (read-only, frozen totals).
   function invPaperHtml(o) {
     const sym = o.sym || '$';
     const t = o.precomputed
-      ? { subtotal: o.precomputed.subtotal, discount: o.precomputed.discount, gst: o.precomputed.gst, total: o.precomputed.total }
-      : calcTotals(o.items, o.discount, o.gstRate);
-    const fromLines = (o.from.lines || []).map((l) => `<div class="ln">${esc(l)}</div>`).join('');
-    const toLines = (o.to.lines || []).map((l) => `<div class="ln">${esc(l)}</div>`).join('');
-    const gstPct = Math.round((Number(o.gstRate) || 0) * 100);
+      ? { subtotal: o.precomputed.subtotal, gst: o.precomputed.gst, total: o.precomputed.total }
+      : calcTotals(o.items, 0, o.gstRate);
+    const paid = Number(o.paid) || 0;
+    const balance = (o.balance != null) ? Number(o.balance) : round2(t.total - paid);
 
-    const meta = o.editable
-      ? `<div class="inv-meta">
-           <div class="label">Tax invoice</div>
-           <div class="row"><label>No.</label><input id="invNum" value="${esc(o.number)}"></div>
-           <div class="row"><label>Issued</label><input id="invIssued" type="date" value="${esc(o.issued)}"></div>
-           <div class="row"><label>Due</label><input id="invDue" type="date" value="${esc(o.due)}"></div>
-         </div>`
-      : `<div class="inv-meta">
-           <div class="label">Tax invoice</div>
-           <div class="row"><label>No.</label><span>${esc(o.number)}</span></div>
-           <div class="row"><label>Issued</label><span>${esc(fmtDate(o.issued))}</span></div>
-           <div class="row"><label>Due</label><span>${esc(fmtDate(o.due))}</span></div>
-         </div>`;
+    const fromLines = (o.from.lines || []).map((l) => `<div>${esc(l)}</div>`).join('');
+    const brand = o.from.logo
+      ? `<img class="inv-logo" src="${esc(o.from.logo)}" alt="${esc(o.from.name)}"><div class="inv-from-name" hidden>${esc(o.from.name)}</div>`
+      : `<div class="inv-from-name">${esc(o.from.name)}</div>`;
+    const title = o.editable
+      ? `Tax Invoice <input id="invNum" value="${esc(o.number)}" spellcheck="false">`
+      : `Tax Invoice ${esc(o.number)}`;
+    const toLines = (o.to.lines || []).map((l) => `<div>${esc(l)}</div>`).join('');
 
     const rows = o.items.map((it, i) => `<tr>
         <td>${esc(it.description)}</td>
-        <td>${esc(fmtDate(it.date))}</td>
-        <td class="r">${it.hours != null ? esc(it.hours) + 'h' : ''}</td>
+        <td>${esc(fmtDateInv(it.date))}</td>
         <td class="r">${sym}${money2(it.amount)}</td>
-        ${o.editable ? `<td class="r"><button class="rm" type="button" data-i="${i}" title="Remove line">×</button></td>` : ''}
+        ${o.editable ? `<td class="rm-cell"><button class="rm" type="button" data-i="${i}" title="Remove line">×</button></td>` : ''}
       </tr>`).join('');
 
-    const discRow = o.editable
-      ? `<div class="row"><span>Discount</span><span>${sym}<input id="invDisc" type="number" min="0" step="0.01" value="${Number(o.discount) || 0}"></span></div>`
-      : (t.discount > 0 ? `<div class="row"><span>Discount</span><span id="totDisc">−${sym}${money2(t.discount)}</span></div>` : '');
-
-    const notes = o.editable
-      ? `<div class="inv-notes"><div class="label">Notes</div><textarea id="invNotes" placeholder="Optional note shown on the invoice">${esc(o.notes)}</textarea></div>`
-      : (o.notes ? `<div class="inv-notes"><div class="label">Notes</div><div class="ro">${esc(o.notes)}</div></div>` : '');
-
-    const bank = (!o.editable && o.bank && (o.bank.bank || o.bank.acc))
-      ? `<div class="inv-bank"><div class="label">Pay to</div>
-           <div>${esc(o.bank.bank || '')} ${esc(o.bank.name || '')}</div>
-           <div>BSB ${esc(o.bank.bsb || '')} · Acc ${esc(o.bank.acc || '')}</div></div>`
-      : '';
+    const due = o.editable
+      ? `<input id="invDue" type="date" value="${esc(o.due)}">`
+      : esc(fmtDateInv(o.due));
+    const bank = o.bank || {};
+    const bankRow = (k, v) => v ? `<div class="fr"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>` : '';
 
     return `
-      <div class="inv-top">
-        <div class="inv-block">
-          <div class="nm">${esc(o.from.name) || '&nbsp;'}</div>${fromLines}
-          ${o.from.abn ? `<div class="ln">ABN ${esc(o.from.abn)}</div>` : ''}
+      <div class="inv-head">
+        <div class="inv-from">
+          ${brand}
+          <div class="inv-from-meta">${fromLines}${o.from.abn ? `<div>${esc(o.from.abn)}</div>` : ''}</div>
         </div>
-        ${meta}
+        <div class="inv-to">
+          <div class="inv-title">${title}</div>
+          <div class="att">Att:</div>
+          ${o.to.contact ? `<div>${esc(o.to.contact)}</div>` : ''}
+          ${o.to.company ? `<div>${esc(o.to.company)}</div>` : ''}
+          ${toLines}
+        </div>
       </div>
-      <div class="inv-block">
-        <div class="label">Bill to</div>
-        <div class="nm">${esc(o.to.company) || '&nbsp;'}</div>
-        ${o.to.contact ? `<div class="ln">${esc(o.to.contact)}</div>` : ''}
-        ${toLines}
-        ${o.to.abn ? `<div class="ln">ABN ${esc(o.to.abn)}</div>` : ''}
-      </div>
-      <table class="inv-lines">
-        <thead><tr><th>Description</th><th>Date</th><th class="r">Hours</th><th class="r">Amount</th>${o.editable ? '<th></th>' : ''}</tr></thead>
+      <hr class="inv-rule">
+      <table class="inv-items">
+        <thead><tr>
+          <th>Item Description</th><th>Date</th><th class="r">Amount ExGST</th>${o.editable ? '<th class="rm-cell"></th>' : ''}
+        </tr></thead>
         <tbody>${rows}</tbody>
       </table>
-      <div class="inv-tot">
-        <div class="row"><span>Subtotal</span><span id="totSub">${sym}${money2(t.subtotal)}</span></div>
-        ${discRow}
-        <div class="row"><span>GST (${gstPct}%)</span><span id="totGst">${sym}${money2(t.gst)}</span></div>
-        <div class="row grand"><span>Total</span><span id="totGrand">${sym}${money2(t.total)}</span></div>
-      </div>
-      ${notes}
-      ${bank}`;
+      <hr class="inv-rule">
+      <div class="inv-spacer"></div>
+      <div class="inv-foot">
+        <div class="inv-foot-left">
+          <div class="fr inv-due"><span class="k">Due:</span><span class="v">${due}</span></div>
+          ${bankRow('Bank:', bank.bank)}
+          ${bankRow('Name:', bank.name)}
+          ${bankRow('BSB:', bank.bsb)}
+          ${bankRow('Acc:', bank.acc)}
+        </div>
+        <div class="inv-foot-right">
+          <div class="tr"><span class="k">Sub Total Ex GST:</span><span class="v">${sym}${money2(t.subtotal)}</span></div>
+          <div class="tr"><span class="k">GST:</span><span class="v">${sym}${money2(t.gst)}</span></div>
+          <div class="tr total"><span class="k">Total Inc GST:</span><span class="v">${sym}${money2(t.total)}</span></div>
+          <div class="tr"><span class="k">Paid:</span><span class="v">${paid > 0 ? sym + money2(paid) : ''}</span></div>
+          <div class="tr balance"><span class="k">Balance:</span><span class="v">${sym}${money2(balance)}</span></div>
+        </div>
+      </div>`;
   }
 
-  function updateDocTotals(paper, items, discount, gstRate, sym) {
-    const t = calcTotals(items, discount, gstRate);
-    const set = (id, v) => { const el = paper.querySelector('#' + id); if (el) el.textContent = v; };
-    set('totSub', sym + money2(t.subtotal));
-    set('totGst', sym + money2(t.gst));
-    set('totGrand', sym + money2(t.total));
+  // The logo path may 404 (asset not yet present) — fall back to the business
+  // name text so the header is never blank.
+  function wireLogoFallback(paper) {
+    const img = paper.querySelector('.inv-logo');
+    if (!img) return;
+    img.addEventListener('error', () => {
+      img.style.display = 'none';
+      const nm = paper.querySelector('.inv-from-name');
+      if (nm) nm.hidden = false;
+    });
   }
 
   function fromSnapshot(s) {
-    return { name: s.business_name || '', lines: s.business_address_lines || [], abn: s.business_abn_acn || '' };
+    return { name: s.business_name || '', logo: s.logo_path || '', lines: s.business_address_lines || [], abn: s.business_abn_acn || '' };
   }
   function toSnapshot(c) {
-    return { company: c.company || c.name || '', contact: c.contact || '', lines: c.address_lines || [], abn: c.abn || '' };
+    return { company: c.company || c.name || '', contact: c.contact || '', lines: c.address_lines || [] };
   }
 
   function renderDraftDoc(body, titleEl) {
@@ -972,14 +1048,15 @@
 
     const paper = document.createElement('div'); paper.className = 'inv-paper';
     paper.innerHTML = invPaperHtml({
-      from: fromSnapshot(s), to: toSnapshot(ed.client), editable: true,
+      from: fromSnapshot(s), to: toSnapshot(ed.client), bank: s.bank, editable: true,
       number: ed.number, issued: ed.issued, due: ed.due,
-      items: ed.items, gstRate: ed.gstRate, discount: ed.discount, notes: ed.notes, sym,
+      items: ed.items, gstRate: ed.gstRate, sym,
     });
     wrap.appendChild(paper);
     body.appendChild(wrap);
+    wireLogoFallback(paper);
 
-    paper.querySelectorAll('.inv-lines .rm').forEach((btn) => {
+    paper.querySelectorAll('.inv-items .rm').forEach((btn) => {
       btn.addEventListener('click', () => {
         ed.items.splice(Number(btn.dataset.i), 1);
         if (!ed.items.length) { state.billingSel = null; state.editing = null; }
@@ -987,18 +1064,9 @@
       });
     });
     const num = paper.querySelector('#invNum');
-    const iss = paper.querySelector('#invIssued');
     const due = paper.querySelector('#invDue');
-    const disc = paper.querySelector('#invDisc');
-    const notes = paper.querySelector('#invNotes');
     num.addEventListener('input', () => { ed.number = num.value.trim(); });
-    iss.addEventListener('input', () => { ed.issued = iss.value; });
     due.addEventListener('input', () => { ed.due = due.value; });
-    notes.addEventListener('input', () => { ed.notes = notes.value; });
-    disc.addEventListener('input', () => {
-      ed.discount = Number(disc.value) || 0;
-      updateDocTotals(paper, ed.items, ed.discount, ed.gstRate, sym);
-    });
     issueBtn.addEventListener('click', () => issueInvoice(issueBtn));
   }
 
@@ -1052,16 +1120,17 @@
     const paper = document.createElement('div'); paper.className = 'inv-paper';
     const snap = inv.snapshot || {};
     paper.innerHTML = invPaperHtml({
-      from: { name: snap.from?.name, lines: snap.from?.address_lines || [], abn: snap.from?.abn_acn },
-      to: { company: snap.to?.company, contact: snap.to?.contact, lines: snap.to?.address_lines || [], abn: snap.to?.abn },
+      from: { name: snap.from?.name, logo: snap.from?.logo_path, lines: snap.from?.address_lines || [], abn: snap.from?.abn_acn },
+      to: { company: snap.to?.company, contact: snap.to?.contact, lines: snap.to?.address_lines || [] },
       bank: snap.bank,
       number: inv.id, issued: inv.issued_at, due: inv.due_at,
       items: inv.items, gstRate: inv.gst_rate,
-      precomputed: { subtotal: inv.subtotal, discount: inv.discount, gst: inv.gst, total: inv.total },
-      notes: inv.notes, sym, editable: false,
+      precomputed: { subtotal: inv.subtotal, gst: inv.gst, total: inv.total },
+      paid: inv.paid, balance: inv.balance, sym, editable: false,
     });
     wrap.appendChild(paper);
     body.appendChild(wrap);
+    wireLogoFallback(paper);
   }
 
   async function markPaid(id, btn) {
@@ -1092,57 +1161,53 @@
     setTimeout(() => { try { w.print(); } catch {} }, 250);
   }
 
+  // Print/PDF reuses the exact same document markup (invPaperHtml, read-only) as
+  // the on-screen invoice, with print-tuned CSS, so the PDF matches 1:1.
   function invPrintHtml(inv) {
     const snap = inv.snapshot || {};
     const sym = snap.currency_symbol || '$';
-    const from = { name: snap.from?.name, lines: snap.from?.address_lines || [], abn: snap.from?.abn_acn };
-    const to = { company: snap.to?.company, contact: snap.to?.contact, lines: snap.to?.address_lines || [], abn: snap.to?.abn };
-    const gstPct = Math.round((Number(inv.gst_rate) || 0) * 100);
-    const rows = inv.items.map((it) => `<tr>
-        <td>${esc(it.description)}</td><td>${esc(fmtDate(it.date))}</td>
-        <td class="r">${sym}${money2(it.amount)}</td></tr>`).join('');
-    const bank = (snap.bank && (snap.bank.bank || snap.bank.acc))
-      ? `<div class="bank"><strong>Pay to</strong><br>${esc(snap.bank.bank || '')} ${esc(snap.bank.name || '')}<br>BSB ${esc(snap.bank.bsb || '')} · Acc ${esc(snap.bank.acc || '')}</div>` : '';
-    return `<!doctype html><html><head><meta charset="utf-8"><title>Invoice ${esc(inv.id)}</title>
+    const doc = invPaperHtml({
+      from: { name: snap.from?.name, logo: snap.from?.logo_path, lines: snap.from?.address_lines || [], abn: snap.from?.abn_acn },
+      to: { company: snap.to?.company, contact: snap.to?.contact, lines: snap.to?.address_lines || [] },
+      bank: snap.bank,
+      number: inv.id, issued: inv.issued_at, due: inv.due_at,
+      items: inv.items, gstRate: inv.gst_rate,
+      precomputed: { subtotal: inv.subtotal, gst: inv.gst, total: inv.total },
+      paid: inv.paid, balance: inv.balance, sym, editable: false,
+    });
+    return `<!doctype html><html><head><meta charset="utf-8"><title>Tax Invoice ${esc(inv.id)}</title>
       <style>
-        @page { size: A4; margin: 18mm; }
-        body { font: 13px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; color: #222; }
-        h1 { font-size: 22px; margin: 0 0 2px; }
-        .top { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
-        .meta { text-align: right; }
-        .lbl { text-transform: uppercase; font-size: 10px; color: #888; letter-spacing: .05em; }
-        table { width: 100%; border-collapse: collapse; margin: 16px 0; }
-        th { text-align: left; font-size: 10px; text-transform: uppercase; color: #888; border-bottom: 2px solid #ccc; padding: 6px 4px; }
-        th.r, td.r { text-align: right; }
-        td { padding: 8px 4px; border-bottom: 1px solid #eee; }
-        .tot { width: 280px; margin-left: auto; }
-        .tot .row { display: flex; justify-content: space-between; padding: 4px 0; }
-        .tot .grand { border-top: 2px solid #ccc; margin-top: 4px; padding-top: 8px; font-weight: 700; font-size: 15px; }
-        .notes, .bank { margin-top: 18px; }
+        @page { size: A4; margin: 16mm; }
+        * { box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { margin: 0; color: #222; font: 13px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .inv-paper { display: flex; flex-direction: column; min-height: 100%; }
+        .inv-head { display: flex; justify-content: space-between; gap: 28px; align-items: flex-start; }
+        .inv-from { max-width: 58%; }
+        .inv-logo { max-width: 240px; max-height: 76px; display: block; margin-bottom: 12px; }
+        .inv-from-name { font-size: 23px; font-weight: 700; color: #2f4a6b; margin-bottom: 12px; }
+        .inv-from-meta { font-size: 12.5px; color: #333; }
+        .inv-from-meta div { margin-bottom: 2px; }
+        .inv-to { text-align: right; min-width: 230px; }
+        .inv-title { font-size: 20px; font-weight: 700; margin-bottom: 16px; }
+        .inv-to div { margin-bottom: 2px; } .inv-to .att { color: #555; }
+        .inv-rule { border: 0; border-top: 1px solid #b9b9b9; margin: 24px 0 0; }
+        .inv-items { width: 100%; border-collapse: collapse; }
+        .inv-items th { font-style: italic; font-weight: 400; color: #8a8a8a; font-size: 12.5px; text-align: left; padding: 12px 4px; }
+        .inv-items th.r, .inv-items td.r { text-align: right; }
+        .inv-items td { padding: 8px 4px; font-size: 13px; vertical-align: top; }
+        .inv-spacer { flex: 1; min-height: 36px; }
+        .inv-foot { display: flex; justify-content: space-between; gap: 28px; border-top: 1px solid #b9b9b9; padding-top: 16px; font-size: 12.5px; }
+        .inv-foot .fr, .inv-foot .tr { display: flex; margin-bottom: 4px; }
+        .inv-foot-left .fr { gap: 8px; } .inv-foot-left .k { color: #555; min-width: 42px; }
+        .inv-foot-right { text-align: right; min-width: 250px; }
+        .inv-foot-right .tr { justify-content: flex-end; gap: 18px; }
+        .inv-foot-right .k { color: #555; } .inv-foot-right .v { min-width: 84px; text-align: right; }
+        .inv-foot-right .tr.total .k, .inv-foot-right .tr.total .v { font-weight: 700; }
+        .inv-foot-right .tr.balance .v { color: #c0291f; font-weight: 700; }
       </style></head><body>
-      <div class="top">
-        <div><h1>${esc(from.name) || 'Tax invoice'}</h1>
-          ${from.lines.map((l) => esc(l)).join('<br>')}
-          ${from.abn ? `<div>ABN ${esc(from.abn)}</div>` : ''}</div>
-        <div class="meta"><div class="lbl">Tax invoice</div>
-          <div><strong>#${esc(inv.id)}</strong></div>
-          <div>Issued ${esc(fmtDate(inv.issued_at))}</div>
-          <div>Due ${esc(fmtDate(inv.due_at))}</div></div>
-      </div>
-      <div><div class="lbl">Bill to</div><strong>${esc(to.company)}</strong><br>
-        ${to.contact ? esc(to.contact) + '<br>' : ''}
-        ${to.lines.map((l) => esc(l)).join('<br>')}
-        ${to.abn ? `<div>ABN ${esc(to.abn)}</div>` : ''}</div>
-      <table><thead><tr><th>Description</th><th>Date</th><th class="r">Amount</th></tr></thead>
-        <tbody>${rows}</tbody></table>
-      <div class="tot">
-        <div class="row"><span>Subtotal</span><span>${sym}${money2(inv.subtotal)}</span></div>
-        ${inv.discount > 0 ? `<div class="row"><span>Discount</span><span>−${sym}${money2(inv.discount)}</span></div>` : ''}
-        <div class="row"><span>GST (${gstPct}%)</span><span>${sym}${money2(inv.gst)}</span></div>
-        <div class="row grand"><span>Total</span><span>${sym}${money2(inv.total)}</span></div>
-      </div>
-      ${inv.notes ? `<div class="notes"><div class="lbl">Notes</div>${esc(inv.notes)}</div>` : ''}
-      ${bank}
+      <div class="inv-paper">${doc}</div>
+      <script>(function(){var i=document.querySelector('.inv-logo');if(i)i.addEventListener('error',function(){i.style.display='none';var n=document.querySelector('.inv-from-name');if(n)n.hidden=false;});}())<\/script>
       </body></html>`;
   }
 
