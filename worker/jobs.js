@@ -47,6 +47,7 @@ function freshJob({ client_id = null, title = null } = {}) {
     created_at: now,
     updated_at: now,
     done_at: null,
+    doing_started_at: null, // v1 work-clock: stamped while status === 'doing'
     work_seconds: 0,       // accrued by the active-work timer; hours derives from it
     hours: 0,              // active-work hours, hand-editable before invoicing
     turns: [],             // [{ role:'user'|'ai', text, at, session_event? }]
@@ -111,9 +112,11 @@ async function patchJob(id, patch = {}) {
     throw new Error(`bad status: ${patch.status}`);
   }
   const job = await readJob(id);
+  const prevStatus = job.status;
   const { id: _id, created_at: _ca, turns: _t, ...rest } = patch;
   Object.assign(job, rest);
   if (patch.status === 'done' && !job.done_at) job.done_at = nowIso();
+  if (patch.status && patch.status !== prevStatus) applyTimerTransition(prevStatus, job);
   return writeJob(job);
 }
 
@@ -121,18 +124,25 @@ async function setStatus(id, status) {
   return patchJob(id, { status });
 }
 
-// Add elapsed active-work seconds (from the live timer) and re-derive hours.
-// Back-fills work_seconds from any pre-existing hand-entered hours so older
-// jobs don't lose their value the first time the timer fires.
-async function addTime(id, seconds) {
-  const add = Math.max(0, Math.round(Number(seconds) || 0));
-  const job = await readJob(id);
-  if (job.work_seconds == null) job.work_seconds = Math.round((Number(job.hours) || 0) * 3600);
-  if (add) {
-    job.work_seconds += add;
-    job.hours = Math.round((job.work_seconds / 3600) * 100) / 100;
+// The work clock (v1 model). Time accrues only while status === 'doing': we
+// stamp `doing_started_at` on entering `doing`, and on leaving fold the elapsed
+// wall-clock into `work_seconds` (hours re-derives). `review`/`done`/`blocked`
+// etc. are idle — review especially is human approval time, not effort.
+// Back-fills work_seconds from any pre-existing hand-entered hours. Mutates job.
+function applyTimerTransition(prevStatus, job) {
+  if (prevStatus === 'doing' && job.status !== 'doing') {
+    if (job.doing_started_at) {
+      const elapsed = Math.round((Date.now() - new Date(job.doing_started_at).getTime()) / 1000);
+      if (elapsed > 0) {
+        if (job.work_seconds == null) job.work_seconds = Math.round((Number(job.hours) || 0) * 3600);
+        job.work_seconds += elapsed;
+        job.hours = Math.round((job.work_seconds / 3600) * 100) / 100;
+      }
+    }
+    job.doing_started_at = null;
+  } else if (job.status === 'doing' && prevStatus !== 'doing') {
+    job.doing_started_at = nowIso();
   }
-  return writeJob(job);
 }
 
 // Hard delete: drop the record and its notes companion. The chokidar unlink
@@ -170,7 +180,6 @@ module.exports = {
   appendTurn,
   patchJob,
   setStatus,
-  addTime,
   deleteJob,
   readNotes,
   writeNotes,

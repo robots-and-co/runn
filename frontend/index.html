@@ -290,7 +290,6 @@
     clients: new Map(),    // id -> client
     currentId: null,
     sending: false,
-    aiActive: false,       // AI thinking/responding — keeps the work timer running
     filterClient: '',      // '' = all clients
     picking: false,        // choosing a client for a new job
     draftClientId: null,   // client chosen for the not-yet-saved draft
@@ -506,12 +505,13 @@
     closeChat();
   }
 
-  // ── Active-work timer ───────────────────────────
-  // Runs while the user is typing or the AI is working, accruing seconds onto
-  // the open job (→ job.hours → billing). timerSync() runs from renderChat, so
-  // it attaches/detaches as the open job changes.
-  const TIMER_IDLE_MS = 4000;      // a typing pause longer than this ends a span
-  const timer = { jobId: null, base: 0, spanStart: 0, typingUntil: 0, tickId: null };
+  // ── Active-work timer (v1 model) ────────────────
+  // Time accrues only while a job's status is `doing` (the AI is working, or
+  // it's set by hand). The server stamps doing_started_at on entering `doing`
+  // and folds the elapsed time into the job on leaving — here we just paint a
+  // live clock. timerSync() runs from renderChat, so it starts/stops the tick
+  // as the open job changes or its status flips.
+  const timer = { jobId: null, tickId: null };
 
   function jobSeconds(j) {
     if (!j) return 0;
@@ -524,50 +524,26 @@
     const pad = (n) => String(n).padStart(2, '0');
     return h ? `${h}:${pad(m)}:${pad(ss)}` : `${m}:${pad(ss)}`;
   }
-  function timerActive() {
-    return Date.now() < timer.typingUntil || state.sending || state.aiActive;
+  function jobRunning(j) { return !!(j && j.status === 'doing' && j.doing_started_at); }
+  function liveSeconds(j) {
+    let s = jobSeconds(j);
+    if (jobRunning(j)) s += Math.max(0, (Date.now() - new Date(j.doing_started_at).getTime()) / 1000);
+    return s;
   }
-  function timerNudge() { timer.typingUntil = Date.now() + TIMER_IDLE_MS; }
   function timerSync() {
     const id = (state.currentId && state.currentId !== DRAFT) ? state.currentId : null;
-    if (id === timer.jobId) { renderTimerDisplay(); return; }
-    flushSpan();                       // bank the previous job's open span
-    if (timer.tickId) { clearInterval(timer.tickId); timer.tickId = null; }
     timer.jobId = id;
-    timer.spanStart = 0;
-    timer.typingUntil = 0;
-    timer.base = id ? jobSeconds(state.jobs.get(id)) : 0;
-    if (id) timer.tickId = setInterval(timerEvaluate, 500);
+    const running = jobRunning(id ? state.jobs.get(id) : null);
+    if (running && !timer.tickId) timer.tickId = setInterval(renderTimerDisplay, 1000);
+    if (!running && timer.tickId) { clearInterval(timer.tickId); timer.tickId = null; }
     renderTimerDisplay();
-  }
-  function timerEvaluate() {
-    if (!timer.jobId) return;
-    const now = Date.now();
-    if (timerActive()) {
-      if (!timer.spanStart) timer.spanStart = now;
-      else if (now - timer.spanStart >= 60000) flushSpan(true);  // bound data loss
-    } else if (timer.spanStart) {
-      flushSpan();
-    }
-    renderTimerDisplay();
-  }
-  function flushSpan(keepRunning) {
-    if (!timer.spanStart || !timer.jobId) { timer.spanStart = 0; return; }
-    const elapsed = Math.round((Date.now() - timer.spanStart) / 1000);
-    timer.spanStart = keepRunning ? Date.now() : 0;
-    if (elapsed >= 1) {
-      timer.base += elapsed;
-      postJson(`/jobs/${timer.jobId}/time`, { seconds: elapsed })
-        .then((j) => { state.jobs.set(j.id, j); renderList(); })
-        .catch((e) => console.error('timer flush failed', e));
-    }
   }
   function renderTimerDisplay() {
     const el = $('chatHours');
-    if (!timer.jobId) { el.textContent = ''; el.classList.remove('running'); return; }
-    const live = timer.base + (timer.spanStart ? (Date.now() - timer.spanStart) / 1000 : 0);
-    el.textContent = fmtDuration(live);
-    el.classList.toggle('running', !!timer.spanStart);
+    const j = timer.jobId ? state.jobs.get(timer.jobId) : null;
+    if (!j) { el.textContent = ''; el.classList.remove('running'); return; }
+    el.textContent = fmtDuration(liveSeconds(j));
+    el.classList.toggle('running', jobRunning(j));
   }
 
   // ── Chat rendering ──────────────────────────────
@@ -904,14 +880,10 @@
   });
   $('clientFilter').addEventListener('change', (e) => { state.filterClient = e.target.value; renderList(); });
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
-  msgInput.addEventListener('input', () => { autoGrow(); timerNudge(); });
+  msgInput.addEventListener('input', autoGrow);
   msgInput.addEventListener('keydown', (e) => {
-    timerNudge();
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendCurrent(); }
   });
-  // Bank the running span when the tab is hidden or closed so time isn't lost.
-  document.addEventListener('visibilitychange', () => { if (document.hidden) flushSpan(true); });
-  window.addEventListener('pagehide', () => flushSpan());
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
