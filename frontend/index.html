@@ -496,11 +496,20 @@
   }
 
   // ── Chat rendering ──────────────────────────────
+  // On mobile the chat is a slide-over. Push a history entry when it opens so
+  // the device back button returns to the list instead of leaving the app.
+  function enterChatView() {
+    document.body.classList.add('show-chat');
+    if (window.matchMedia('(max-width: 720px)').matches &&
+        !(history.state && history.state.runnChat)) {
+      history.pushState({ runnChat: true }, '');
+    }
+  }
   function openJob(id) {
     state.currentId = id;
     state.picking = false;
     resetNewJobPicker();
-    document.body.classList.add('show-chat');
+    enterChatView();
     renderList();
     renderChat();
     if (window.matchMedia('(min-width: 721px)').matches) msgInput.focus();
@@ -541,12 +550,13 @@
     state.draftClientId = clientId;
     state.currentId = DRAFT;
     resetNewJobPicker();
-    document.body.classList.add('show-chat');
+    enterChatView();
     renderList();
     renderChat();
     msgInput.focus();
   }
-  function closeChat() {
+  function closeChat(opts) {
+    const fromPop = opts === true || (opts && opts.fromPop === true);
     document.body.classList.remove('show-chat');
     state.currentId = null;
     state.picking = false;
@@ -554,6 +564,8 @@
     resetNewJobPicker();
     renderList();
     renderChat();
+    // Consume the pushed entry unless the browser already did (device back).
+    if (!fromPop && history.state && history.state.runnChat) history.back();
   }
   function setComposer(enabled, placeholder) {
     msgInput.disabled = !enabled;
@@ -734,7 +746,11 @@
   }
 
   // ── Wiring ──────────────────────────────────────
-  $('backBtn').addEventListener('click', closeChat);
+  $('backBtn').addEventListener('click', () => closeChat());
+  // Device/browser back button: pop back to the list instead of leaving.
+  window.addEventListener('popstate', () => {
+    if (document.body.classList.contains('show-chat')) closeChat({ fromPop: true });
+  });
   $('newJobBtn').addEventListener('click', startNewJob);
   $('newJobPicker').addEventListener('change', (e) => {
     const v = e.target.value;
