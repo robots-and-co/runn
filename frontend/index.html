@@ -258,7 +258,7 @@
   }
   .inv-head { display: flex; justify-content: space-between; gap: 28px; align-items: flex-start; }
   .inv-from { max-width: 58%; }
-  .inv-logo { max-width: 240px; max-height: 76px; display: block; margin-bottom: 12px; }
+  .inv-logo { max-width: 280px; max-height: 150px; display: block; margin-bottom: 14px; }
   .inv-from-name { font-size: 23px; font-weight: 700; color: var(--brand); margin-bottom: 12px; }
   .inv-from-meta { font-size: 12.5px; color: #333; }
   .inv-from-meta div { margin-bottom: 2px; }
@@ -271,7 +271,7 @@
   .inv-to div { margin-bottom: 2px; }
   .inv-to .att { color: #555; }
 
-  .inv-rule { border: 0; border-top: 1px solid #b9b9b9; margin: 24px 0 0; }
+  .inv-rule { border: 0; border-top: 1px solid #dcdcdc; margin: 22px 0 0; }
   .inv-items { width: 100%; border-collapse: collapse; }
   .inv-items th {
     font-style: italic; font-weight: 400; color: #8a8a8a; font-size: 12.5px;
@@ -280,6 +280,9 @@
   .inv-items th.r, .inv-items td.r { text-align: right; }
   .inv-items td { padding: 8px 4px; font-size: 13px; vertical-align: top; }
   .inv-items td.r { font-variant-numeric: tabular-nums; }
+  .inv-items thead th { border-bottom: 1px solid #dcdcdc; }
+  .inv-items th:nth-child(2), .inv-items td:nth-child(2) { width: 150px; }
+  .inv-items th:nth-child(3), .inv-items td:nth-child(3) { width: 150px; }
   .inv-items .rm-cell { width: 26px; padding-left: 8px; }
   .inv-items .rm { border: 0; background: none; color: #b33; cursor: pointer; font-size: 18px; line-height: 1; padding: 0 2px; }
 
@@ -287,9 +290,11 @@
 
   .inv-foot {
     display: flex; justify-content: space-between; gap: 28px;
-    border-top: 1px solid #b9b9b9; padding-top: 16px; font-size: 12.5px;
+    border: 1px solid #dcdcdc; border-radius: 4px; padding: 20px 24px;
+    min-height: 122px; font-size: 12.5px;
   }
-  .inv-foot .fr, .inv-foot .tr { display: flex; margin-bottom: 4px; }
+  .inv-foot-left, .inv-foot-right { display: flex; flex-direction: column; justify-content: space-between; }
+  .inv-foot .fr, .inv-foot .tr { display: flex; }
   .inv-foot-left { min-width: 240px; }
   .inv-foot-left .fr { gap: 8px; }
   .inv-foot-left .k { color: #555; min-width: 42px; }
@@ -1309,21 +1314,25 @@
         .inv-paper { display: flex; flex-direction: column; min-height: 100%; }
         .inv-head { display: flex; justify-content: space-between; gap: 28px; align-items: flex-start; }
         .inv-from { max-width: 58%; }
-        .inv-logo { max-width: 240px; max-height: 76px; display: block; margin-bottom: 12px; }
+        .inv-logo { max-width: 280px; max-height: 150px; display: block; margin-bottom: 14px; }
         .inv-from-name { font-size: 23px; font-weight: 700; color: #2f4a6b; margin-bottom: 12px; }
         .inv-from-meta { font-size: 12.5px; color: #333; }
         .inv-from-meta div { margin-bottom: 2px; }
         .inv-to { text-align: right; min-width: 230px; }
         .inv-title { font-size: 20px; font-weight: 700; margin-bottom: 16px; }
         .inv-to div { margin-bottom: 2px; } .inv-to .att { color: #555; }
-        .inv-rule { border: 0; border-top: 1px solid #b9b9b9; margin: 24px 0 0; }
+        .inv-rule { border: 0; border-top: 1px solid #dcdcdc; margin: 22px 0 0; }
         .inv-items { width: 100%; border-collapse: collapse; }
         .inv-items th { font-style: italic; font-weight: 400; color: #8a8a8a; font-size: 12.5px; text-align: left; padding: 12px 4px; }
         .inv-items th.r, .inv-items td.r { text-align: right; }
         .inv-items td { padding: 8px 4px; font-size: 13px; vertical-align: top; }
+        .inv-items thead th { border-bottom: 1px solid #dcdcdc; }
+        .inv-items th:nth-child(2), .inv-items td:nth-child(2) { width: 150px; }
+        .inv-items th:nth-child(3), .inv-items td:nth-child(3) { width: 150px; }
         .inv-spacer { flex: 1; min-height: 36px; }
-        .inv-foot { display: flex; justify-content: space-between; gap: 28px; border-top: 1px solid #b9b9b9; padding-top: 16px; font-size: 12.5px; }
-        .inv-foot .fr, .inv-foot .tr { display: flex; margin-bottom: 4px; }
+        .inv-foot { display: flex; justify-content: space-between; gap: 28px; border: 1px solid #dcdcdc; border-radius: 4px; padding: 20px 24px; min-height: 122px; font-size: 12.5px; }
+        .inv-foot-left, .inv-foot-right { display: flex; flex-direction: column; justify-content: space-between; }
+        .inv-foot .fr, .inv-foot .tr { display: flex; }
         .inv-foot-left .fr { gap: 8px; } .inv-foot-left .k { color: #555; min-width: 42px; }
         .inv-foot-right { text-align: right; min-width: 250px; }
         .inv-foot-right .tr { justify-content: flex-end; gap: 18px; }
