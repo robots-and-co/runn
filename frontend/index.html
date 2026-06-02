@@ -144,10 +144,8 @@
   }
   .total .amt::before { content: '$'; opacity: .6; }
 
-  /* + Job → client picker */
-  .picker { max-width: 520px; margin: 4px auto; }
-  .picker-head { font-size: 14px; color: var(--muted); margin: 4px 4px 14px; }
-  .picker-select { width: 100%; font-size: 14px; padding: 10px 12px; cursor: pointer; }
+  /* + Job → client picker (lives in the left column footer) */
+  .newjob-picker { width: 100%; font-size: 15px; padding: 12px; cursor: pointer; }
 
   /* ── Right: chat ────────────────────────────────── */
   .chat-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -230,6 +228,7 @@
       <div class="job-list" id="jobList"></div>
       <div class="list-foot">
         <button class="btn-newjob" id="newJobBtn">+ Job</button>
+        <select class="client-filter newjob-picker" id="newJobPicker" aria-label="Pick a client for the new job" hidden></select>
       </div>
     </aside>
 
@@ -404,6 +403,8 @@
   // ── Chat rendering ──────────────────────────────
   function openJob(id) {
     state.currentId = id;
+    state.picking = false;
+    resetNewJobPicker();
     document.body.classList.add('show-chat');
     renderList();
     renderChat();
@@ -413,48 +414,39 @@
     state.picking = true;
     state.draftClientId = null;
     state.currentId = null;
-    document.body.classList.add('show-chat');
-    renderList();
-    renderPicker();
-  }
-  function renderPicker() {
-    $('chatTitle').textContent = 'New job';
-    $('chatClient').hidden = true;
-    $('chatStatus').hidden = true;
-    $('chatHours').textContent = '';
-    setComposer(false, 'Pick a client to begin…');
-    const clients = [...state.clients.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
-    turnsEl.innerHTML = '';
-    const wrap = document.createElement('div');
-    wrap.className = 'picker';
-    const head = document.createElement('div');
-    head.className = 'picker-head';
-    head.textContent = 'Who is this job for?';
-    wrap.appendChild(head);
-    const sel = document.createElement('select');
-    sel.className = 'client-filter picker-select';
+    const sel = $('newJobPicker');
+    sel.innerHTML = '';
     const ph = document.createElement('option');
-    ph.value = ''; ph.textContent = 'Choose a client…'; ph.disabled = true; ph.selected = true;
+    ph.value = ''; ph.textContent = 'New job for…'; ph.disabled = true; ph.selected = true;
     sel.appendChild(ph);
     const personal = document.createElement('option');
-    personal.value = '__personal__'; personal.textContent = 'Personal — household / personal';
+    personal.value = '__personal__'; personal.textContent = 'Personal';
     sel.appendChild(personal);
+    const clients = [...state.clients.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
     for (const c of clients) {
       const o = document.createElement('option');
       o.value = c.id; o.textContent = c.name;
       sel.appendChild(o);
     }
-    sel.addEventListener('change', () => {
-      if (!sel.value) return;
-      beginDraft(sel.value === '__personal__' ? null : sel.value);
-    });
-    wrap.appendChild(sel);
-    turnsEl.appendChild(wrap);
+    $('newJobBtn').hidden = true;
+    sel.hidden = false;
+    renderList();
+    renderChat();
+    sel.focus();
+    try { sel.showPicker(); } catch {}
+  }
+  function resetNewJobPicker() {
+    const sel = $('newJobPicker');
+    sel.hidden = true;
+    sel.value = '';
+    $('newJobBtn').hidden = false;
   }
   function beginDraft(clientId) {
     state.picking = false;
     state.draftClientId = clientId;
     state.currentId = DRAFT;
+    resetNewJobPicker();
+    document.body.classList.add('show-chat');
     renderList();
     renderChat();
     msgInput.focus();
@@ -464,6 +456,7 @@
     state.currentId = null;
     state.picking = false;
     state.draftClientId = null;
+    resetNewJobPicker();
     renderList();
     renderChat();
   }
@@ -474,7 +467,15 @@
   }
 
   function renderChat() {
-    if (state.picking) { renderPicker(); return; }
+    if (state.picking) {
+      $('chatTitle').textContent = 'New job';
+      $('chatClient').hidden = true;
+      $('chatStatus').hidden = true;
+      $('chatHours').textContent = '';
+      turnsEl.innerHTML = '<div class="empty">Pick a client to start.</div>';
+      setComposer(false, 'Pick a client to begin…');
+      return;
+    }
     if (state.currentId === DRAFT) {
       $('chatTitle').textContent = 'New job';
       const clEl = $('chatClient');
@@ -630,6 +631,11 @@
   // ── Wiring ──────────────────────────────────────
   $('backBtn').addEventListener('click', closeChat);
   $('newJobBtn').addEventListener('click', startNewJob);
+  $('newJobPicker').addEventListener('change', (e) => {
+    const v = e.target.value;
+    if (!v) return;
+    beginDraft(v === '__personal__' ? null : v);
+  });
   // Logo = hard reset: drop the service worker + its caches, then reload, so a
   // fresh deploy is never masked by a stale cached copy.
   async function hardReset() {
