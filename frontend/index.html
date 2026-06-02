@@ -363,7 +363,6 @@
 
       const meta = document.createElement('div');
       meta.className = 'meta';
-      meta.appendChild(statusChip(j.status, j.id));
       const cn = clientName(j.client_id);
       if (cn) { const c = document.createElement('span'); c.className = 'chip client'; c.textContent = cn; meta.appendChild(c); }
       const t = document.createElement('span'); t.textContent = fmtTime(j.updated_at); meta.appendChild(t);
