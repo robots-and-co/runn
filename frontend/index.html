@@ -87,8 +87,8 @@
   /* status + client chips */
   .chip {
     display: inline-flex; align-items: center;
-    padding: 1px 8px; border-radius: 999px;
-    font-size: 11px; font-weight: 600; line-height: 1.6;
+    padding: 4px 12px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; line-height: 1.5;
     background: var(--surface-2); color: var(--muted);
     white-space: nowrap;
   }
@@ -103,20 +103,20 @@
   .chip.st-hold     { background:#ececec; color:#777; }
   /* selectable status chip — click opens the status picker */
   .chip.pick { cursor: pointer; }
-  .chip.pick::after { content: '▾'; margin-left: 3px; font-size: 9px; opacity: .55; }
+  .chip.pick::after { content: '▾'; margin-left: 5px; font-size: 11px; opacity: .55; }
 
   /* status picker menu (shared, body-level, fixed-positioned at the chip) */
   .chip-menu {
-    position: fixed; z-index: 200; min-width: 150px;
+    position: fixed; z-index: 200; min-width: 210px;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);
-    padding: 4px; display: flex; flex-direction: column; gap: 2px;
+    border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    padding: 6px; display: flex; flex-direction: column; gap: 3px;
   }
   .chip-menu[hidden] { display: none; }
   .chip-menu-item {
-    display: flex; align-items: center; gap: 8px;
-    padding: 6px 8px; background: none; border: 0; border-radius: 6px;
-    cursor: pointer; font: inherit; font-size: 13px; color: var(--ink);
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 14px; background: none; border: 0; border-radius: 9px;
+    cursor: pointer; font: inherit; font-size: 15px; color: var(--ink);
     text-align: left; width: 100%;
   }
   .chip-menu-item:hover { background: var(--surface-2); }
@@ -127,8 +127,8 @@
   /* chat header overflow menu (archive / delete) */
   .job-menu-btn {
     flex-shrink: 0; border: 0; background: none; cursor: pointer;
-    color: var(--muted); font-size: 20px; line-height: 1;
-    padding: 2px 8px; border-radius: 8px;
+    color: var(--muted); font-size: 24px; line-height: 1;
+    padding: 4px 10px; border-radius: 8px;
   }
   .job-menu-btn:hover { background: var(--surface-2); color: var(--ink); }
 
@@ -216,6 +216,14 @@
       transform: translateX(100%); transition: transform 0.22s ease; z-index: 5; }
     body.show-chat .chat-pane { transform: translateX(0); }
     .chat-head .back { display: block; }
+
+    /* bigger chips + menus = easier taps on a phone */
+    .chip { font-size: 15px; padding: 6px 14px; }
+    .chip.pick::after { font-size: 12px; margin-left: 6px; }
+    .job-row .meta { gap: 10px; font-size: 13px; }
+    .chip-menu { min-width: 260px; padding: 8px; gap: 4px; }
+    .chip-menu-item { font-size: 17px; padding: 15px 16px; }
+    .job-menu-btn { font-size: 28px; padding: 6px 12px; }
   }
 </style>
 </head>
