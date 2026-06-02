@@ -24,6 +24,7 @@
     --ai-bubble: #ffffff;
     --list-w: 340px;
     --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-t: env(safe-area-inset-top, 0px);
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -118,6 +119,28 @@
   /* selectable status chip — click opens the status picker */
   .chip.pick { cursor: pointer; }
   .chip.pick::after { content: '▾'; margin-left: 5px; font-size: 11px; opacity: .55; }
+
+  /* due-date chip (header): a pill that opens the native date picker, plus an
+     optional clear ×. .overdue reddens a past, not-yet-finished due date. */
+  .due-chip { display: inline-flex; align-items: center; flex-shrink: 0; }
+  .due-set {
+    font: inherit; font-size: 13px; font-weight: 600; line-height: 1.5;
+    padding: 4px 12px; border-radius: 999px; border: 0; cursor: pointer;
+    background: #eef1f4; color: var(--brand); white-space: nowrap;
+  }
+  .due-set:hover { filter: brightness(0.96); }
+  .due-set.empty { background: var(--surface-2); color: var(--muted); font-weight: 500; }
+  .due-chip.overdue .due-set { background: #ffe1dc; color: #b23b2a; }
+  .due-clear {
+    border: 0; background: none; cursor: pointer; color: var(--muted);
+    font-size: 17px; line-height: 1; padding: 2px 4px 2px 2px; margin-left: -2px;
+  }
+  .due-clear:hover { color: var(--ink); }
+  /* The native input is offscreen — tapping the chip calls showPicker() on it. */
+  .due-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; left: -9999px; }
+  /* due text in a list row */
+  .job-row .due { color: var(--brand); }
+  .job-row .due.overdue { color: #b23b2a; font-weight: 600; }
 
   /* status picker menu (shared, body-level, fixed-positioned at the chip) */
   .chip-menu {
@@ -281,6 +304,34 @@
   .inv-foot-right .tr.total .k, .inv-foot-right .tr.total .v { font-weight: 700; }
   .inv-foot-right .tr.balance .v { color: #c0291f; font-weight: 700; }
 
+  /* Full-page A4 preview — what the printed invoice looks like at print size.
+     The page is rendered at true A4 (794×1123px = 210×297mm @96dpi) and scaled
+     to fit the viewport via JS. */
+  .inv-preview-overlay {
+    position: fixed; inset: 0; z-index: 50; display: none; flex-direction: column;
+    background: rgba(24, 21, 17, 0.62);
+  }
+  .inv-preview-overlay.open { display: flex; }
+  .inv-preview-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px calc(10px + var(--safe-b)); padding-top: max(10px, var(--safe-t));
+    background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  .inv-preview-label { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; }
+  .inv-preview-close {
+    font: inherit; font-size: 14px; font-weight: 600; padding: 8px 14px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+    color: var(--ink); cursor: pointer;
+  }
+  .inv-preview-scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch;
+    display: flex; align-items: flex-start; justify-content: center; padding: 16px; }
+  .inv-preview-stage { position: relative; flex: none; }
+  .inv-preview-page {
+    width: 794px; height: 1123px; min-height: 0;
+    border: 0; border-radius: 0; box-shadow: 0 6px 28px rgba(0,0,0,0.35);
+    transform-origin: top left;
+  }
+
   /* + Job → client picker (lives in the left column footer) */
   .newjob-picker { width: 100%; font-size: 15px; padding: 12px; cursor: pointer; }
 
@@ -411,6 +462,11 @@
         <span class="ttl" id="chatTitle"></span>
         <span class="chip client" id="chatClient" hidden></span>
         <span class="chip" id="chatStatus" hidden></span>
+        <span class="due-chip" id="chatDue" hidden>
+          <button type="button" class="due-set" id="chatDueBtn"></button>
+          <button type="button" class="due-clear" id="chatDueClear" aria-label="Clear due date" hidden>×</button>
+        </span>
+        <input type="date" id="chatDueInput" class="due-input" aria-hidden="true" tabindex="-1">
         <span class="hours" id="chatHours"></span>
         <button class="job-menu-btn" id="jobMenuBtn" type="button" aria-label="Job actions" hidden>⋯</button>
       </div>
@@ -506,6 +562,13 @@
     const t = (j.turns || []).find((x) => x.role === 'user' && x.text);
     return t ? t.text.replace(/\s+/g, ' ').slice(0, 80) : null;
   }
+  // A job's due date for display. overdue = past and the job isn't wrapped up.
+  function dueInfo(j) {
+    const d = j && j.due_at;
+    if (!d) return { set: false, label: '', overdue: false };
+    const overdue = d < today() && !['done', 'invoiced', 'paid'].includes(j.status);
+    return { set: true, label: fmtDate(d), overdue };
+  }
   function fmtTime(iso) {
     if (!iso) return '';
     return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -564,6 +627,8 @@
       meta.appendChild(statusChip(j.status));   // static — no jobId, so not a button
       const cn = clientName(j.client_id);
       if (cn) { const c = document.createElement('span'); c.className = 'chip client'; c.textContent = cn; meta.appendChild(c); }
+      const di = dueInfo(j);
+      if (di.set) { const d = document.createElement('span'); d.className = 'due' + (di.overdue ? ' overdue' : ''); d.textContent = 'Due ' + di.label; meta.appendChild(d); }
       const t = document.createElement('span'); t.textContent = fmtTime(j.updated_at); meta.appendChild(t);
       row.appendChild(meta);
 
@@ -616,6 +681,22 @@
     const j = await patchJson('/jobs/' + id, { status });
     state.jobs.set(j.id, j);
     renderList(); renderChat();
+  }
+  async function setJobDue(id, due_at) {
+    const j = await patchJson('/jobs/' + id, { due_at: due_at || null });
+    state.jobs.set(j.id, j);
+    renderList(); renderChat();
+  }
+  // Paint the header due chip for the open job: a pill that reads "Set due" when
+  // empty or "Due <date>" when set, goes red when overdue, and shows a clear (×).
+  function renderDueChip(j) {
+    const chip = $('chatDue'), btn = $('chatDueBtn'), clr = $('chatDueClear');
+    const di = dueInfo(j);
+    chip.classList.toggle('overdue', di.overdue);
+    btn.classList.toggle('empty', !di.set);
+    btn.textContent = di.set ? 'Due ' + di.label : 'Set due';
+    clr.hidden = !di.set;
+    chip.hidden = false;
   }
 
   // ── Job actions menu (archive / delete) ──
@@ -1033,25 +1114,44 @@
     return { company: c.company || c.name || '', contact: c.contact || '', lines: c.address_lines || [] };
   }
 
+  // Build the invPaperHtml options for a live draft / an issued invoice. Shared
+  // by the editable doc, the read-only A4 preview, and the print/PDF output.
+  function draftPaperOpts(ed, s, editable) {
+    return {
+      from: fromSnapshot(s), to: toSnapshot(ed.client), bank: s.bank, editable,
+      number: ed.number, issued: ed.issued, due: ed.due,
+      items: ed.items, gstRate: ed.gstRate, sym: s.currency_symbol || '$',
+    };
+  }
+  function invoicePaperOpts(inv, editable) {
+    const snap = inv.snapshot || {};
+    return {
+      from: { name: snap.from?.name, logo: snap.from?.logo_path, lines: snap.from?.address_lines || [], abn: snap.from?.abn_acn },
+      to: { company: snap.to?.company, contact: snap.to?.contact, lines: snap.to?.address_lines || [] },
+      bank: snap.bank,
+      number: inv.id, issued: inv.issued_at, due: inv.due_at,
+      items: inv.items, gstRate: inv.gst_rate,
+      precomputed: { subtotal: inv.subtotal, gst: inv.gst, total: inv.total },
+      paid: inv.paid, balance: inv.balance, sym: snap.currency_symbol || '$', editable,
+    };
+  }
+
   function renderDraftDoc(body, titleEl) {
     const ed = state.editing;
     if (!ed) { state.billingSel = null; return renderBilling(); }
     titleEl.textContent = 'New invoice — ' + (ed.client.name || '');
     const s = state.settings || {};
-    const sym = s.currency_symbol || '$';
 
     const wrap = document.createElement('div'); wrap.className = 'inv-doc';
     const actions = document.createElement('div'); actions.className = 'inv-actions';
     const issueBtn = document.createElement('button'); issueBtn.type = 'button'; issueBtn.className = 'primary'; issueBtn.textContent = 'Issue invoice';
-    actions.appendChild(issueBtn);
+    const previewBtn = document.createElement('button'); previewBtn.type = 'button'; previewBtn.textContent = 'Preview';
+    previewBtn.addEventListener('click', () => openPreview(draftPaperOpts(ed, s, false)));
+    actions.append(issueBtn, previewBtn);
     wrap.appendChild(actions);
 
     const paper = document.createElement('div'); paper.className = 'inv-paper';
-    paper.innerHTML = invPaperHtml({
-      from: fromSnapshot(s), to: toSnapshot(ed.client), bank: s.bank, editable: true,
-      number: ed.number, issued: ed.issued, due: ed.due,
-      items: ed.items, gstRate: ed.gstRate, sym,
-    });
+    paper.innerHTML = invPaperHtml(draftPaperOpts(ed, s, true));
     wrap.appendChild(paper);
     body.appendChild(wrap);
     wireLogoFallback(paper);
@@ -1100,7 +1200,6 @@
     const inv = state.invoices.get(state.billingSel.id);
     if (!inv) { state.billingSel = null; return renderBilling(); }
     titleEl.textContent = '#' + inv.id;
-    const sym = inv.snapshot?.currency_symbol || '$';
 
     const wrap = document.createElement('div'); wrap.className = 'inv-doc';
     const actions = document.createElement('div'); actions.className = 'inv-actions';
@@ -1109,6 +1208,9 @@
       paid.addEventListener('click', () => markPaid(inv.id, paid));
       actions.appendChild(paid);
     }
+    const previewBtn = document.createElement('button'); previewBtn.type = 'button'; previewBtn.textContent = 'Preview';
+    previewBtn.addEventListener('click', () => openPreview(invoicePaperOpts(inv, false)));
+    actions.appendChild(previewBtn);
     const print = document.createElement('button'); print.type = 'button'; print.textContent = 'Print / PDF';
     print.addEventListener('click', () => printInvoice(inv));
     actions.appendChild(print);
@@ -1118,16 +1220,7 @@
     wrap.appendChild(actions);
 
     const paper = document.createElement('div'); paper.className = 'inv-paper';
-    const snap = inv.snapshot || {};
-    paper.innerHTML = invPaperHtml({
-      from: { name: snap.from?.name, logo: snap.from?.logo_path, lines: snap.from?.address_lines || [], abn: snap.from?.abn_acn },
-      to: { company: snap.to?.company, contact: snap.to?.contact, lines: snap.to?.address_lines || [] },
-      bank: snap.bank,
-      number: inv.id, issued: inv.issued_at, due: inv.due_at,
-      items: inv.items, gstRate: inv.gst_rate,
-      precomputed: { subtotal: inv.subtotal, gst: inv.gst, total: inv.total },
-      paid: inv.paid, balance: inv.balance, sym, editable: false,
-    });
+    paper.innerHTML = invPaperHtml(invoicePaperOpts(inv, false));
     wrap.appendChild(paper);
     body.appendChild(wrap);
     wireLogoFallback(paper);
@@ -1161,20 +1254,52 @@
     setTimeout(() => { try { w.print(); } catch {} }, 250);
   }
 
+  // Full-page A4 preview: render the read-only invoice at true A4 size and scale
+  // it to fit the viewport, so you see the printed page without leaving the app.
+  function openPreview(opts) {
+    let overlay = $('invPreview');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'invPreview';
+      overlay.className = 'inv-preview-overlay';
+      overlay.innerHTML = `
+        <div class="inv-preview-bar">
+          <span class="inv-preview-label">A4 preview</span>
+          <button type="button" class="inv-preview-close">Close</button>
+        </div>
+        <div class="inv-preview-scroll"><div class="inv-preview-stage"><div class="inv-paper inv-preview-page"></div></div></div>`;
+      document.body.appendChild(overlay);
+      overlay.querySelector('.inv-preview-close').addEventListener('click', closePreview);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) closePreview(); });
+    }
+    const page = overlay.querySelector('.inv-preview-page');
+    page.innerHTML = invPaperHtml(opts);
+    wireLogoFallback(page);
+    overlay.classList.add('open');
+    scalePreview();
+  }
+  function closePreview() {
+    const overlay = $('invPreview');
+    if (overlay) overlay.classList.remove('open');
+  }
+  // The page is a fixed 794×1123 (A4 @96dpi); fit it to the available area by
+  // scaling, and size the stage to the scaled box so scrolling/centring is sane.
+  function scalePreview() {
+    const overlay = $('invPreview');
+    if (!overlay || !overlay.classList.contains('open')) return;
+    const scroll = overlay.querySelector('.inv-preview-scroll');
+    const stage = overlay.querySelector('.inv-preview-stage');
+    const page = overlay.querySelector('.inv-preview-page');
+    const s = Math.min((scroll.clientWidth - 32) / 794, (scroll.clientHeight - 32) / 1123, 1);
+    page.style.transform = `scale(${s})`;
+    stage.style.width = (794 * s) + 'px';
+    stage.style.height = (1123 * s) + 'px';
+  }
+
   // Print/PDF reuses the exact same document markup (invPaperHtml, read-only) as
   // the on-screen invoice, with print-tuned CSS, so the PDF matches 1:1.
   function invPrintHtml(inv) {
-    const snap = inv.snapshot || {};
-    const sym = snap.currency_symbol || '$';
-    const doc = invPaperHtml({
-      from: { name: snap.from?.name, logo: snap.from?.logo_path, lines: snap.from?.address_lines || [], abn: snap.from?.abn_acn },
-      to: { company: snap.to?.company, contact: snap.to?.contact, lines: snap.to?.address_lines || [] },
-      bank: snap.bank,
-      number: inv.id, issued: inv.issued_at, due: inv.due_at,
-      items: inv.items, gstRate: inv.gst_rate,
-      precomputed: { subtotal: inv.subtotal, gst: inv.gst, total: inv.total },
-      paid: inv.paid, balance: inv.balance, sym, editable: false,
-    });
+    const doc = invPaperHtml(invoicePaperOpts(inv, false));
     return `<!doctype html><html><head><meta charset="utf-8"><title>Tax Invoice ${esc(inv.id)}</title>
       <style>
         @page { size: A4; margin: 16mm; }
@@ -1298,6 +1423,7 @@
 
   function renderChat() {
     $('jobMenuBtn').hidden = true;
+    $('chatDue').hidden = true;  // shown only for a real, saved job
     timerSync();                 // attach/detach the work timer to the open job
     if (state.picking) {
       $('chatTitle').textContent = 'New job';
@@ -1341,6 +1467,7 @@
     stEl.textContent = j.status || 'open';
     stEl.className = 'chip pick st-' + (j.status || 'open');
     stEl.hidden = false;
+    renderDueChip(j);
     $('jobMenuBtn').hidden = false;     // #chatHours is the live timer, owned by renderTimerDisplay
 
     turnsEl.innerHTML = '';
@@ -1533,6 +1660,25 @@
     const j = state.jobs.get(state.currentId);
     openChipMenu($('chatStatus'), state.currentId, j ? (j.status || 'open') : 'open');
   });
+  $('chatDueBtn').addEventListener('click', (ev) => {
+    if (!state.currentId || state.currentId === DRAFT) return;
+    ev.stopPropagation();
+    const j = state.jobs.get(state.currentId);
+    const input = $('chatDueInput');
+    input.value = (j && j.due_at) || '';
+    try { input.showPicker(); }
+    catch { input.focus(); input.click(); }
+  });
+  $('chatDueInput').addEventListener('change', (ev) => {
+    if (!state.currentId || state.currentId === DRAFT) return;
+    setJobDue(state.currentId, ev.target.value || null)
+      .catch((e) => console.error('due change failed', e));
+  });
+  $('chatDueClear').addEventListener('click', (ev) => {
+    if (!state.currentId || state.currentId === DRAFT) return;
+    ev.stopPropagation();
+    setJobDue(state.currentId, null).catch((e) => console.error('due clear failed', e));
+  });
   $('jobMenuBtn').addEventListener('click', (ev) => {
     ev.stopPropagation();
     if ($('jobMenu').hidden) openJobMenu($('jobMenuBtn')); else closeJobMenu();
@@ -1569,10 +1715,13 @@
   });
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
+    const preview = $('invPreview');
+    if (preview && preview.classList.contains('open')) { ev.stopPropagation(); return closePreview(); }
     if (!$('chipMenu').hidden) { ev.stopPropagation(); closeChipMenu(); }
     if (!$('jobMenu').hidden) { ev.stopPropagation(); closeJobMenu(); }
     if (!$('clientMenu').hidden) { ev.stopPropagation(); closeClientMenu(); }
   });
+  window.addEventListener('resize', scalePreview);
   $('clientFilter').addEventListener('change', (e) => { state.filterClient = e.target.value; renderList(); });
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
   msgInput.addEventListener('input', autoGrow);

@@ -46,6 +46,7 @@ function freshJob({ client_id = null, title = null } = {}) {
     status: 'open',
     created_at: now,
     updated_at: now,
+    due_at: null,          // when the work is due (YYYY-MM-DD); user-set, optional
     done_at: null,
     doing_started_at: null, // v1 work-clock: stamped while status === 'doing'
     work_seconds: 0,       // accrued by the active-work timer; hours derives from it
