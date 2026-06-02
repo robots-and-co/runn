@@ -121,7 +121,16 @@
   }
   .chip-menu-item:hover { background: var(--surface-2); }
   .chip-menu-item.is-current { background: var(--surface-2); font-weight: 600; }
+  .chip-menu-item.danger { color: #b23b2a; }
   .chip-menu-item .chip { pointer-events: none; }
+
+  /* chat header overflow menu (archive / delete) */
+  .job-menu-btn {
+    flex-shrink: 0; border: 0; background: none; cursor: pointer;
+    color: var(--muted); font-size: 20px; line-height: 1;
+    padding: 2px 8px; border-radius: 8px;
+  }
+  .job-menu-btn:hover { background: var(--surface-2); color: var(--ink); }
 
   /* left-pane subheader: client filter + running $ total */
   .list-sub {
@@ -239,6 +248,7 @@
         <span class="chip client" id="chatClient" hidden></span>
         <span class="chip" id="chatStatus" hidden></span>
         <span class="hours" id="chatHours"></span>
+        <button class="job-menu-btn" id="jobMenuBtn" type="button" aria-label="Job actions" hidden>⋯</button>
       </div>
       <div class="turns" id="turns">
         <div class="empty" id="emptyState">Select a job, or start a new one.</div>
@@ -250,6 +260,7 @@
     </main>
   </div>
   <div class="chip-menu" id="chipMenu" hidden></div>
+  <div class="chip-menu" id="jobMenu" hidden></div>
 
 <script>
 'use strict';
@@ -298,7 +309,7 @@
 
   // ── List rendering ──────────────────────────────
   function visibleJobs() {
-    let jobs = [...state.jobs.values()];
+    let jobs = [...state.jobs.values()].filter((j) => !j.archived);
     if (state.filterClient) jobs = jobs.filter((j) => j.client_id === state.filterClient);
     return jobs.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
   }
@@ -400,6 +411,54 @@
     renderList(); renderChat();
   }
 
+  // ── Job actions menu (archive / delete) ──
+  function placeMenu(menu, anchorEl) {
+    const r = anchorEl.getBoundingClientRect();
+    const mw = menu.offsetWidth, mh = menu.offsetHeight;
+    let left = r.right - mw;                              // right-align to the button
+    let top = r.bottom + 4;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - 8 - mw;
+    if (top + mh > window.innerHeight - 8) top = r.top - 4 - mh;
+    menu.style.left = Math.max(8, left) + 'px';
+    menu.style.top = Math.max(8, top) + 'px';
+  }
+  function openJobMenu(anchorEl) {
+    const menu = $('jobMenu');
+    menu.innerHTML = '';
+    const archive = document.createElement('button');
+    archive.type = 'button';
+    archive.className = 'chip-menu-item';
+    archive.dataset.action = 'archive';
+    archive.textContent = 'Archive job';
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'chip-menu-item danger';
+    del.dataset.action = 'delete';
+    del.textContent = 'Delete job';
+    menu.appendChild(archive);
+    menu.appendChild(del);
+    menu.hidden = false;
+    placeMenu(menu, anchorEl);
+  }
+  function closeJobMenu() { $('jobMenu').hidden = true; }
+  async function archiveCurrentJob() {
+    const id = state.currentId;
+    if (!id || id === DRAFT) return;
+    await patchJson('/jobs/' + id, { archived: true });
+    state.jobs.delete(id);
+    closeChat();
+  }
+  async function deleteCurrentJob() {
+    const id = state.currentId;
+    if (!id || id === DRAFT) return;
+    const j = state.jobs.get(id);
+    const name = (j && titleOf(j)) || 'this job';
+    if (!confirm(`Delete ${name}? This removes the whole chat for good and can't be undone.`)) return;
+    await delJson('/jobs/' + id);
+    state.jobs.delete(id);
+    closeChat();
+  }
+
   // ── Chat rendering ──────────────────────────────
   function openJob(id) {
     state.currentId = id;
@@ -467,6 +526,7 @@
   }
 
   function renderChat() {
+    $('jobMenuBtn').hidden = true;
     if (state.picking) {
       $('chatTitle').textContent = 'New job';
       $('chatClient').hidden = true;
@@ -507,6 +567,7 @@
     stEl.className = 'chip pick st-' + (j.status || 'open');
     stEl.hidden = false;
     $('chatHours').textContent = j.hours ? `${j.hours}h` : '';
+    $('jobMenuBtn').hidden = false;
 
     turnsEl.innerHTML = '';
     const turns = j.turns || [];
@@ -598,6 +659,11 @@
     if (!r.ok) throw new Error(`${url} → ${r.status}`);
     return r.json();
   }
+  async function delJson(url) {
+    const r = await fetch(url, { method: 'DELETE' });
+    if (!r.ok) throw new Error(`${url} → ${r.status}`);
+    return r.json();
+  }
   async function sendCurrent() {
     const text = msgInput.value.trim();
     if (!text || state.sending) return;
@@ -666,13 +732,28 @@
     const j = state.jobs.get(state.currentId);
     openChipMenu($('chatStatus'), state.currentId, j ? (j.status || 'open') : 'open');
   });
+  $('jobMenuBtn').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if ($('jobMenu').hidden) openJobMenu($('jobMenuBtn')); else closeJobMenu();
+  });
+  $('jobMenu').addEventListener('click', (ev) => {
+    const item = ev.target.closest('.chip-menu-item');
+    if (!item) return;
+    const action = item.dataset.action;
+    closeJobMenu();
+    const run = action === 'archive' ? archiveCurrentJob() : deleteCurrentJob();
+    run.catch((e) => { console.error(action + ' failed', e); alert(action + ' failed: ' + e.message); });
+  });
   document.addEventListener('click', (ev) => {
-    const menu = $('chipMenu');
-    if (menu.hidden || menu.contains(ev.target)) return;
-    closeChipMenu();
+    const cm = $('chipMenu');
+    if (!cm.hidden && !cm.contains(ev.target)) closeChipMenu();
+    const jm = $('jobMenu');
+    if (!jm.hidden && !jm.contains(ev.target)) closeJobMenu();
   });
   document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && !$('chipMenu').hidden) { ev.stopPropagation(); closeChipMenu(); }
+    if (ev.key !== 'Escape') return;
+    if (!$('chipMenu').hidden) { ev.stopPropagation(); closeChipMenu(); }
+    if (!$('jobMenu').hidden) { ev.stopPropagation(); closeJobMenu(); }
   });
   $('clientFilter').addEventListener('change', (e) => { state.filterClient = e.target.value; renderList(); });
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });

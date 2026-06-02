@@ -120,6 +120,13 @@ async function setStatus(id, status) {
   return patchJob(id, { status });
 }
 
+// Hard delete: drop the record and its notes companion. The chokidar unlink
+// watcher broadcasts job.removed, so connected clients drop it live.
+async function deleteJob(id) {
+  await fsp.rm(jobPath(id), { force: true });
+  await fsp.rm(notesPath(id), { force: true });
+}
+
 async function readNotes(id) {
   try { return await fsp.readFile(notesPath(id), 'utf8'); } catch { return ''; }
 }
@@ -148,6 +155,7 @@ module.exports = {
   appendTurn,
   patchJob,
   setStatus,
+  deleteJob,
   readNotes,
   writeNotes,
 };
