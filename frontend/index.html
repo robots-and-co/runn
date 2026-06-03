@@ -1126,9 +1126,10 @@
     const groups = new Map();   // clientId -> { client, rows:[], total }
     for (const j of state.jobs.values()) {
       if (j.archived) continue;
-      const v = jobValue(j);
-      if (v <= 0) continue;     // jobValue already gates on done + billable client
+      if (j.status !== 'done') continue;                       // only done-not-yet-invoiced work rolls up
       const c = clientOf(j.client_id);
+      if (!c || c.non_billable || !c.rate_per_hour) continue;  // billable clients only
+      const v = jobValue(j);    // 0 until hours are logged — the job still rolls up so you can set hours on the draft
       let g = groups.get(c.id);
       if (!g) { g = { client: c, rows: [], total: 0 }; groups.set(c.id, g); }
       g.rows.push({ job: j, hours: Number(j.hours) || 0, amount: v });
