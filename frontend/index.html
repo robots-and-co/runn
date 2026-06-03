@@ -149,16 +149,18 @@
     background: #eef1f4; color: var(--brand); white-space: nowrap;
   }
   .due-set:hover { filter: brightness(0.96); }
-  /* Quick one-tap "set due to today", shown only when no due is set yet. */
-  .due-today {
+  /* Quick one-tap "set due to today", shown only when no due is set yet.
+     NB: named .due-quick, not .due-today — the latter is the job-row urgency
+     modifier, and an unscoped .due-today rule would restyle whole cards. */
+  .due-quick {
     display: inline-flex; align-items: center;
     font: inherit; font-size: 12px; font-weight: 600; line-height: 1.5;
     padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
     background: var(--surface); color: var(--brand); cursor: pointer;
     white-space: nowrap; margin-left: 6px;
   }
-  .due-today:hover { border-color: var(--brand); }
-  .due-today[hidden] { display: none; }
+  .due-quick:hover { border-color: var(--brand); }
+  .due-quick[hidden] { display: none; }
   .due-set.empty { background: var(--surface-2); color: var(--muted); font-weight: 500; }
   .due-chip.overdue .due-set { background: #ffe1dc; color: #b23b2a; }
   .due-clear {
@@ -553,7 +555,7 @@
         <span class="chip" id="chatStatus" hidden></span>
         <span class="due-chip" id="chatDue" hidden>
           <button type="button" class="due-set" id="chatDueBtn"></button>
-          <button type="button" class="due-today" id="chatDueToday" hidden>Today</button>
+          <button type="button" class="due-quick" id="chatDueToday" hidden>Today</button>
           <button type="button" class="due-clear" id="chatDueClear" aria-label="Clear due date" hidden>×</button>
           <input type="date" id="chatDueInput" class="due-input" aria-hidden="true" tabindex="-1">
         </span>
