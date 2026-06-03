@@ -270,6 +270,7 @@
   }
   .inv-to div { margin-bottom: 2px; }
   .inv-to .att { color: #555; }
+  .inv-to .inv-date { margin-top: 10px; }
 
   .inv-rule { border: 0; border-top: 1px solid #dcdcdc; margin: 22px 0 0; }
   .inv-items { width: 100%; border-collapse: collapse; }
@@ -1099,6 +1100,7 @@
           ${o.to.contact ? `<div>${esc(o.to.contact)}</div>` : ''}
           ${o.to.company ? `<div>${esc(o.to.company)}</div>` : ''}
           ${toLines}
+          <div class="inv-date">${esc(fmtDateInv(o.issued))}</div>
         </div>
       </div>
       <hr class="inv-rule">
@@ -1378,6 +1380,7 @@
         .inv-to { text-align: right; min-width: 230px; }
         .inv-title { font-size: 20px; font-weight: 700; margin-bottom: 16px; }
         .inv-to div { margin-bottom: 2px; } .inv-to .att { color: #555; }
+        .inv-to .inv-date { margin-top: 10px; }
         .inv-rule { border: 0; border-top: 1px solid #dcdcdc; margin: 22px 0 0; }
         .inv-items { width: 100%; border-collapse: collapse; }
         .inv-items th { font-style: italic; font-weight: 400; color: #8a8a8a; font-size: 12.5px; text-align: left; padding: 12px 4px; }
