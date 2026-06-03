@@ -98,6 +98,14 @@
   .job-row .meta .meta-client { justify-self: start; min-width: 0; }
   .job-row .meta .meta-due    { justify-self: center; }
   .job-row .meta .meta-status { justify-self: end; }
+  /* Experiment: in-card client/status chips read as plain-ish text (no pill,
+     lighter weight) so they sit quieter than the job title above them. The
+     meaningful text colour is kept; only the loud background is dropped. */
+  .job-row .meta .chip {
+    background: none; padding: 0; border-radius: 0;
+    font-size: 12px; font-weight: 500; line-height: 1.4;
+  }
+  .job-row .meta .chip.tap:hover { filter: none; text-decoration: underline; }
 
   .list-foot { padding: 12px; border-top: 1px solid var(--border); }
   .btn-newjob {
