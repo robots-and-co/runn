@@ -1003,6 +1003,17 @@
     return e;
   }
 
+  // The user's invoice-number convention: client code + 2-digit year + 2-digit
+  // month, e.g. LTHCS + 26 + 06 = LTHCS2606. The code is the client's
+  // invoice_prefix (falls back to its name). Still hand-editable on the draft.
+  function invoiceNumberFor(client, iso) {
+    const code = String((client && (client.invoice_prefix || client.name)) || '').trim();
+    const d = new Date(iso && iso.length === 10 ? iso + 'T00:00:00' : (iso || Date.now()));
+    const yy = String(d.getFullYear()).slice(-2);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${code}${yy}${mm}`;
+  }
+
   // Build the working copy for a client's live draft and open the editable doc.
   function openDraft(clientId) {
     const group = billingGroups().find((g) => g.client.id === clientId);
@@ -1014,7 +1025,7 @@
     const issued = today();
     state.editing = {
       clientId, client: c, gstRate,
-      number: issued,                            // date-coded default; hand-editable
+      number: invoiceNumberFor(c, issued),       // <CODE><YY><MM>, e.g. LTHCS2606; hand-editable
       issued, due: addDays(issued, s.default_due_days || 14),
       discount: 0, notes: '',
       items: group.rows.map((r) => ({
