@@ -130,7 +130,7 @@
 
   /* due-date chip (header): a pill that opens the native date picker, plus an
      optional clear ×. .overdue reddens a past, not-yet-finished due date. */
-  .due-chip { display: inline-flex; align-items: center; flex-shrink: 0; }
+  .due-chip { display: inline-flex; align-items: center; flex-shrink: 0; position: relative; }
   .due-set {
     font: inherit; font-size: 13px; font-weight: 600; line-height: 1.5;
     padding: 4px 12px; border-radius: 999px; border: 0; cursor: pointer;
@@ -144,8 +144,10 @@
     font-size: 17px; line-height: 1; padding: 2px 4px 2px 2px; margin-left: -2px;
   }
   .due-clear:hover { color: var(--ink); }
-  /* The native input is offscreen — tapping the chip calls showPicker() on it. */
-  .due-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; left: -9999px; }
+  /* The native input is invisible but overlaps the chip, so showPicker() anchors
+     the desktop calendar to the chip (offscreen positioning popped it off-screen
+     on desktop). Clicks pass through to the buttons underneath. */
+  .due-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; border: 0; margin: 0; padding: 0; }
   /* due text in a list row */
   .job-row .due { color: var(--brand); }
   .job-row .due.overdue { color: #b23b2a; font-weight: 600; }
@@ -507,8 +509,8 @@
         <span class="due-chip" id="chatDue" hidden>
           <button type="button" class="due-set" id="chatDueBtn"></button>
           <button type="button" class="due-clear" id="chatDueClear" aria-label="Clear due date" hidden>×</button>
+          <input type="date" id="chatDueInput" class="due-input" aria-hidden="true" tabindex="-1">
         </span>
-        <input type="date" id="chatDueInput" class="due-input" aria-hidden="true" tabindex="-1">
         <span class="hours" id="chatHours"></span>
         <button class="job-menu-btn" id="jobMenuBtn" type="button" aria-label="Job actions" hidden>⋯</button>
       </div>
