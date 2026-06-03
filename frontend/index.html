@@ -127,6 +127,9 @@
   /* selectable status chip — click opens the status picker */
   .chip.pick { cursor: pointer; }
   .chip.pick::after { content: '▾'; margin-left: 5px; font-size: 11px; opacity: .55; }
+  /* In-card chip that toggles a filter on click — no caret, just a tap target. */
+  .chip.tap { cursor: pointer; }
+  .chip.tap:hover { filter: brightness(0.95); }
 
   /* due-date chip (header): a pill that opens the native date picker, plus an
      optional clear ×. .overdue reddens a past, not-yet-finished due date. */
@@ -771,7 +774,17 @@
       const cEl = document.createElement('span');
       cEl.className = 'meta-client';
       const cn = clientName(j.client_id);
-      if (cn) { cEl.classList.add('chip', 'client'); cEl.textContent = cn; }
+      if (cn) {
+        cEl.classList.add('chip', 'client', 'tap');
+        cEl.textContent = cn;
+        cEl.title = 'Filter by ' + cn;
+        cEl.addEventListener('click', (ev) => {     // quick filter: toggle this client
+          ev.stopPropagation();                     // don't open the job row
+          state.filterClient = (state.filterClient === j.client_id) ? '' : j.client_id;
+          renderFilterOptions();
+          renderList();
+        });
+      }
       meta.appendChild(cEl);
       const dEl = document.createElement('span');
       dEl.className = 'meta-due';
