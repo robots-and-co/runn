@@ -674,7 +674,7 @@
     return j.status === sf;
   }
   // Due-bucket filter. 'thisweek' is the next-7-days run (today → this week).
-  const DUE_FILTERS = ['all', 'overdue', 'today', 'thisweek', 'later', 'none'];
+  const DUE_FILTERS = ['today', 'overdue', 'thisweek', 'later', 'none', 'all'];
   const DUE_LABELS = { all: 'Any', overdue: 'Overdue', today: 'Today', thisweek: 'This week', later: 'Later', none: 'No due' };
   function matchesDueFilter(j) {
     const df = state.dueFilter;
