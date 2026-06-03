@@ -904,15 +904,20 @@
   function openInvoiceDoc(sel) {
     state.billingSel = sel;
     document.body.classList.add('show-billing');
+    // Mobile: push a history entry so the device back button returns to the
+    // invoice LIST (closeBillingDoc) rather than exiting the pane to the jobs list.
+    if (isMobile() && !(history.state && history.state.runnBillingDoc)) history.pushState({ runnBillingDoc: true }, '');
     renderBilling();
   }
   // Close the open document, returning to the invoice list (mobile slides back;
   // desktop falls to the placeholder).
-  function closeBillingDoc() {
+  function closeBillingDoc(opts) {
+    const fromPop = opts === true || (opts && opts.fromPop === true);
     state.billingSel = null;
     state.editing = null;
     if (isMobile()) document.body.classList.remove('show-billing');
     renderBilling();
+    if (!fromPop && history.state && history.state.runnBillingDoc) { suppressPop = true; history.back(); }
   }
   // Don't auto-rerender billing out from under an in-progress draft edit.
   function maybeRenderBilling() {
@@ -1703,6 +1708,7 @@
     const preview = $('invPreview');
     if (preview && preview.classList.contains('open')) { closePreview({ fromPop: true }); return; }
     if (document.body.classList.contains('show-chat')) closeChat({ fromPop: true });
+    else if (state.invoicesPane && state.billingSel) closeBillingDoc({ fromPop: true });
     else if (state.invoicesPane) exitInvoices({ fromPop: true });
   });
   $('newJobBtn').addEventListener('click', startNewJob);
