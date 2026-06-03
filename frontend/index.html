@@ -244,10 +244,12 @@
      left, the status one right, mirroring the card meta layout. */
   .filter-chip { border: 0; cursor: pointer; flex-shrink: 0; }
   .filter-chip:hover { filter: brightness(0.97); }
-  /* Due filter chip: brand-tinted by default, reddens when set to Overdue. */
-  .due-filter { background: #e7eef6; color: var(--brand); }
-  .due-filter.is-overdue { background: #ffe1dc; color: #b23b2a; }
-  .due-filter.is-today   { background: #f6e6d2; color: #a9601f; }
+  /* Due filter chip: plain white (bordered) by default so the row reads
+     blue-client / white-date / grey-status; tints only when a date filter
+     is active (overdue red, today amber). */
+  .due-filter { background: var(--surface); color: var(--brand); border: 1px solid var(--border); }
+  .due-filter.is-overdue { background: #ffe1dc; color: #b23b2a; border-color: #f3c4bc; }
+  .due-filter.is-today   { background: #f6e6d2; color: #a9601f; border-color: #e6cfae; }
   .total { flex-shrink: 0; margin-left: auto; border: 0; background: none; padding: 0; }
   .total .amt {
     display: inline-flex; align-items: center; gap: 4px;
@@ -439,14 +441,35 @@
     padding: 3px 9px; border-radius: 999px; white-space: nowrap;
   }
   .chat-head .ttl-badge[hidden] { display: none; }
+  /* $ value of the open job (billable clients only); hidden otherwise. */
+  .chat-head .job-val {
+    flex: none; font-size: 13px; font-weight: 700; color: var(--brand);
+    white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+  }
+  .chat-head .job-val[hidden] { display: none; }
+  /* Hours = the editable work figure (decimal hours). It's a wrapper so the live
+     timer + green running-dot survive, with a borderless inline input inside.
+     readOnly while the work clock runs (status doing); editable when stopped. */
   .chat-head .hours {
+    flex: none; display: inline-flex; align-items: baseline;
     font-size: 13px; color: var(--muted); white-space: nowrap;
     font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
   }
+  .chat-head .hours[hidden] { display: none; }
+  .chat-head .hours-input {
+    width: 4.5ch; border: 0; padding: 0; background: none; color: inherit;
+    font: inherit; text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .chat-head .hours-input:focus { outline: none; }
+  .chat-head .hours-input:read-write {
+    border-bottom: 1px dashed var(--border); cursor: text;
+  }
+  .chat-head .hours-input:read-write:hover { border-bottom-color: var(--brand); }
+  .chat-head .hours-unit { margin-left: 1px; opacity: .65; }
   .chat-head .hours.running { color: #2f7a45; font-weight: 700; }
   .chat-head .hours.running::before {
     content: ''; display: inline-block; width: 7px; height: 7px;
-    border-radius: 50%; background: #2f7a45; margin-right: 5px; vertical-align: middle;
+    border-radius: 50%; background: #2f7a45; margin-right: 5px; align-self: center;
     animation: timerpulse 1.2s ease-in-out infinite;
   }
   @keyframes timerpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
@@ -496,6 +519,26 @@
       transform: translateX(100%); transition: transform 0.22s ease; z-index: 5; }
     body.show-chat .chat-pane { transform: translateX(0); }
     .chat-head .back { display: block; }
+
+    /* Phone: spread the header over three rows.
+       Row1: ‹ Title ⋯   Row2: $value Hours   Row3: Client Due Status.
+       (min-height:56px absorbs the empty-state rows, so no phantom gap.) */
+    .chat-head {
+      display: grid; align-items: center;
+      grid-template-columns: auto 1fr auto;
+      grid-template-areas:
+        "back   title  menu"
+        "val    hours  ."
+        "client due    status";
+    }
+    .chat-head .back     { grid-area: back; justify-self: start; }
+    .chat-head .ttl      { grid-area: title; }
+    #jobMenuBtn          { grid-area: menu; justify-self: end; }
+    #chatValue           { grid-area: val;    justify-self: start; }
+    #chatHours           { grid-area: hours;  justify-self: start; }
+    #chatClient          { grid-area: client; justify-self: start; }
+    #chatDue             { grid-area: due;    justify-self: center; }
+    #chatStatus          { grid-area: status; justify-self: end; }
 
     .billing-pane { display: flex; position: fixed; inset: 0; background: var(--bg);
       transform: translateX(100%); transition: transform 0.22s ease; z-index: 6; }
@@ -551,15 +594,19 @@
       <div class="chat-head">
         <button class="back" id="backBtn" aria-label="Back">‹</button>
         <span class="ttl" id="chatTitle"></span>
+        <span class="job-val" id="chatValue" hidden></span>
+        <span class="hours" id="chatHours" hidden>
+          <input type="text" inputmode="decimal" class="hours-input" id="chatHoursInput" aria-label="Hours worked">
+          <span class="hours-unit">h</span>
+        </span>
         <span class="chip client" id="chatClient" hidden></span>
-        <span class="chip" id="chatStatus" hidden></span>
         <span class="due-chip" id="chatDue" hidden>
           <button type="button" class="due-set" id="chatDueBtn"></button>
           <button type="button" class="due-quick" id="chatDueToday" hidden>Today</button>
           <button type="button" class="due-clear" id="chatDueClear" aria-label="Clear due date" hidden>×</button>
           <input type="date" id="chatDueInput" class="due-input" aria-hidden="true" tabindex="-1">
         </span>
-        <span class="hours" id="chatHours"></span>
+        <span class="chip" id="chatStatus" hidden></span>
         <button class="job-menu-btn" id="jobMenuBtn" type="button" aria-label="Job actions" hidden>⋯</button>
       </div>
       <div class="turns" id="turns">
@@ -879,6 +926,15 @@
     state.jobs.set(j.id, j);
     renderList(); renderChat();
   }
+  // Hand-edit the work hours. We persist hours AND the matching work_seconds so
+  // the live timer (which derives from work_seconds) and billing stay in step.
+  // Only valid while the work clock is stopped — a running job owns its own time.
+  async function setJobHours(id, hours) {
+    const h = Math.max(0, round2(hours));
+    const j = await patchJson('/jobs/' + id, { hours: h, work_seconds: Math.round(h * 3600) });
+    state.jobs.set(j.id, j);
+    renderList(); renderTimerDisplay();
+  }
   // Paint the header due chip for the open job: a pill that reads "Set due" when
   // empty or "Due <date>" when set, goes red when overdue, and shows a clear (×).
   function renderDueChip(j) {
@@ -1032,12 +1088,6 @@
     if (j.work_seconds != null) return Number(j.work_seconds) || 0;
     return Math.round((Number(j.hours) || 0) * 3600);   // back-fill from old jobs
   }
-  function fmtDuration(totalSec) {
-    const s = Math.max(0, Math.floor(totalSec));
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
-    const pad = (n) => String(n).padStart(2, '0');
-    return h ? `${h}:${pad(m)}:${pad(ss)}` : `${m}:${pad(ss)}`;
-  }
   function jobRunning(j) { return !!(j && j.status === 'doing' && j.doing_started_at); }
   function liveSeconds(j) {
     let s = jobSeconds(j);
@@ -1052,12 +1102,32 @@
     if (!running && timer.tickId) { clearInterval(timer.tickId); timer.tickId = null; }
     renderTimerDisplay();
   }
+  const fmtHours = (h) => String(round2(h));
   function renderTimerDisplay() {
-    const el = $('chatHours');
+    const wrap = $('chatHours');
+    const input = $('chatHoursInput');
+    const valEl = $('chatValue');
     const j = timer.jobId ? state.jobs.get(timer.jobId) : null;
-    if (!j) { el.textContent = ''; el.classList.remove('running'); return; }
-    el.textContent = fmtDuration(liveSeconds(j));
-    el.classList.toggle('running', jobRunning(j));
+    if (!j) {
+      wrap.hidden = true; wrap.classList.remove('running');
+      valEl.hidden = true;
+      return;
+    }
+    const running = jobRunning(j);
+    const hrs = liveSeconds(j) / 3600;
+    wrap.hidden = false;
+    wrap.classList.toggle('running', running);
+    input.readOnly = running;   // editable only when the work clock is stopped
+    // Don't clobber what the user is mid-edit (only possible while stopped).
+    if (!(input === document.activeElement && !running)) input.value = fmtHours(hrs);
+    // $ value — billable clients only.
+    const c = clientOf(j.client_id);
+    if (c && !c.non_billable && c.rate_per_hour) {
+      valEl.textContent = money(hrs * Number(c.rate_per_hour));
+      valEl.hidden = false;
+    } else {
+      valEl.hidden = true;
+    }
   }
 
   // ── Billing ─────────────────────────────────────
@@ -1751,7 +1821,6 @@
       $('chatTitle').textContent = 'New job';
       $('chatClient').hidden = true;
       $('chatStatus').hidden = true;
-      $('chatHours').textContent = '';
       turnsEl.innerHTML = '<div class="empty">Pick a client to start.</div>';
       setComposer(false, 'Pick a client to begin…');
       return;
@@ -1763,7 +1832,6 @@
       clEl.className = 'chip client';
       clEl.hidden = false;
       $('chatStatus').hidden = true;
-      $('chatHours').textContent = '';
       turnsEl.innerHTML = '<div class="empty">Type your first message to start this job.</div>';
       setComposer(true, 'Message…  (Enter to send)');
       return;
@@ -1773,7 +1841,6 @@
       $('chatTitle').textContent = '';
       $('chatClient').hidden = true;
       $('chatStatus').hidden = true;
-      $('chatHours').textContent = '';
       turnsEl.innerHTML = '<div class="empty">Select a job, or start a new one.</div>';
       setComposer(false, 'Select a job, or start a new one.');
       return;
@@ -2009,6 +2076,20 @@
     if (!state.currentId || state.currentId === DRAFT) return;
     ev.stopPropagation();
     setJobDue(state.currentId, null).catch((e) => console.error('due clear failed', e));
+  });
+  // Editable hours: commit on blur/change (Enter blurs). Ignored while running —
+  // the input is readOnly then, but guard anyway. Re-paints on bad input.
+  $('chatHoursInput').addEventListener('change', () => {
+    const id = timer.jobId;
+    if (!id) return;
+    const j = state.jobs.get(id);
+    if (jobRunning(j)) { renderTimerDisplay(); return; }
+    const v = parseFloat($('chatHoursInput').value);
+    if (!isFinite(v) || v < 0) { renderTimerDisplay(); return; }
+    setJobHours(id, v).catch((e) => console.error('hours edit failed', e));
+  });
+  $('chatHoursInput').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); $('chatHoursInput').blur(); }
   });
   $('jobMenuBtn').addEventListener('click', (ev) => {
     ev.stopPropagation();
