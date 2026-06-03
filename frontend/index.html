@@ -260,7 +260,7 @@
   /* Billing list: draft + issued entries */
   .bill-section-h {
     font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
-    color: var(--muted); font-weight: 700; margin: 20px 2px 8px;
+    color: var(--muted); font-weight: 700; margin: 8px 2px 8px;
   }
   .bill-section-h:first-child { margin-top: 2px; }
   .bill-entry {
@@ -413,6 +413,11 @@
   }
   .chat-head .ttl { font-size: 16px; font-weight: 600; flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-head .ttl-badge {
+    flex: none; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+  }
+  .chat-head .ttl-badge[hidden] { display: none; }
   .chat-head .hours {
     font-size: 13px; color: var(--muted); white-space: nowrap;
     font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
@@ -548,6 +553,7 @@
       <div class="chat-head billing-head">
         <button class="back" id="billingBack" type="button" aria-label="Back">‹</button>
         <span class="ttl" id="billingTitle">Billing</span>
+        <span class="ttl-badge badge" id="billingBadge" hidden></span>
       </div>
       <div class="billing-body" id="billingBody"></div>
     </section>
@@ -1145,12 +1151,21 @@
     renderBillingList($('billingList'));
     renderBillingDoc();
   }
+  // The status pill beside the billing-pane title (issued docs only).
+  function setBillingBadge(status) {
+    const b = $('billingBadge');
+    if (!status) { b.hidden = true; b.className = 'ttl-badge badge'; b.textContent = ''; return; }
+    b.hidden = false;
+    b.className = 'ttl-badge badge st-' + status;
+    b.textContent = status;
+  }
   function renderBillingDoc() {
     const body = $('billingBody');
     const titleEl = $('billingTitle');
     body.innerHTML = '';
     if (state.billingSel && state.billingSel.kind === 'draft') return renderDraftDoc(body, titleEl);
     if (state.billingSel && state.billingSel.kind === 'invoice') return renderIssuedDoc(body, titleEl);
+    setBillingBadge(null);
     titleEl.textContent = 'Billing';
     body.innerHTML = '<div class="empty">Select a draft or an invoice to open it.</div>';
   }
@@ -1386,6 +1401,7 @@
   function renderDraftDoc(body, titleEl) {
     const ed = state.editing;
     if (!ed) { state.billingSel = null; return renderBilling(); }
+    setBillingBadge(null);
     titleEl.textContent = 'New invoice — ' + (ed.client.name || '');
     const s = state.settings || {};
 
@@ -1470,6 +1486,7 @@
     const inv = state.invoices.get(state.billingSel.id);
     if (!inv) { state.billingSel = null; return renderBilling(); }
     titleEl.textContent = '#' + inv.id;
+    setBillingBadge(inv.status);
 
     const wrap = document.createElement('div'); wrap.className = 'inv-doc';
     const actions = document.createElement('div'); actions.className = 'inv-actions';
