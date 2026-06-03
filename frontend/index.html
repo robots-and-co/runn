@@ -839,6 +839,9 @@
   // The invoice list lives in the left pane; selecting an entry opens its document
   // in the main pane (a slide-over on mobile, the right column on desktop).
   const isMobile = () => window.matchMedia('(max-width: 720px)').matches;
+  // Set true right before a programmatic history.back() so the resulting popstate
+  // is swallowed (avoids the back from closePreview cascading into exitInvoices).
+  let suppressPop = false;
 
   function toggleInvoices() {
     flipPane(() => {
@@ -1340,11 +1343,17 @@
     page.innerHTML = invPaperHtml(opts);
     wireLogoFallback(page);
     overlay.classList.add('open');
+    // Mobile: push a history entry so the device back button closes the preview
+    // (returning to the draft) instead of leaving the doc — see popstate handler.
+    if (isMobile() && !(history.state && history.state.runnPreview)) history.pushState({ runnPreview: true }, '');
     scalePreview();
   }
-  function closePreview() {
+  function closePreview(opts) {
+    const fromPop = opts === true || (opts && opts.fromPop === true);
     const overlay = $('invPreview');
     if (overlay) overlay.classList.remove('open');
+    // Consume the pushed entry unless the browser already did (device back).
+    if (!fromPop && history.state && history.state.runnPreview) { suppressPop = true; history.back(); }
   }
   // The page is a fixed 794×1123 (A4 @96dpi); fit it to the available area by
   // scaling, and size the stage to the scaled box so scrolling/centring is sane.
@@ -1690,6 +1699,9 @@
   $('billingBack').addEventListener('click', closeBillingDoc);
   // Device/browser back button: pop back toward the jobs list instead of leaving.
   window.addEventListener('popstate', () => {
+    if (suppressPop) { suppressPop = false; return; }
+    const preview = $('invPreview');
+    if (preview && preview.classList.contains('open')) { closePreview({ fromPop: true }); return; }
     if (document.body.classList.contains('show-chat')) closeChat({ fromPop: true });
     else if (state.invoicesPane) exitInvoices({ fromPop: true });
   });
