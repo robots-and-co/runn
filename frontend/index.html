@@ -285,6 +285,17 @@
   .inv-items th:nth-child(3), .inv-items td:nth-child(3) { width: 150px; }
   .inv-items .rm-cell { width: 26px; padding-left: 8px; }
   .inv-items .rm { border: 0; background: none; color: #b33; cursor: pointer; font-size: 18px; line-height: 1; padding: 0 2px; }
+  .inv-items input.li-desc, .inv-items input.li-amt {
+    font: inherit; font-size: 13px; border: 0; border-bottom: 1px dashed #cdcdcd;
+    background: transparent; color: inherit; padding: 1px 0; width: 100%;
+  }
+  .inv-items input.li-amt { text-align: right; font-variant-numeric: tabular-nums; }
+  .inv-items input.li-desc:focus, .inv-items input.li-amt:focus { outline: none; border-bottom-color: var(--brand); }
+  .inv-addline {
+    margin: 12px 0 0; border: 1px dashed #cdcdcd; background: transparent; color: #777;
+    border-radius: 5px; padding: 6px 12px; cursor: pointer; font: inherit; font-size: 12.5px;
+  }
+  .inv-addline:hover { color: var(--brand); border-color: var(--brand); }
 
   .inv-spacer { flex: 1; min-height: 36px; }
 
@@ -537,6 +548,8 @@
   const fmtMoney = (n) => '$' + Math.round(n).toLocaleString();
   const money2 = (n) => (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const money = (n) => '$' + money2(n);
+  // A discount line is just a negative amount; render it as -$150.00, not $-150.00.
+  const moneySigned = (sym, n) => { n = Number(n) || 0; return n < 0 ? `-${sym}${money2(-n)}` : `${sym}${money2(n)}`; };
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
   const today = () => new Date().toISOString().slice(0, 10);
   function addDays(iso, days) {
@@ -1046,11 +1059,15 @@
       : `Tax Invoice ${esc(o.number)}`;
     const toLines = (o.to.lines || []).map((l) => `<div>${esc(l)}</div>`).join('');
 
-    const rows = o.items.map((it, i) => `<tr>
+    const rows = o.items.map((it, i) => o.editable ? `<tr>
+        <td><input class="li-desc" type="text" data-i="${i}" value="${esc(it.description)}" placeholder="Description"></td>
+        <td>${esc(fmtDateInv(it.date))}</td>
+        <td class="r"><input class="li-amt" type="number" step="0.01" data-i="${i}" value="${esc(it.amount)}"></td>
+        <td class="rm-cell"><button class="rm" type="button" data-i="${i}" title="Remove line">×</button></td>
+      </tr>` : `<tr>
         <td>${esc(it.description)}</td>
         <td>${esc(fmtDateInv(it.date))}</td>
-        <td class="r">${sym}${money2(it.amount)}</td>
-        ${o.editable ? `<td class="rm-cell"><button class="rm" type="button" data-i="${i}" title="Remove line">×</button></td>` : ''}
+        <td class="r">${moneySigned(sym, it.amount)}</td>
       </tr>`).join('');
 
     const due = o.editable
@@ -1081,6 +1098,7 @@
         <tbody>${rows}</tbody>
       </table>
       <hr class="inv-rule">
+      ${o.editable ? `<button type="button" class="inv-addline" id="invAddLine">+ Add line</button>` : ''}
       <div class="inv-spacer"></div>
       <div class="inv-foot">
         <div class="inv-foot-left">
@@ -1090,14 +1108,19 @@
           ${bankRow('BSB:', bank.bsb)}
           ${bankRow('Acc:', bank.acc)}
         </div>
-        <div class="inv-foot-right">
-          <div class="tr"><span class="k">Sub Total Ex GST:</span><span class="v">${sym}${money2(t.subtotal)}</span></div>
-          <div class="tr"><span class="k">GST:</span><span class="v">${sym}${money2(t.gst)}</span></div>
-          <div class="tr total"><span class="k">Total Inc GST:</span><span class="v">${sym}${money2(t.total)}</span></div>
-          <div class="tr"><span class="k">Paid:</span><span class="v">${paid > 0 ? sym + money2(paid) : ''}</span></div>
-          <div class="tr balance"><span class="k">Balance:</span><span class="v">${sym}${money2(balance)}</span></div>
-        </div>
+        <div class="inv-foot-right">${footRightInner(t, paid, balance, sym)}</div>
       </div>`;
+  }
+
+  // The totals column (Sub Total / GST / Total / Paid / Balance). Shared by
+  // invPaperHtml and the live draft recompute so they always agree.
+  function footRightInner(t, paid, balance, sym) {
+    return `
+      <div class="tr"><span class="k">Sub Total Ex GST:</span><span class="v">${moneySigned(sym, t.subtotal)}</span></div>
+      <div class="tr"><span class="k">GST:</span><span class="v">${moneySigned(sym, t.gst)}</span></div>
+      <div class="tr total"><span class="k">Total Inc GST:</span><span class="v">${moneySigned(sym, t.total)}</span></div>
+      <div class="tr"><span class="k">Paid:</span><span class="v">${paid > 0 ? sym + money2(paid) : ''}</span></div>
+      <div class="tr balance"><span class="k">Balance:</span><span class="v">${moneySigned(sym, balance)}</span></div>`;
   }
 
   // The logo path may 404 (asset not yet present) — fall back to the business
@@ -1161,12 +1184,35 @@
     body.appendChild(wrap);
     wireLogoFallback(paper);
 
+    const sym = s.currency_symbol || '$';
+    const refreshTotals = () => {
+      const t = calcTotals(ed.items, 0, ed.gstRate);
+      const fr = paper.querySelector('.inv-foot-right');
+      if (fr) fr.innerHTML = footRightInner(t, 0, t.total, sym);
+    };
+
     paper.querySelectorAll('.inv-items .rm').forEach((btn) => {
       btn.addEventListener('click', () => {
         ed.items.splice(Number(btn.dataset.i), 1);
         if (!ed.items.length) { state.billingSel = null; state.editing = null; }
         renderBilling();   // trimming the last line drops the draft back to the list
       });
+    });
+    paper.querySelectorAll('.inv-items input.li-desc').forEach((inp) => {
+      inp.addEventListener('input', () => { ed.items[Number(inp.dataset.i)].description = inp.value; });
+    });
+    paper.querySelectorAll('.inv-items input.li-amt').forEach((inp) => {
+      inp.addEventListener('input', () => {
+        ed.items[Number(inp.dataset.i)].amount = round2(inp.value);
+        refreshTotals();
+      });
+    });
+    const addBtn = paper.querySelector('#invAddLine');
+    if (addBtn) addBtn.addEventListener('click', () => {
+      ed.items.push({ job_id: null, description: '', date: today(), amount: 0 });
+      renderBilling();
+      const descs = document.querySelectorAll('.inv-items input.li-desc');
+      if (descs.length) descs[descs.length - 1].focus();
     });
     const num = paper.querySelector('#invNum');
     const due = paper.querySelector('#invDue');
