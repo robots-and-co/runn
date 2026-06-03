@@ -599,6 +599,11 @@
     d.setDate(d.getDate() + days);
     return d.toISOString().slice(0, 10);
   }
+  // Calendar-week bounds for "this week": the current Sunday→Saturday span.
+  // getDay() is 0=Sun..6=Sat, so subtracting it lands on Sunday and adding the
+  // complement lands on Saturday. Same local-midnight parse the buckets use.
+  const startOfWeekIso = () => addDays(today(), -new Date(today() + 'T00:00:00').getDay());
+  const endOfWeekIso = () => addDays(today(), 6 - new Date(today() + 'T00:00:00').getDay());
   function fmtDate(iso) {
     if (!iso) return '';
     const d = new Date(iso.length === 10 ? iso + 'T00:00:00' : iso);
@@ -641,7 +646,7 @@
     if (diff < 0)   return wrapped ? { rank: 0, key: 'none', label: 'no due' } : { rank: 5, key: 'overdue', label: 'overdue' };
     if (diff === 0) return { rank: 4, key: 'today',    label: 'today' };
     if (diff === 1) return { rank: 3, key: 'tomorrow', label: 'tomorrow' };
-    if (diff <= 7)  return { rank: 2, key: 'thisweek', label: 'this week' };
+    if (d <= endOfWeekIso()) return { rank: 2, key: 'thisweek', label: 'this week' };
     return { rank: 1, key: 'later', label: 'later' };
   }
   function dayLabel(iso) {
@@ -675,7 +680,9 @@
     const df = state.dueFilter;
     if (df === 'all') return true;
     const key = dueBucket(j).key;
-    if (df === 'thisweek') return key === 'today' || key === 'tomorrow' || key === 'thisweek';
+    // "This week" filters by the literal Sunday→Saturday calendar week, so it
+    // also catches earlier-this-week days that have already gone overdue.
+    if (df === 'thisweek') return !!j.due_at && j.due_at >= startOfWeekIso() && j.due_at <= endOfWeekIso();
     return key === df;
   }
   // Repaint the two filter chips from state (label + colour).
