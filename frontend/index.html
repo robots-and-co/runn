@@ -165,6 +165,15 @@
   .list-divider[data-bucket="overdue"] { color: #b23b2a; }
   .list-divider[data-bucket="overdue"]::before,
   .list-divider[data-bucket="overdue"]::after { background: #e7b9a3; opacity: .7; }
+  /* The label is a click-to-filter toggle for its due bucket. */
+  .divider-label {
+    border: 0; background: none; margin: 0; padding: 2px 8px;
+    font: inherit; color: inherit; letter-spacing: inherit;
+    text-transform: inherit; cursor: pointer; border-radius: 999px;
+  }
+  .divider-label:hover { background: var(--surface-2); color: var(--ink); }
+  .divider-label.is-active { background: var(--brand); color: #fff; }
+  .list-divider[data-bucket="overdue"] .divider-label.is-active { background: #b23b2a; color: #fff; }
 
   /* status picker menu (shared, body-level, fixed-positioned at the chip) */
   .chip-menu {
@@ -674,8 +683,10 @@
     return j.status === sf;
   }
   // Due-bucket filter. 'thisweek' is the next-7-days run (today → this week).
-  const DUE_FILTERS = ['today', 'overdue', 'thisweek', 'later', 'none', 'all'];
-  const DUE_LABELS = { all: 'Any', overdue: 'Overdue', today: 'Today', thisweek: 'This week', later: 'Later', none: 'No due' };
+  const DUE_FILTERS = ['overdue', 'today', 'thisweek', 'later', 'none', 'all'];
+  // 'tomorrow' isn't in the picker — it's only reachable by clicking the
+  // "tomorrow" list divider — but it still needs a chip label.
+  const DUE_LABELS = { all: 'Any', overdue: 'Overdue', today: 'Today', tomorrow: 'Tomorrow', thisweek: 'This week', later: 'Later', none: 'No due' };
   function matchesDueFilter(j) {
     const df = state.dueFilter;
     if (df === 'all') return true;
@@ -718,7 +729,9 @@
       return;
     }
     const buckets = jobs.map(dueBucket);
-    const showDividers = new Set(buckets.map((b) => b.key)).size > 1;
+    // Show dividers when there's more than one bucket, OR when a due filter is
+    // active — so the lone divider stays as the click-to-clear toggle.
+    const showDividers = new Set(buckets.map((b) => b.key)).size > 1 || state.dueFilter !== 'all';
     let prevKey = null;
     jobs.forEach((j, i) => {
       const b = buckets[i];
@@ -726,7 +739,16 @@
         const sep = document.createElement('div');
         sep.className = 'list-divider';
         sep.dataset.bucket = b.key;
-        sep.textContent = b.label;
+        const lbl = document.createElement('button');
+        lbl.type = 'button';
+        lbl.className = 'divider-label' + (state.dueFilter === b.key ? ' is-active' : '');
+        lbl.textContent = b.label;
+        lbl.addEventListener('click', () => {       // quick filter: toggle this bucket
+          state.dueFilter = (state.dueFilter === b.key) ? 'all' : b.key;
+          renderFilterOptions();
+          renderList();
+        });
+        sep.appendChild(lbl);
         jobListEl.appendChild(sep);
       }
       prevKey = b.key;
