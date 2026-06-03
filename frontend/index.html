@@ -1171,6 +1171,7 @@
   }
 
   function renderBillingList(body) {
+    body.innerHTML = '';   // rebuild from scratch — otherwise repeat renders stack duplicate sections
     const groups = billingGroups();
     const invs = [...state.invoices.values()].sort((a, b) => String(b.issued_at).localeCompare(String(a.issued_at)));
     if (!groups.length && !invs.length) {
