@@ -141,6 +141,20 @@
   /* due text in a list row */
   .job-row .due { color: var(--brand); }
   .job-row .due.overdue { color: #b23b2a; font-weight: 600; }
+  /* Labeled section dividers — one per due bucket, placed above its group. */
+  .list-divider {
+    display: flex; align-items: center; gap: 10px;
+    margin: 14px 16px 4px;
+    font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .08em;
+  }
+  .list-divider:first-child { margin-top: 8px; }
+  .list-divider::before, .list-divider::after {
+    content: ''; flex: 1; height: 1px; background: var(--border); opacity: .8;
+  }
+  .list-divider[data-bucket="overdue"] { color: #b23b2a; }
+  .list-divider[data-bucket="overdue"]::before,
+  .list-divider[data-bucket="overdue"]::after { background: #e7b9a3; opacity: .7; }
 
   /* status picker menu (shared, body-level, fixed-positioned at the chip) */
   .chip-menu {
@@ -597,9 +611,20 @@
     const overdue = d < today() && !['done', 'invoiced', 'paid'].includes(j.status);
     return { set: true, label: fmtDate(d), overdue };
   }
-  function fmtTime(iso) {
-    if (!iso) return '';
-    return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  // Due bucket for the labeled list dividers (overdue / today / tomorrow / this
+  // week / later / no due). Wrapped-up jobs (done/invoiced/paid) never read as
+  // overdue — their due date is moot — so a past-due finished job sinks to the
+  // no-due tail rather than shouting red.
+  function dueBucket(j) {
+    const d = j && j.due_at;
+    if (!d) return { rank: 0, key: 'none', label: 'no due' };
+    const wrapped = ['done', 'invoiced', 'paid'].includes(j.status);
+    const diff = Math.round((new Date(d + 'T00:00:00') - new Date(today() + 'T00:00:00')) / 86400000);
+    if (diff < 0)   return wrapped ? { rank: 0, key: 'none', label: 'no due' } : { rank: 5, key: 'overdue', label: 'overdue' };
+    if (diff === 0) return { rank: 4, key: 'today',    label: 'today' };
+    if (diff === 1) return { rank: 3, key: 'tomorrow', label: 'tomorrow' };
+    if (diff <= 7)  return { rank: 2, key: 'thisweek', label: 'this week' };
+    return { rank: 1, key: 'later', label: 'later' };
   }
   function dayLabel(iso) {
     return new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
@@ -632,6 +657,10 @@
     const base = visibleJobs();
     renderTotal(base);                       // $ total always sums the full set (incl. done)
     const jobs = state.showDone ? base : base.filter((j) => !DONE_STATUSES.includes(j.status));
+    // Order by due urgency (overdue → today → … → no due) so the labeled
+    // dividers group cleanly; ties fall back to most-recently-touched.
+    jobs.sort((a, b) => (dueBucket(b).rank - dueBucket(a).rank)
+      || String(b.updated_at).localeCompare(String(a.updated_at)));
     jobListEl.innerHTML = '';
     if (!jobs.length) {
       const e = document.createElement('div');
@@ -642,7 +671,20 @@
       jobListEl.appendChild(e);
       return;
     }
-    for (const j of jobs) {
+    const buckets = jobs.map(dueBucket);
+    const showDividers = new Set(buckets.map((b) => b.key)).size > 1;
+    let prevKey = null;
+    jobs.forEach((j, i) => {
+      const b = buckets[i];
+      if (showDividers && b.key !== prevKey) {
+        const sep = document.createElement('div');
+        sep.className = 'list-divider';
+        sep.dataset.bucket = b.key;
+        sep.textContent = b.label;
+        jobListEl.appendChild(sep);
+      }
+      prevKey = b.key;
+
       const row = document.createElement('div');
       row.className = 'job-row' + (j.id === state.currentId ? ' active' : '');
       row.dataset.id = j.id;
@@ -660,12 +702,11 @@
       if (cn) { const c = document.createElement('span'); c.className = 'chip client'; c.textContent = cn; meta.appendChild(c); }
       const di = dueInfo(j);
       if (di.set) { const d = document.createElement('span'); d.className = 'due' + (di.overdue ? ' overdue' : ''); d.textContent = 'Due ' + di.label; meta.appendChild(d); }
-      const t = document.createElement('span'); t.textContent = fmtTime(j.updated_at); meta.appendChild(t);
       row.appendChild(meta);
 
       row.addEventListener('click', () => openJob(j.id));
       jobListEl.appendChild(row);
-    }
+    });
   }
 
   function statusChip(status, jobId) {
