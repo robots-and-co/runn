@@ -193,11 +193,15 @@
   }
   .job-menu-btn:hover { background: var(--surface-2); color: var(--ink); }
 
-  /* left-pane subheader: client filter + running $ total */
+  /* left-pane subheader: three filter chips — client left, due centre, status
+     right — mirroring the card meta layout. */
   .list-sub {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px;
     padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--surface);
   }
+  .list-sub #clientFilterChip { justify-self: start; min-width: 0; }
+  .list-sub #dueFilterChip    { justify-self: center; }
+  .list-sub #statusFilterChip { justify-self: end; }
   .client-filter {
     flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--ink);
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
@@ -207,6 +211,10 @@
      left, the status one right, mirroring the card meta layout. */
   .filter-chip { border: 0; cursor: pointer; flex-shrink: 0; }
   .filter-chip:hover { filter: brightness(0.97); }
+  /* Due filter chip: brand-tinted by default, reddens when set to Overdue. */
+  .due-filter { background: #e7eef6; color: var(--brand); }
+  .due-filter.is-overdue { background: #ffe1dc; color: #b23b2a; }
+  .due-filter.is-today   { background: #f6e6d2; color: #a9601f; }
   .total { flex-shrink: 0; margin-left: auto; border: 0; background: none; padding: 0; }
   .total .amt {
     display: inline-flex; align-items: center; gap: 4px;
@@ -489,6 +497,7 @@
       <div class="list-flip" id="listFlip">
         <div class="list-sub">
           <button class="filter-chip chip client pick" id="clientFilterChip" type="button" aria-label="Filter by client">All</button>
+          <button class="filter-chip chip pick due-filter" id="dueFilterChip" type="button" aria-label="Filter by due date">Any</button>
           <button class="filter-chip chip pick" id="statusFilterChip" type="button" aria-label="Filter by status">open</button>
         </div>
         <div class="job-list" id="jobList"></div>
@@ -535,6 +544,7 @@
   <div class="chip-menu" id="jobMenu" hidden></div>
   <div class="chip-menu" id="clientMenu" hidden></div>
   <div class="chip-menu" id="clientFilterMenu" hidden></div>
+  <div class="chip-menu" id="dueFilterMenu" hidden></div>
   <div class="chip-menu" id="statusFilterMenu" hidden></div>
 
 <script>
@@ -555,6 +565,7 @@
     editing: null,         // working copy of the draft being composed
     settings: {},          // business/bank/GST defaults for invoice snapshots
     statusFilter: 'open',  // 'open' = active group (open/doing/review/blocked/hold); a status; or 'all'
+    dueFilter: 'all',      // 'all' | 'overdue' | 'today' | 'thisweek' | 'none'
   };
 
   const $ = (id) => document.getElementById(id);
@@ -657,6 +668,16 @@
     if (sf === 'open') return ACTIVE_STATUSES.includes(j.status);
     return j.status === sf;
   }
+  // Due-bucket filter. 'thisweek' is the next-7-days run (today → this week).
+  const DUE_FILTERS = ['all', 'overdue', 'today', 'thisweek', 'none'];
+  const DUE_LABELS = { all: 'Any', overdue: 'Overdue', today: 'Today', thisweek: 'This week', none: 'No due' };
+  function matchesDueFilter(j) {
+    const df = state.dueFilter;
+    if (df === 'all') return true;
+    const key = dueBucket(j).key;
+    if (df === 'thisweek') return key === 'today' || key === 'tomorrow' || key === 'thisweek';
+    return key === df;
+  }
   // Repaint the two filter chips from state (label + colour).
   function renderFilterOptions() {
     const c = state.filterClient ? state.clients.get(state.filterClient) : null;
@@ -666,11 +687,15 @@
     const sf = state.statusFilter;
     sc.className = 'filter-chip chip pick' + (sf === 'all' ? '' : ' st-' + sf);
     sc.textContent = sf === 'all' ? 'All' : sf;
+    const dc = $('dueFilterChip');
+    const df = state.dueFilter;
+    dc.className = 'filter-chip chip pick due-filter' + (df === 'overdue' ? ' is-overdue' : df === 'today' ? ' is-today' : '');
+    dc.textContent = DUE_LABELS[df] || 'Any';
   }
   function renderList() {
     const base = visibleJobs();
     renderTotal(base);                       // $ total always sums the full set (incl. done)
-    const jobs = base.filter(matchesStatusFilter);
+    const jobs = base.filter((j) => matchesStatusFilter(j) && matchesDueFilter(j));
     // Order by due urgency (overdue → today → … → no due) so the labeled
     // dividers group cleanly; ties fall back to most-recently-touched.
     jobs.sort((a, b) => (dueBucket(b).rank - dueBucket(a).rank)
@@ -868,6 +893,21 @@
     placeMenu(menu, anchorEl, 'left');
   }
   function closeClientFilterMenu() { $('clientFilterMenu').hidden = true; }
+  function openDueFilterMenu(anchorEl) {
+    const menu = $('dueFilterMenu');
+    menu.innerHTML = '';
+    for (const v of DUE_FILTERS) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'chip-menu-item' + (v === state.dueFilter ? ' is-current' : '');
+      item.dataset.dueFilter = v;
+      item.textContent = v === 'all' ? 'Any due' : DUE_LABELS[v];
+      menu.appendChild(item);
+    }
+    menu.hidden = false;
+    placeMenu(menu, anchorEl, 'left');
+  }
+  function closeDueFilterMenu() { $('dueFilterMenu').hidden = true; }
   function openStatusFilterMenu(anchorEl) {
     const menu = $('statusFilterMenu');
     menu.innerHTML = '';
@@ -1916,6 +1956,8 @@
     if (!clm.hidden && !clm.contains(ev.target)) closeClientMenu();
     const cfm = $('clientFilterMenu');
     if (!cfm.hidden && !cfm.contains(ev.target) && ev.target !== $('clientFilterChip')) closeClientFilterMenu();
+    const dfm = $('dueFilterMenu');
+    if (!dfm.hidden && !dfm.contains(ev.target) && ev.target !== $('dueFilterChip')) closeDueFilterMenu();
     const sfm = $('statusFilterMenu');
     if (!sfm.hidden && !sfm.contains(ev.target) && ev.target !== $('statusFilterChip')) closeStatusFilterMenu();
   });
@@ -1927,6 +1969,7 @@
     if (!$('jobMenu').hidden) { ev.stopPropagation(); closeJobMenu(); }
     if (!$('clientMenu').hidden) { ev.stopPropagation(); closeClientMenu(); }
     if (!$('clientFilterMenu').hidden) { ev.stopPropagation(); closeClientFilterMenu(); }
+    if (!$('dueFilterMenu').hidden) { ev.stopPropagation(); closeDueFilterMenu(); }
     if (!$('statusFilterMenu').hidden) { ev.stopPropagation(); closeStatusFilterMenu(); }
   });
   window.addEventListener('resize', scalePreview);
@@ -1939,6 +1982,17 @@
     if (!item) return;
     state.filterClient = item.dataset.client;
     closeClientFilterMenu();
+    renderFilterOptions(); renderList();
+  });
+  $('dueFilterChip').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if ($('dueFilterMenu').hidden) openDueFilterMenu($('dueFilterChip')); else closeDueFilterMenu();
+  });
+  $('dueFilterMenu').addEventListener('click', (ev) => {
+    const item = ev.target.closest('.chip-menu-item');
+    if (!item) return;
+    state.dueFilter = item.dataset.dueFilter;
+    closeDueFilterMenu();
     renderFilterOptions(); renderList();
   });
   $('statusFilterChip').addEventListener('click', (ev) => {
