@@ -434,6 +434,14 @@
     display: none; border: 0; background: none; font-size: 26px;
     color: var(--brand); cursor: pointer; padding: 0 6px 0 0; line-height: 1;
   }
+  /* Quick "Done" — mobile only (see media query). Closes the job + pops to the
+     list. Hidden on desktop, where the status chip / chip-menu already cover it. */
+  .done-btn {
+    display: none; border: 0; border-radius: 999px; cursor: pointer;
+    background: #2f7a45; color: #fff; font-size: 15px; font-weight: 600;
+    padding: 7px 16px; line-height: 1; white-space: nowrap;
+  }
+  .done-btn:active { filter: brightness(0.92); }
   .chat-head .ttl { font-size: 16px; font-weight: 600; flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chat-head .ttl-badge {
@@ -528,7 +536,7 @@
       grid-template-columns: auto 1fr auto;
       grid-template-areas:
         "back   title  menu"
-        "val    hours  ."
+        "val    hours  done"
         "client due    status";
     }
     .chat-head .back     { grid-area: back; justify-self: start; }
@@ -539,6 +547,8 @@
     #chatClient          { grid-area: client; justify-self: start; }
     #chatDue             { grid-area: due;    justify-self: center; }
     #chatStatus          { grid-area: status; justify-self: end; }
+    #chatDoneBtn         { grid-area: done;   justify-self: end; }
+    .done-btn.show       { display: inline-flex; }
 
     .billing-pane { display: flex; position: fixed; inset: 0; background: var(--bg);
       transform: translateX(100%); transition: transform 0.22s ease; z-index: 6; }
@@ -607,6 +617,7 @@
           <input type="date" id="chatDueInput" class="due-input" aria-hidden="true" tabindex="-1">
         </span>
         <span class="chip" id="chatStatus" hidden></span>
+        <button class="done-btn" id="chatDoneBtn" type="button" aria-label="Mark job done">✓ Done</button>
         <button class="job-menu-btn" id="jobMenuBtn" type="button" aria-label="Job actions" hidden>⋯</button>
       </div>
       <div class="turns" id="turns">
@@ -1062,6 +1073,16 @@
     if (!id || id === DRAFT) return;
     await patchJson('/jobs/' + id, { archived: true });
     state.jobs.delete(id);
+    closeChat();
+  }
+  // Quick "Done" (mobile): close out an active job, then pop back to the list.
+  async function markCurrentJobDone() {
+    const id = state.currentId;
+    if (!id || id === DRAFT) return;
+    const j = state.jobs.get(id);
+    if (!j || !ACTIVE_STATUSES.includes(j.status || 'open')) return;
+    try { await setJobStatus(id, 'done'); }
+    catch (e) { console.error('mark done failed', e); return; }
     closeChat();
   }
   async function deleteCurrentJob() {
@@ -1815,6 +1836,7 @@
 
   function renderChat() {
     $('jobMenuBtn').hidden = true;
+    $('chatDoneBtn').classList.remove('show');   // re-shown below only for an active, saved job
     $('chatDue').hidden = true;  // shown only for a real, saved job
     timerSync();                 // attach/detach the work timer to the open job
     if (state.picking) {
@@ -1858,6 +1880,8 @@
     stEl.hidden = false;
     renderDueChip(j);
     $('jobMenuBtn').hidden = false;     // #chatHours is the live timer, owned by renderTimerDisplay
+    // Quick Done: only while the job is still active (open/doing/review/blocked/hold).
+    $('chatDoneBtn').classList.toggle('show', ACTIVE_STATUSES.includes(j.status || 'open'));
 
     turnsEl.innerHTML = '';
     const turns = j.turns || [];
@@ -2052,6 +2076,10 @@
     ev.stopPropagation();
     const j = state.jobs.get(state.currentId);
     openChipMenu($('chatStatus'), state.currentId, j ? (j.status || 'open') : 'open');
+  });
+  $('chatDoneBtn').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    markCurrentJobDone();
   });
   $('chatDueBtn').addEventListener('click', (ev) => {
     if (!state.currentId || state.currentId === DRAFT) return;
