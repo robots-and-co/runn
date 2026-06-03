@@ -179,6 +179,13 @@
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
     padding: 6px 8px; -webkit-appearance: none; appearance: none;
   }
+  .done-toggle {
+    flex-shrink: 0; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    color: var(--muted); background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 12px; height: 32px;
+  }
+  .done-toggle:hover { background: var(--surface-2); }
+  .done-toggle.active { color: #fff; background: var(--brand); border-color: var(--brand); }
   .total { flex-shrink: 0; margin-left: auto; border: 0; background: none; padding: 0; }
   .total .amt {
     display: inline-flex; align-items: center; gap: 4px;
@@ -463,6 +470,7 @@
           <select class="client-filter" id="clientFilter" aria-label="Filter by client">
             <option value="">All clients</option>
           </select>
+          <button class="done-toggle" id="doneToggle" type="button" title="Show jobs that are done, invoiced or paid">Done</button>
         </div>
         <div class="job-list" id="jobList"></div>
         <div class="billing-list" id="billingList"></div>
@@ -525,6 +533,7 @@
     billingSel: null,      // null = list; {kind:'draft',clientId} | {kind:'invoice',id}
     editing: null,         // working copy of the draft being composed
     settings: {},          // business/bank/GST defaults for invoice snapshots
+    showDone: false,       // when false, done/invoiced/paid jobs are hidden from the list
   };
 
   const $ = (id) => document.getElementById(id);
@@ -618,15 +627,18 @@
     sel.value = state.filterClient;        // preserve, or fall back to All if gone
     state.filterClient = sel.value;
   }
+  const DONE_STATUSES = ['done', 'invoiced', 'paid'];
   function renderList() {
-    const jobs = visibleJobs();
-    renderTotal(jobs);
+    const base = visibleJobs();
+    renderTotal(base);                       // $ total always sums the full set (incl. done)
+    const jobs = state.showDone ? base : base.filter((j) => !DONE_STATUSES.includes(j.status));
     jobListEl.innerHTML = '';
     if (!jobs.length) {
       const e = document.createElement('div');
       e.className = 'empty';
       e.style.padding = '40px 24px';
-      e.textContent = state.filterClient ? 'No jobs for this client yet.' : 'No jobs yet — hit + Job to start.';
+      e.textContent = base.length ? 'Nothing open — tap Done to see finished jobs.'
+                    : state.filterClient ? 'No jobs for this client yet.' : 'No jobs yet — hit + Job to start.';
       jobListEl.appendChild(e);
       return;
     }
@@ -1810,6 +1822,11 @@
   });
   window.addEventListener('resize', scalePreview);
   $('clientFilter').addEventListener('change', (e) => { state.filterClient = e.target.value; renderList(); });
+  $('doneToggle').addEventListener('click', () => {
+    state.showDone = !state.showDone;
+    $('doneToggle').classList.toggle('active', state.showDone);
+    renderList();
+  });
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
   msgInput.addEventListener('input', autoGrow);
   msgInput.addEventListener('keydown', (e) => {
