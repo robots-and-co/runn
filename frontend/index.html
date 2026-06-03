@@ -84,6 +84,11 @@
   }
   .job-row:hover { background: var(--surface-2); }
   .job-row.active { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+  /* Due urgency — a left bar + faint wash so today/overdue read louder than
+     the rest. The open (active) row keeps its own treatment. */
+  .job-row.due-today:not(.active)   { background: #fbf4ea; box-shadow: inset 3px 0 0 var(--accent); }
+  .job-row.due-overdue:not(.active) { background: #fcefec; box-shadow: inset 3px 0 0 #b23b2a; }
+  .job-row.due-overdue .title { color: #8a3a2e; }
   .job-row .title {
     font-size: 15px; font-weight: 600; line-height: 1.25;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -196,13 +201,10 @@
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
     padding: 6px 8px; -webkit-appearance: none; appearance: none;
   }
-  .done-toggle {
-    flex-shrink: 0; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
-    color: var(--muted); background: var(--bg); border: 1px solid var(--border);
-    border-radius: 8px; padding: 6px 12px; height: 32px;
-  }
-  .done-toggle:hover { background: var(--surface-2); }
-  .done-toggle.active { color: #fff; background: var(--brand); border-color: var(--brand); }
+  /* Filter chips — card-style pills that open a picker. The client one sits
+     left, the status one right, mirroring the card meta layout. */
+  .filter-chip { border: 0; cursor: pointer; flex-shrink: 0; }
+  .filter-chip:hover { filter: brightness(0.97); }
   .total { flex-shrink: 0; margin-left: auto; border: 0; background: none; padding: 0; }
   .total .amt {
     display: inline-flex; align-items: center; gap: 4px;
@@ -484,10 +486,8 @@
       </div>
       <div class="list-flip" id="listFlip">
         <div class="list-sub">
-          <select class="client-filter" id="clientFilter" aria-label="Filter by client">
-            <option value="">All clients</option>
-          </select>
-          <button class="done-toggle" id="doneToggle" type="button" title="Show jobs that are done, invoiced or paid">Done</button>
+          <button class="filter-chip chip client pick" id="clientFilterChip" type="button" aria-label="Filter by client">All</button>
+          <button class="filter-chip chip pick" id="statusFilterChip" type="button" aria-label="Filter by status">open</button>
         </div>
         <div class="job-list" id="jobList"></div>
         <div class="billing-list" id="billingList"></div>
@@ -532,6 +532,8 @@
   <div class="chip-menu" id="chipMenu" hidden></div>
   <div class="chip-menu" id="jobMenu" hidden></div>
   <div class="chip-menu" id="clientMenu" hidden></div>
+  <div class="chip-menu" id="clientFilterMenu" hidden></div>
+  <div class="chip-menu" id="statusFilterMenu" hidden></div>
 
 <script>
 'use strict';
@@ -550,7 +552,7 @@
     billingSel: null,      // null = list; {kind:'draft',clientId} | {kind:'invoice',id}
     editing: null,         // working copy of the draft being composed
     settings: {},          // business/bank/GST defaults for invoice snapshots
-    showDone: false,       // when false, done/invoiced/paid jobs are hidden from the list
+    statusFilter: 'open',  // 'open' = active group (open/doing/review/blocked/hold); a status; or 'all'
   };
 
   const $ = (id) => document.getElementById(id);
@@ -643,23 +645,30 @@
     const total = jobs.reduce((s, j) => s + jobValue(j), 0);
     $('valueTotal').textContent = total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
-  function renderFilterOptions() {
-    const sel = $('clientFilter');
-    const clients = [...state.clients.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
-    sel.innerHTML = '<option value="">All clients</option>';
-    for (const c of clients) {
-      const o = document.createElement('option');
-      o.value = c.id; o.textContent = c.name;
-      sel.appendChild(o);
-    }
-    sel.value = state.filterClient;        // preserve, or fall back to All if gone
-    state.filterClient = sel.value;
+  // The 'open' filter is a group: every status that isn't wrapped up. The
+  // picker also offers each status individually plus 'all'.
+  const ACTIVE_STATUSES = ['open', 'doing', 'review', 'blocked', 'hold'];
+  const STATUS_FILTERS = ['open', 'doing', 'review', 'blocked', 'hold', 'done', 'invoiced', 'paid', 'all'];
+  function matchesStatusFilter(j) {
+    const sf = state.statusFilter;
+    if (sf === 'all') return true;
+    if (sf === 'open') return ACTIVE_STATUSES.includes(j.status);
+    return j.status === sf;
   }
-  const DONE_STATUSES = ['done', 'invoiced', 'paid'];
+  // Repaint the two filter chips from state (label + colour).
+  function renderFilterOptions() {
+    const c = state.filterClient ? state.clients.get(state.filterClient) : null;
+    if (state.filterClient && !c) state.filterClient = '';   // client vanished → fall back to All
+    $('clientFilterChip').textContent = c ? c.name : 'All';
+    const sc = $('statusFilterChip');
+    const sf = state.statusFilter;
+    sc.className = 'filter-chip chip pick' + (sf === 'all' ? '' : ' st-' + sf);
+    sc.textContent = sf === 'all' ? 'All' : sf;
+  }
   function renderList() {
     const base = visibleJobs();
     renderTotal(base);                       // $ total always sums the full set (incl. done)
-    const jobs = state.showDone ? base : base.filter((j) => !DONE_STATUSES.includes(j.status));
+    const jobs = base.filter(matchesStatusFilter);
     // Order by due urgency (overdue → today → … → no due) so the labeled
     // dividers group cleanly; ties fall back to most-recently-touched.
     jobs.sort((a, b) => (dueBucket(b).rank - dueBucket(a).rank)
@@ -669,7 +678,7 @@
       const e = document.createElement('div');
       e.className = 'empty';
       e.style.padding = '40px 24px';
-      e.textContent = base.length ? 'Nothing open — tap Done to see finished jobs.'
+      e.textContent = base.length ? 'No jobs match this filter.'
                     : state.filterClient ? 'No jobs for this client yet.' : 'No jobs yet — hit + Job to start.';
       jobListEl.appendChild(e);
       return;
@@ -689,7 +698,8 @@
       prevKey = b.key;
 
       const row = document.createElement('div');
-      row.className = 'job-row' + (j.id === state.currentId ? ' active' : '');
+      row.className = 'job-row' + (j.id === state.currentId ? ' active' : '')
+        + (b.key === 'overdue' ? ' due-overdue' : b.key === 'today' ? ' due-today' : '');
       row.dataset.id = j.id;
 
       const ttl = titleOf(j);
@@ -836,6 +846,43 @@
     placeMenu(menu, anchorEl);
   }
   function closeClientMenu() { $('clientMenu').hidden = true; clientMenuJobId = null; }
+
+  // ── List filter pickers (the two chips in the list subheader) ──
+  function openClientFilterMenu(anchorEl) {
+    const menu = $('clientFilterMenu');
+    menu.innerHTML = '';
+    const mk = (value, label, isCurrent) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'chip-menu-item' + (isCurrent ? ' is-current' : '');
+      item.dataset.client = value;
+      item.textContent = label;
+      menu.appendChild(item);
+    };
+    mk('', 'All clients', !state.filterClient);
+    const clients = [...state.clients.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    for (const c of clients) mk(c.id, c.name, c.id === state.filterClient);
+    menu.hidden = false;
+    placeMenu(menu, anchorEl, 'left');
+  }
+  function closeClientFilterMenu() { $('clientFilterMenu').hidden = true; }
+  function openStatusFilterMenu(anchorEl) {
+    const menu = $('statusFilterMenu');
+    menu.innerHTML = '';
+    for (const v of STATUS_FILTERS) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'chip-menu-item' + (v === state.statusFilter ? ' is-current' : '');
+      item.dataset.statusFilter = v;
+      if (v === 'all') { const c = document.createElement('span'); c.className = 'chip'; c.textContent = 'All'; item.appendChild(c); }
+      else item.appendChild(statusChip(v));
+      menu.appendChild(item);
+    }
+    menu.hidden = false;
+    placeMenu(menu, anchorEl, 'right');
+  }
+  function closeStatusFilterMenu() { $('statusFilterMenu').hidden = true; }
+
   async function setJobClient(id, clientId) {
     const j = await patchJson('/jobs/' + id, { client_id: clientId || null });
     state.jobs.set(j.id, j);
@@ -1865,6 +1912,10 @@
     if (!jm.hidden && !jm.contains(ev.target)) closeJobMenu();
     const clm = $('clientMenu');
     if (!clm.hidden && !clm.contains(ev.target)) closeClientMenu();
+    const cfm = $('clientFilterMenu');
+    if (!cfm.hidden && !cfm.contains(ev.target) && ev.target !== $('clientFilterChip')) closeClientFilterMenu();
+    const sfm = $('statusFilterMenu');
+    if (!sfm.hidden && !sfm.contains(ev.target) && ev.target !== $('statusFilterChip')) closeStatusFilterMenu();
   });
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
@@ -1873,13 +1924,31 @@
     if (!$('chipMenu').hidden) { ev.stopPropagation(); closeChipMenu(); }
     if (!$('jobMenu').hidden) { ev.stopPropagation(); closeJobMenu(); }
     if (!$('clientMenu').hidden) { ev.stopPropagation(); closeClientMenu(); }
+    if (!$('clientFilterMenu').hidden) { ev.stopPropagation(); closeClientFilterMenu(); }
+    if (!$('statusFilterMenu').hidden) { ev.stopPropagation(); closeStatusFilterMenu(); }
   });
   window.addEventListener('resize', scalePreview);
-  $('clientFilter').addEventListener('change', (e) => { state.filterClient = e.target.value; renderList(); });
-  $('doneToggle').addEventListener('click', () => {
-    state.showDone = !state.showDone;
-    $('doneToggle').classList.toggle('active', state.showDone);
-    renderList();
+  $('clientFilterChip').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if ($('clientFilterMenu').hidden) openClientFilterMenu($('clientFilterChip')); else closeClientFilterMenu();
+  });
+  $('clientFilterMenu').addEventListener('click', (ev) => {
+    const item = ev.target.closest('.chip-menu-item');
+    if (!item) return;
+    state.filterClient = item.dataset.client;
+    closeClientFilterMenu();
+    renderFilterOptions(); renderList();
+  });
+  $('statusFilterChip').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if ($('statusFilterMenu').hidden) openStatusFilterMenu($('statusFilterChip')); else closeStatusFilterMenu();
+  });
+  $('statusFilterMenu').addEventListener('click', (ev) => {
+    const item = ev.target.closest('.chip-menu-item');
+    if (!item) return;
+    state.statusFilter = item.dataset.statusFilter;
+    closeStatusFilterMenu();
+    renderFilterOptions(); renderList();
   });
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
   msgInput.addEventListener('input', autoGrow);
