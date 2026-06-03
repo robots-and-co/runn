@@ -89,7 +89,10 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .job-row .title.untitled { color: var(--muted); font-weight: 500; font-style: italic; }
-  .job-row .meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .job-row .meta { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .job-row .meta .meta-client { justify-self: start; min-width: 0; }
+  .job-row .meta .meta-due    { justify-self: center; }
+  .job-row .meta .meta-status { justify-self: end; }
 
   .list-foot { padding: 12px; border-top: 1px solid var(--border); }
   .btn-newjob {
@@ -695,13 +698,23 @@
       title.textContent = ttl || 'Untitled job';
       row.appendChild(title);
 
+      // Three justified slots: client left, due centre, status right. Empty
+      // placeholders keep the grid columns stable when a job lacks one.
       const meta = document.createElement('div');
       meta.className = 'meta';
-      meta.appendChild(statusChip(j.status));   // static — no jobId, so not a button
+      const cEl = document.createElement('span');
+      cEl.className = 'meta-client';
       const cn = clientName(j.client_id);
-      if (cn) { const c = document.createElement('span'); c.className = 'chip client'; c.textContent = cn; meta.appendChild(c); }
+      if (cn) { cEl.classList.add('chip', 'client'); cEl.textContent = cn; }
+      meta.appendChild(cEl);
+      const dEl = document.createElement('span');
+      dEl.className = 'meta-due';
       const di = dueInfo(j);
-      if (di.set) { const d = document.createElement('span'); d.className = 'due' + (di.overdue ? ' overdue' : ''); d.textContent = 'Due ' + di.label; meta.appendChild(d); }
+      if (di.set) { dEl.classList.add('due'); if (di.overdue) dEl.classList.add('overdue'); dEl.textContent = di.label; }
+      meta.appendChild(dEl);
+      const sEl = statusChip(j.status);   // static — no jobId, so not a button
+      sEl.classList.add('meta-status');
+      meta.appendChild(sEl);
       row.appendChild(meta);
 
       row.addEventListener('click', () => openJob(j.id));
