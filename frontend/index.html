@@ -143,11 +143,22 @@
      optional clear ×. .overdue reddens a past, not-yet-finished due date. */
   .due-chip { display: inline-flex; align-items: center; flex-shrink: 0; position: relative; }
   .due-set {
+    display: inline-flex; align-items: center;   /* match .chip's box so heights line up */
     font: inherit; font-size: 13px; font-weight: 600; line-height: 1.5;
     padding: 4px 12px; border-radius: 999px; border: 0; cursor: pointer;
     background: #eef1f4; color: var(--brand); white-space: nowrap;
   }
   .due-set:hover { filter: brightness(0.96); }
+  /* Quick one-tap "set due to today", shown only when no due is set yet. */
+  .due-today {
+    display: inline-flex; align-items: center;
+    font: inherit; font-size: 12px; font-weight: 600; line-height: 1.5;
+    padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--brand); cursor: pointer;
+    white-space: nowrap; margin-left: 6px;
+  }
+  .due-today:hover { border-color: var(--brand); }
+  .due-today[hidden] { display: none; }
   .due-set.empty { background: var(--surface-2); color: var(--muted); font-weight: 500; }
   .due-chip.overdue .due-set { background: #ffe1dc; color: #b23b2a; }
   .due-clear {
@@ -542,6 +553,7 @@
         <span class="chip" id="chatStatus" hidden></span>
         <span class="due-chip" id="chatDue" hidden>
           <button type="button" class="due-set" id="chatDueBtn"></button>
+          <button type="button" class="due-today" id="chatDueToday" hidden>Today</button>
           <button type="button" class="due-clear" id="chatDueClear" aria-label="Clear due date" hidden>×</button>
           <input type="date" id="chatDueInput" class="due-input" aria-hidden="true" tabindex="-1">
         </span>
@@ -868,12 +880,13 @@
   // Paint the header due chip for the open job: a pill that reads "Set due" when
   // empty or "Due <date>" when set, goes red when overdue, and shows a clear (×).
   function renderDueChip(j) {
-    const chip = $('chatDue'), btn = $('chatDueBtn'), clr = $('chatDueClear');
+    const chip = $('chatDue'), btn = $('chatDueBtn'), clr = $('chatDueClear'), tdy = $('chatDueToday');
     const di = dueInfo(j);
     chip.classList.toggle('overdue', di.overdue);
     btn.classList.toggle('empty', !di.set);
     btn.textContent = di.set ? 'Due ' + di.label : 'Set due';
     clr.hidden = !di.set;
+    tdy.hidden = di.set;       // quick "Today" only while there's no due yet
     chip.hidden = false;
   }
 
@@ -1984,6 +1997,11 @@
     if (!state.currentId || state.currentId === DRAFT) return;
     setJobDue(state.currentId, ev.target.value || null)
       .catch((e) => console.error('due change failed', e));
+  });
+  $('chatDueToday').addEventListener('click', (ev) => {
+    if (!state.currentId || state.currentId === DRAFT) return;
+    ev.stopPropagation();
+    setJobDue(state.currentId, today()).catch((e) => console.error('due today failed', e));
   });
   $('chatDueClear').addEventListener('click', (ev) => {
     if (!state.currentId || state.currentId === DRAFT) return;
