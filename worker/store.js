@@ -8,6 +8,7 @@
 
 const fsp = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 
 const HOME = process.env.HOME;
 const DATA_ROOT = process.env.RUNN_DATA || path.join(HOME, 'runn-data');
@@ -21,7 +22,11 @@ async function readJsonOr(p, fallback) {
 }
 
 async function atomicWriteJson(p, data) {
-  const tmp = `${p}.${process.pid}.tmp`;
+  // Temp name must be unique PER WRITE, not just per process: two concurrent
+  // writes to the same record in one process would otherwise share
+  // `<p>.<pid>.tmp`, interleave into it, and rename a torn/invalid file into
+  // place (corrupting the record).
+  const tmp = `${p}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   await fsp.writeFile(tmp, JSON.stringify(data, null, 2));
   await fsp.rename(tmp, p);
 }

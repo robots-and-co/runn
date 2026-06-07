@@ -160,7 +160,9 @@ async function readNotes(id) {
 async function writeNotes(id, md) {
   await init();
   const p = notesPath(id);
-  const tmp = `${p}.${process.pid}.tmp`;
+  // Unique per write (see store.atomicWriteJson) so concurrent notes writes
+  // can't interleave into a shared temp file.
+  const tmp = `${p}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   await fsp.writeFile(tmp, md);
   await fsp.rename(tmp, p);
 }

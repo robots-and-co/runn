@@ -16,6 +16,7 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const chokidar = require('chokidar');
 const {
@@ -23,6 +24,7 @@ const {
 } = require('./store');
 const jobs = require('./jobs');
 const invoices = require('./invoices');
+const bridge = require('./bridge');
 
 // ── Config ───────────────────────────────────────────────────
 const CLIENTS_DIR = path.join(DATA_ROOT, 'clients');
@@ -50,6 +52,98 @@ const DEFAULT_SETTINGS = {
   // Default workspace slug for jobs with no client (personal work).
   personal_workspace: 'waz',
 };
+
+// ── AI engine (RUNN_PLAN: spawn/resume Claude per job turn) ───
+// cwd is derived from the job's client.workspace at spawn time (never stored on
+// the job). Client → /home/waz/projects/<workspace>; client-less → the
+// personal_workspace setting; neither → bridge's DEFAULT_LOCATION (~/runn-data).
+const PROJECTS_ROOT = path.join(process.env.HOME || os.homedir(), 'projects');
+
+// Per-job permission token, minted on first spawn and reused across resumes so
+// the (forthcoming) permission endpoint can map a request back to its job.
+const aiState = new Map(); // jobId → { token, cwd }
+function tokenForJob(jobId, cwd) {
+  let s = aiState.get(jobId);
+  if (!s) { s = { token: crypto.randomBytes(24).toString('hex'), cwd }; aiState.set(jobId, s); }
+  else s.cwd = cwd;
+  return s.token;
+}
+
+const firstLine = (s) => String(s || '').split('\n')[0].slice(0, 120).trim();
+
+async function resolveLocation(job) {
+  let workspace = null;
+  if (job.client_id) {
+    const cl = await readJsonOr(clientPath(job.client_id), null);
+    if (cl && cl.workspace) workspace = cl.workspace;
+  }
+  if (!workspace) {
+    const settings = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
+    if (settings.personal_workspace) workspace = settings.personal_workspace;
+  }
+  if (!workspace) return bridge.DEFAULT_LOCATION;
+  return { type: 'local', cwd: path.join(PROJECTS_ROOT, workspace) };
+}
+
+// AI never sets `done` (human-only). A clean turn lands the job in `review`
+// (waiting on the human); a crash lands it in `blocked`. patchJob stops the
+// work clock; the jobs watcher broadcasts job.changed so the UI updates live.
+async function handleJobExit(jobId, code) {
+  try {
+    await jobs.patchJob(jobId, { status: code === 0 ? 'review' : 'blocked' });
+  } catch (err) {
+    console.error('[runn] handleJobExit', jobId, err);
+  }
+}
+
+// Spawn (first turn) or resume (follow-up) Claude for a job, then flip it to
+// `doing` (starts the clock). On cwd contention: a follow-up buffers and bridge
+// auto-dispatches it when the cwd frees; a first spawn reports busy (202).
+async function kickEngine(res, job, text) {
+  const id = job.id;
+  const location = await resolveLocation(job);
+  const token = tokenForJob(id, location.cwd);
+  const onExit = (code) => handleJobExit(id, code);
+  const holder = 'job:' + id;
+
+  if (!job.session_id) {
+    const companion = (await jobs.readNotes(id)).trim();
+    const promptBody = companion ? `${companion}\n\n${text}` : text;
+    let result;
+    try {
+      result = await bridge.spawnSession({
+        title: job.title || firstLine(text),
+        notes: promptBody,
+        location,
+        permissionToken: token,
+        permissionMode: 'default', // gated via --permission-prompt-tool, not a mode
+        onExit,
+        holder,
+      });
+    } catch (e) {
+      if (e.code === 'CWD_BUSY') return sendJson(res, 202, { queued: true, busy: true, holder: e.holder });
+      throw e;
+    }
+    await jobs.patchJob(id, { session_id: result.session_id, status: 'doing' });
+    return sendJson(res, 201, await jobs.readJob(id));
+  }
+
+  const params = { text, location, permissionToken: token, permissionMode: 'default', onExit, holder };
+  try {
+    await bridge.sendMessage({ sessionId: job.session_id, ...params });
+  } catch (e) {
+    if (e.code === 'CWD_BUSY') {
+      bridge.enqueueMessage(job.session_id, {
+        ...params,
+        onStart: () => { jobs.patchJob(id, { status: 'doing' }).catch(() => {}); },
+      });
+      return sendJson(res, 202, { queued: true });
+    }
+    throw e;
+  }
+  await jobs.patchJob(id, { status: 'doing' });
+  return sendJson(res, 201, await jobs.readJob(id));
+}
 
 // ── HTTP helpers ─────────────────────────────────────────────
 function sendJson(res, code, body) {
@@ -177,12 +271,21 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
     if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/turn$/))) {
+      const id = mm[1];
       const body = await readBody(req);
       if (!body.role || typeof body.text !== 'string') return badReq(res, 'role and text required');
+      let job;
+      try { job = await jobs.appendTurn(id, body); }
+      catch (e) { return badReq(res, e.message); }
+      // Only a user turn kicks the engine. AI turns (merged by the session
+      // watcher, later step) are just recorded.
+      if (body.role !== 'user') return sendJson(res, 201, job);
       try {
-        const job = await jobs.appendTurn(mm[1], body);
-        return sendJson(res, 201, job);
-      } catch (e) { return badReq(res, e.message); }
+        return await kickEngine(res, job, body.text);
+      } catch (e) {
+        console.error('[runn] kickEngine failed', id, e);
+        return sendJson(res, 500, { error: String(e.message || e) });
+      }
     }
     if (m === 'GET' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/notes$/))) {
       res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'no-store' });
