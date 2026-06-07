@@ -518,6 +518,12 @@
     font-size: 15px; font-weight: 600; padding: 0 18px; height: 44px; cursor: pointer;
   }
   .composer button:disabled { opacity: 0.45; cursor: not-allowed; }
+  /* "+ AI" — the invite/handover. Shown only on a private, not-yet-invited job.
+     Distinct from Send so the handover reads as a separate, deliberate action. */
+  .composer button.invite-ai {
+    background: var(--brand); color: #fff; white-space: nowrap;
+  }
+  .composer button.invite-ai[hidden] { display: none; }
 
   /* ── Responsive: collapse to one pane ───────────── */
   @media (max-width: 720px) {
@@ -625,6 +631,7 @@
       </div>
       <form class="composer" id="composer">
         <textarea id="msgInput" rows="1" placeholder="Select a job, or start a new one." disabled></textarea>
+        <button type="button" id="inviteAiBtn" class="invite-ai" hidden>+ AI</button>
         <button type="submit" id="sendBtn" disabled>Send</button>
       </form>
     </main>
@@ -671,6 +678,7 @@
   const turnsEl = $('turns');
   const msgInput = $('msgInput');
   const sendBtn = $('sendBtn');
+  const inviteAiBtn = $('inviteAiBtn');
 
   marked.setOptions({ breaks: true, gfm: true });
   const mdToHtml = (s) => DOMPurify.sanitize(marked.parse(s || ''));
@@ -1838,6 +1846,7 @@
     $('jobMenuBtn').hidden = true;
     $('chatDoneBtn').classList.remove('show');   // re-shown below only for an active, saved job
     $('chatDue').hidden = true;  // shown only for a real, saved job
+    inviteAiBtn.hidden = true;   // shown below only for a private, not-yet-invited job
     timerSync();                 // attach/detach the work timer to the open job
     if (state.picking) {
       $('chatTitle').textContent = 'New job';
@@ -1885,6 +1894,9 @@
 
     turnsEl.innerHTML = '';
     const turns = j.turns || [];
+    // The invite gate: offer "+ AI" once the human has written something but
+    // before they've handed the job over (no session yet). Hidden after invite.
+    inviteAiBtn.hidden = !!j.session_id || turns.length === 0;
     if (!turns.length) {
       turnsEl.innerHTML = '<div class="empty">No messages yet.</div>';
       return;
@@ -2025,6 +2037,22 @@
   function autoGrow() {
     msgInput.style.height = 'auto';
     msgInput.style.height = Math.min(msgInput.scrollHeight, 140) + 'px';
+  }
+  // The handover: hand the private job over to AI. The server builds the first
+  // prompt from everything written so far and starts Claude. Hidden afterward.
+  async function inviteAi() {
+    const id = state.currentId;
+    if (!id || id === DRAFT || state.inviting) return;
+    state.inviting = true; inviteAiBtn.disabled = true;
+    try {
+      const updated = await postJson(`/jobs/${id}/invite-ai`, {});
+      if (updated && updated.id) state.jobs.set(updated.id, updated);
+      renderList(); renderChat();
+    } catch (e) {
+      console.error('invite failed', e);
+    } finally {
+      state.inviting = false; inviteAiBtn.disabled = false;
+    }
   }
 
   // ── Wiring ──────────────────────────────────────
@@ -2205,6 +2233,7 @@
     renderFilterOptions(); renderList();
   });
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
+  inviteAiBtn.addEventListener('click', inviteAi);
   msgInput.addEventListener('input', autoGrow);
   msgInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendCurrent(); }

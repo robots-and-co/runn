@@ -96,39 +96,55 @@ async function handleJobExit(jobId, code) {
   }
 }
 
-// Spawn (first turn) or resume (follow-up) Claude for a job, then flip it to
-// `doing` (starts the clock). On cwd contention: a follow-up buffers and bridge
-// auto-dispatches it when the cwd frees; a first spawn reports busy (202).
-async function kickEngine(res, job, text) {
+// Invite Claude to a job (the "+ AI" handover). Claude is never spawned and
+// never sees a job's contents until this is called — before invite the job is
+// the human's private space. The handover prompt is the job's accumulated user
+// turns plus its notes companion. Spawns the session, flips the job to `doing`.
+async function inviteAi(res, job) {
+  const id = job.id;
+  if (job.session_id) return sendJson(res, 409, { error: 'AI already invited' });
+  const location = await resolveLocation(job);
+  const token = tokenForJob(id, location.cwd);
+  const companion = (await jobs.readNotes(id)).trim();
+  const userTurns = (job.turns || []).filter((t) => t.role === 'user').map((t) => t.text);
+  // bridge composes the spawn prompt as `${title}\n\n${notes}`. Keep title and
+  // body DISJOINT (V1's model) so the handover isn't duplicated: when the job is
+  // unnamed, its first message becomes the title line and the remaining messages
+  // (plus the notes companion) form the body; when already named, every message
+  // goes in the body.
+  const title = job.title || firstLine(userTurns[0] || '') || 'New job';
+  const bodyTurns = job.title ? userTurns : userTurns.slice(1);
+  const promptBody = [...bodyTurns, companion].filter(Boolean).join('\n\n');
+  let result;
+  try {
+    result = await bridge.spawnSession({
+      title,
+      notes: promptBody,
+      location,
+      permissionToken: token,
+      permissionMode: 'default', // gated via --permission-prompt-tool, not a mode
+      onExit: (code) => handleJobExit(id, code),
+      holder: 'job:' + id,
+    });
+  } catch (e) {
+    if (e.code === 'CWD_BUSY') return sendJson(res, 202, { queued: true, busy: true, holder: e.holder });
+    throw e;
+  }
+  await jobs.patchJob(id, { session_id: result.session_id, status: 'doing' });
+  return sendJson(res, 201, await jobs.readJob(id));
+}
+
+// Resume an already-invited job with a follow-up user turn, flipping it back to
+// `doing`. On cwd contention the turn buffers and bridge auto-dispatches it when
+// the cwd frees (202).
+async function resumeJob(res, job, text) {
   const id = job.id;
   const location = await resolveLocation(job);
   const token = tokenForJob(id, location.cwd);
-  const onExit = (code) => handleJobExit(id, code);
-  const holder = 'job:' + id;
-
-  if (!job.session_id) {
-    const companion = (await jobs.readNotes(id)).trim();
-    const promptBody = companion ? `${companion}\n\n${text}` : text;
-    let result;
-    try {
-      result = await bridge.spawnSession({
-        title: job.title || firstLine(text),
-        notes: promptBody,
-        location,
-        permissionToken: token,
-        permissionMode: 'default', // gated via --permission-prompt-tool, not a mode
-        onExit,
-        holder,
-      });
-    } catch (e) {
-      if (e.code === 'CWD_BUSY') return sendJson(res, 202, { queued: true, busy: true, holder: e.holder });
-      throw e;
-    }
-    await jobs.patchJob(id, { session_id: result.session_id, status: 'doing' });
-    return sendJson(res, 201, await jobs.readJob(id));
-  }
-
-  const params = { text, location, permissionToken: token, permissionMode: 'default', onExit, holder };
+  const params = {
+    text, location, permissionToken: token, permissionMode: 'default',
+    onExit: (code) => handleJobExit(id, code), holder: 'job:' + id,
+  };
   try {
     await bridge.sendMessage({ sessionId: job.session_id, ...params });
   } catch (e) {
@@ -277,13 +293,25 @@ const server = http.createServer(async (req, res) => {
       let job;
       try { job = await jobs.appendTurn(id, body); }
       catch (e) { return badReq(res, e.message); }
-      // Only a user turn kicks the engine. AI turns (merged by the session
-      // watcher, later step) are just recorded.
-      if (body.role !== 'user') return sendJson(res, 201, job);
-      try {
-        return await kickEngine(res, job, body.text);
-      } catch (e) {
-        console.error('[runn] kickEngine failed', id, e);
+      // The invite gate: Claude is never spawned by a turn. Before invite a job
+      // is the human's private space — turns are recorded only. After invite
+      // (job.session_id set), a user turn resumes the existing session.
+      if (body.role === 'user' && job.session_id) {
+        try { return await resumeJob(res, job, body.text); }
+        catch (e) {
+          console.error('[runn] resume failed', id, e);
+          return sendJson(res, 500, { error: String(e.message || e) });
+        }
+      }
+      return sendJson(res, 201, job);
+    }
+    if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/invite-ai$/))) {
+      const id = mm[1];
+      const job = await jobs.readJobOr(id);
+      if (!job) return notFound(res);
+      try { return await inviteAi(res, job); }
+      catch (e) {
+        console.error('[runn] inviteAi failed', id, e);
         return sendJson(res, 500, { error: String(e.message || e) });
       }
     }
