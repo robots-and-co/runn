@@ -106,6 +106,21 @@ async function appendTurn(id, { role, text, session_event = null, at = null }) {
   return writeJob(job);
 }
 
+// Edit one user turn's text in place. Only meaningful before the job is invited
+// (the server enforces the lock); after invite the turns are the record handed
+// to the AI. Indexes into turns[]; rejects non-user turns.
+async function editTurn(id, index, text) {
+  const job = await readJob(id);
+  const turns = job.turns || [];
+  if (!Number.isInteger(index) || index < 0 || index >= turns.length) {
+    throw new Error('bad turn index');
+  }
+  if (turns[index].role !== 'user') throw new Error('only user turns are editable');
+  turns[index].text = text;
+  turns[index].edited_at = nowIso();
+  return writeJob(job);
+}
+
 // Patch scalar fields only. Immutable/append-only fields (id, created_at,
 // turns) are never patched here — turns go through appendTurn.
 async function patchJob(id, patch = {}) {
@@ -181,6 +196,7 @@ module.exports = {
   writeJob,
   listJobs,
   appendTurn,
+  editTurn,
   patchJob,
   setStatus,
   deleteJob,

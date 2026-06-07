@@ -305,6 +305,19 @@ const server = http.createServer(async (req, res) => {
       }
       return sendJson(res, 201, job);
     }
+    if (m === 'PUT' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/turns\/(\d+)$/))) {
+      const id = mm[1];
+      const idx = Number(mm[2]);
+      const body = await readBody(req);
+      if (typeof body.text !== 'string') return badReq(res, 'text required');
+      const job = await jobs.readJobOr(id);
+      if (!job) return notFound(res);
+      // The lock: once AI is invited, the turns are the record it received and
+      // can no longer be edited. Before invite they're the human's private notes.
+      if (job.session_id) return sendJson(res, 409, { error: 'locked: AI already invited' });
+      try { return sendJson(res, 200, await jobs.editTurn(id, idx, body.text)); }
+      catch (e) { return badReq(res, e.message); }
+    }
     if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/invite-ai$/))) {
       const id = mm[1];
       const job = await jobs.readJobOr(id);

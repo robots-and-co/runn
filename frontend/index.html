@@ -500,6 +500,29 @@
   .bubble pre { background: #f3efe7; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
   .turn.user .bubble pre { background: rgba(255,255,255,0.15); }
   .bubble code { font-family: ui-monospace, Menlo, monospace; font-size: 0.9em; }
+  /* Edit affordance on a private (pre-invite) user turn. Kept low-key but always
+     visible (so it's discoverable on touch, where there's no hover). */
+  .turn-edit {
+    align-self: center; flex: none; margin: 0 2px; padding: 4px 6px;
+    border: 0; background: none; cursor: pointer; color: var(--muted);
+    font-size: 16px; line-height: 1; border-radius: 8px; opacity: .5;
+  }
+  .turn-edit:hover { opacity: 1; background: var(--surface-2); }
+  /* Inline editor that replaces the bubble while editing one turn. */
+  .turn.editing { flex-direction: column; align-items: stretch; }
+  .turn-edit-input {
+    width: 100%; box-sizing: border-box; resize: none; max-height: 200px;
+    border: 1px solid var(--brand); border-radius: 12px; padding: 10px 12px;
+    font: inherit; font-size: 15px; background: var(--bg); color: var(--ink);
+  }
+  .turn-edit-input:focus { outline: none; }
+  .turn-edit-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+  .turn-edit-actions button {
+    border: 0; border-radius: 10px; cursor: pointer;
+    font-size: 14px; font-weight: 600; padding: 7px 14px;
+  }
+  .te-save { background: var(--brand); color: #fff; }
+  .te-cancel { background: var(--surface-2); color: var(--ink); }
 
   .divider { display: flex; align-items: center; gap: 12px; margin: 18px 2px; color: var(--muted); font-size: 12px; }
   .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
@@ -667,7 +690,8 @@
     invoicesPane: false,   // left pane flipped from jobs → invoices (tap the $ total)
     invoices: new Map(),   // id -> issued invoice record
     billingSel: null,      // null = list; {kind:'draft',clientId} | {kind:'invoice',id}
-    editing: null,         // working copy of the draft being composed
+    editing: null,         // working copy of the invoice draft being composed
+    editingTurn: null,     // {id, idx} of a private user turn being edited (pre-invite)
     settings: {},          // business/bank/GST defaults for invoice snapshots
     statusFilter: 'open',  // 'open' = active group (open/doing/review/blocked/hold); a status; or 'all'
     dueFilter: 'all',      // 'all' | 'overdue' | 'today' | 'thisweek' | 'none'
@@ -1776,6 +1800,7 @@
       $('billingBtn').classList.remove('is-active');
     }
     state.currentId = id;
+    state.editingTurn = null;
     state.picking = false;
     resetNewJobPicker();
     enterChatView();
@@ -1901,8 +1926,12 @@
       turnsEl.innerHTML = '<div class="empty">No messages yet.</div>';
       return;
     }
+    // Editable until invited: before handover the turns are the human's private
+    // notes and can be fixed; once AI is invited they're the record it received
+    // and lock.
+    const locked = !!j.session_id;
     let lastDay = null;
-    for (const turn of turns) {
+    turns.forEach((turn, idx) => {
       const day = turn.at ? turn.at.slice(0, 10) : null;
       if (turn.session_event || (day && day !== lastDay)) {
         const div = document.createElement('div');
@@ -1914,12 +1943,28 @@
 
       const wrap = document.createElement('div');
       wrap.className = 'turn ' + (turn.role === 'user' ? 'user' : 'ai');
+      const editing = state.editingTurn && state.editingTurn.id === j.id && state.editingTurn.idx === idx;
+      if (editing && turn.role === 'user' && !locked) {
+        wrap.classList.add('editing');
+        buildTurnEditor(wrap, idx, turn.text);
+        turnsEl.appendChild(wrap);
+        return;
+      }
+      if (turn.role === 'user' && !locked) {
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'turn-edit';
+        editBtn.setAttribute('aria-label', 'Edit message');
+        editBtn.textContent = '✎';
+        editBtn.addEventListener('click', () => beginEditTurn(idx));
+        wrap.appendChild(editBtn);
+      }
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
       bubble.innerHTML = mdToHtml(turn.text);
       wrap.appendChild(bubble);
       turnsEl.appendChild(wrap);
-    }
+    });
     turnsEl.scrollTop = turnsEl.scrollHeight;
   }
 
@@ -2004,6 +2049,15 @@
     if (!r.ok) throw new Error(await errMsg(r, url));
     return r.json();
   }
+  async function putJson(url, body) {
+    const r = await fetch(url, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(await errMsg(r, url));
+    return r.json();
+  }
   async function delJson(url) {
     const r = await fetch(url, { method: 'DELETE' });
     if (!r.ok) throw new Error(await errMsg(r, url));
@@ -2053,6 +2107,55 @@
     } finally {
       state.inviting = false; inviteAiBtn.disabled = false;
     }
+  }
+
+  // Editing a private (pre-invite) turn. state.editingTurn is scoped to {id, idx}
+  // (distinct from state.editing, which is the invoice draft) so it only opens an
+  // editor for that one turn of that one job, and clears itself when you navigate
+  // away (the match fails on a different job).
+  function beginEditTurn(idx) {
+    state.editingTurn = { id: state.currentId, idx };
+    renderChat();
+  }
+  function cancelEditTurn() {
+    state.editingTurn = null;
+    renderChat();
+  }
+  async function saveEditTurn(idx, text) {
+    const id = state.currentId;
+    const t = text.trim();
+    state.editingTurn = null;
+    if (!t) { renderChat(); return; }          // empty = no change, just close
+    try {
+      const updated = await putJson(`/jobs/${id}/turns/${idx}`, { text: t });
+      state.jobs.set(updated.id, updated);
+    } catch (e) {
+      console.error('edit failed', e);          // 409 = locked (AI already invited)
+    }
+    renderList(); renderChat();
+  }
+  function buildTurnEditor(wrap, idx, text) {
+    const ta = document.createElement('textarea');
+    ta.className = 'turn-edit-input';
+    ta.value = text;
+    ta.rows = 1;
+    const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'; };
+    ta.addEventListener('input', grow);
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); cancelEditTurn(); }
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveEditTurn(idx, ta.value); }
+    });
+    const actions = document.createElement('div');
+    actions.className = 'turn-edit-actions';
+    const cancel = document.createElement('button');
+    cancel.type = 'button'; cancel.className = 'te-cancel'; cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', cancelEditTurn);
+    const save = document.createElement('button');
+    save.type = 'button'; save.className = 'te-save'; save.textContent = 'Save';
+    save.addEventListener('click', () => saveEditTurn(idx, ta.value));
+    actions.appendChild(cancel); actions.appendChild(save);
+    wrap.appendChild(ta); wrap.appendChild(actions);
+    setTimeout(() => { grow(); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
   }
 
   // ── Wiring ──────────────────────────────────────
