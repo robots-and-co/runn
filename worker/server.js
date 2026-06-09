@@ -16,6 +16,7 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const os = require('os');
 const path = require('path');
+const readline = require('readline');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const chokidar = require('chokidar');
@@ -60,13 +61,35 @@ const DEFAULT_SETTINGS = {
 const PROJECTS_ROOT = path.join(process.env.HOME || os.homedir(), 'projects');
 
 // Per-job permission token, minted on first spawn and reused across resumes so
-// the (forthcoming) permission endpoint can map a request back to its job.
-const aiState = new Map(); // jobId → { token, cwd }
+// the permission endpoint can map a request back to its job.
+const aiState = new Map();        // jobId → { token, cwd }
+const permTokenToJob = new Map(); // permission token → jobId (reverse of aiState)
 function tokenForJob(jobId, cwd) {
   let s = aiState.get(jobId);
   if (!s) { s = { token: crypto.randomBytes(24).toString('hex'), cwd }; aiState.set(jobId, s); }
   else s.cwd = cwd;
+  permTokenToJob.set(s.token, jobId);
   return s.token;
+}
+
+// session_id → jobId. Lets the discovery watcher map a changed session jsonl
+// back to the job that owns it (other Claude sessions on this box — including
+// this very dev session — are not in the index and are ignored). Populated at
+// boot from existing jobs and on every invite.
+const sessionJobIndex = new Map();
+
+// Per-job serial op queue. AI turn ingestion (watcher) and the exit status
+// transition (handleJobExit) both read-modify-write the same job file, so they
+// must not interleave — otherwise a trailing ingest could clobber the `review`
+// status set on exit and leave the job stuck in `doing` forever. Funnelling
+// both through one FIFO chain per job makes the last writer deterministic.
+const jobOpChains = new Map(); // jobId → tail promise
+function enqueueJobOp(jobId, op) {
+  const prev = jobOpChains.get(jobId) || Promise.resolve();
+  const next = prev.then(op).catch((err) => console.error('[runn] jobOp', jobId, err));
+  jobOpChains.set(jobId, next);
+  next.finally(() => { if (jobOpChains.get(jobId) === next) jobOpChains.delete(jobId); });
+  return next;
 }
 
 const firstLine = (s) => String(s || '').split('\n')[0].slice(0, 120).trim();
@@ -85,15 +108,139 @@ async function resolveLocation(job) {
   return { type: 'local', cwd: path.join(PROJECTS_ROOT, workspace) };
 }
 
-// AI never sets `done` (human-only). A clean turn lands the job in `review`
-// (waiting on the human); a crash lands it in `blocked`. patchJob stops the
-// work clock; the jobs watcher broadcasts job.changed so the UI updates live.
-async function handleJobExit(jobId, code) {
+// ── Discovery: session jsonl → AI turns ──────────────────────
+// The bridge spawns Claude and lets it run detached, writing to its session
+// jsonl; the worker never pipes stdout to the browser. Instead we tail that
+// jsonl and fold the assistant's replies back into job.turns[] — so a writeJob
+// makes the jobs-dir watcher broadcast job.changed and the chat updates live.
+//
+// We extract ONLY assistant text bubbles (one per API response; tool_use breaks
+// a bubble so text→[tool]→text keeps chronological order). User events in the
+// jsonl are the synthesised spawn/resume prompts — NOT the human's turns, which
+// are already recorded via the HTTP path — so they're skipped. Thinking blocks
+// are dropped (redacted noise).
+async function parseAiTurns(jsonlPath) {
+  const events = [];
   try {
-    await jobs.patchJob(jobId, { status: code === 0 ? 'review' : 'blocked' });
-  } catch (err) {
-    console.error('[runn] handleJobExit', jobId, err);
+    const rl = readline.createInterface({
+      input: fs.createReadStream(jsonlPath, { encoding: 'utf8' }),
+      crlfDelay: Infinity,
+    });
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      try { events.push(JSON.parse(line)); } catch {}
+    }
+  } catch { return []; }
+
+  const turns = [];
+  let open = null;     // { text, id, at } of the assistant bubble being built
+  let openId = null;   // its message.id (text from the same id merges)
+  const flush = () => {
+    if (open && open.text.trim()) turns.push({ text: open.text, id: open.id, at: open.at });
+    open = null; openId = null;
+  };
+  for (const ev of events) {
+    if (ev.type === 'assistant') {
+      const c = ev.message && ev.message.content;
+      if (!Array.isArray(c)) continue;
+      const msgId = (ev.message && ev.message.id) || null;
+      if (open && msgId && msgId !== openId) flush();
+      for (const block of c) {
+        if (block.type === 'text' && block.text) {
+          if (!open) { open = { text: '', id: msgId, at: ev.timestamp || null }; openId = msgId; }
+          open.text = open.text ? `${open.text}\n${block.text}` : block.text;
+        } else if (block.type === 'tool_use') {
+          // A tool call ends the current text bubble so later text from the same
+          // message opens a fresh bubble below it (preserves text → tool → text).
+          flush();
+        }
+        // thinking blocks intentionally ignored
+      }
+      continue;
+    }
+    if (ev.type === 'user') {
+      const c = ev.message && ev.message.content;
+      const isToolResult = Array.isArray(c) && c.length && c.every((b) => b.type === 'tool_result');
+      if (!isToolResult) flush(); // a real (prompt) user message closes the bubble
+      continue;
+    }
+    flush();
   }
+  flush();
+  return turns;
+}
+
+// Resolve the on-disk session jsonl for a job (cwd is derived, never stored).
+async function sessionPathForJob(job) {
+  if (!job || !job.session_id) return null;
+  const st = aiState.get(job.id);
+  const cwd = (st && st.cwd) || (await resolveLocation(job)).cwd;
+  return bridge.sessionPathFor(cwd, job.session_id);
+}
+
+// Fold any not-yet-recorded AI turns from the session jsonl into job.turns[].
+// Dedup is positional: the jsonl only grows and parsing is deterministic, so the
+// first N parsed AI bubbles are invariant — we append only those past the count
+// of AI turns already on the job. NEVER touches status (see handleJobExit).
+async function ingestSession(jobId, jsonlPath) {
+  const job = await jobs.readJobOr(jobId);
+  if (!job) return;
+  const p = jsonlPath || (await sessionPathForJob(job));
+  if (!p) return;
+  const parsed = await parseAiTurns(p);
+  const have = (job.turns || []).filter((t) => t.role === 'ai').length;
+  if (parsed.length <= have) return; // nothing new
+  for (const t of parsed.slice(have)) {
+    job.turns.push({ role: 'ai', text: t.text, at: t.at || new Date().toISOString(), msg_id: t.id || null });
+  }
+  await jobs.writeJob(job);
+}
+
+// AI never sets `done` (human-only). A clean turn lands the job in `review`
+// (waiting on the human); a crash lands it in `blocked`. We do a FINAL ingest
+// first (catch the last reply the watcher may not have flushed yet) THEN flip
+// status — both inside the per-job queue so no trailing watcher ingest can
+// clobber the status. patchJob stops the work clock; the jobs watcher
+// broadcasts job.changed so the UI updates live.
+function handleJobExit(jobId, code) {
+  enqueueJobOp(jobId, async () => {
+    try { await ingestSession(jobId, null); }
+    catch (err) { console.error('[runn] handleJobExit ingest', jobId, err); }
+    await jobs.patchJob(jobId, { status: code === 0 ? 'review' : 'blocked' });
+  });
+}
+
+// ── Permission bridge (the gated model) ──────────────────────
+// mcp-permission.js POSTs /permissions/request whenever Claude wants a tool; we
+// park the held response, surface it to the browser, and resolve it when the
+// human clicks Allow/Deny. A persisted "always allow" rule short-circuits the
+// wait for familiar tools.
+const pendingPermissions = new Map(); // request_id → { send, job_id, tool_name, input, created_at }
+
+// raw_ssh_exec (the human-gated escape hatch) and apply_plan (the single
+// execution path for a stored plan body) are PERMANENTLY ineligible for
+// "always allow" — they must be approved every single time.
+function isApplyPlanToolName(toolName) {
+  return /(?:^|__)apply_plan$/.test(String(toolName || ''));
+}
+function isRawSshToolName(toolName) {
+  return /(?:^|__)raw_ssh_exec$/.test(String(toolName || ''));
+}
+function isAlwaysAllowEligible(toolName) {
+  return !isRawSshToolName(toolName) && !isApplyPlanToolName(toolName);
+}
+async function isAlwaysAllowed(toolName) {
+  if (!isAlwaysAllowEligible(toolName)) return false;
+  const s = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
+  return !!(s.permissions && s.permissions.alwaysAllow && s.permissions.alwaysAllow[toolName]);
+}
+async function setAlwaysAllowed(toolName) {
+  if (!isAlwaysAllowEligible(toolName)) return;
+  const s = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
+  s.permissions = s.permissions || {};
+  s.permissions.alwaysAllow = s.permissions.alwaysAllow || {};
+  s.permissions.alwaysAllow[toolName] = true;
+  await atomicWriteJson(SETTINGS_PATH, s);
 }
 
 // Invite Claude to a job (the "+ AI" handover). Claude is never spawned and
@@ -130,6 +277,7 @@ async function inviteAi(res, job) {
     if (e.code === 'CWD_BUSY') return sendJson(res, 202, { queued: true, busy: true, holder: e.holder });
     throw e;
   }
+  sessionJobIndex.set(result.session_id, id);
   await jobs.patchJob(id, { session_id: result.session_id, status: 'doing' });
   return sendJson(res, 201, await jobs.readJob(id));
 }
@@ -391,6 +539,56 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, merged);
     }
 
+    // ── Permission prompts (MCP bridge) ────────────────────
+    // mcp-permission.js posts here when Claude wants a tool. We hold the
+    // response open until the human clicks Allow/Deny (or an always-allow rule
+    // short-circuits the wait). The response shape matches the MCP contract:
+    // { behavior: 'allow' | 'deny', message? }.
+    if (m === 'POST' && url.pathname === '/permissions/request') {
+      const body = await readBody(req);
+      const jobId = permTokenToJob.get(body.token) || null;
+      if (await isAlwaysAllowed(body.tool_name)) {
+        return sendJson(res, 200, { behavior: 'allow' });
+      }
+      const requestId = crypto.randomUUID();
+      pendingPermissions.set(requestId, {
+        job_id: jobId,
+        tool_name: body.tool_name,
+        input: body.input,
+        created_at: Date.now(),
+        send: (decision) => { pendingPermissions.delete(requestId); sendJson(res, 200, decision); },
+      });
+      // The MCP server may hang for minutes; disable keepalive so node doesn't
+      // reap the socket before the human decides.
+      res.setTimeout(0);
+      req.on('close', () => { pendingPermissions.delete(requestId); });
+      broadcast({
+        type: 'permission.requested',
+        request_id: requestId,
+        job_id: jobId,
+        tool_name: body.tool_name,
+        input: body.input,
+      });
+      return; // response sent later via pending.send()
+    }
+    if (m === 'POST' && url.pathname === '/permissions/decide') {
+      const body = await readBody(req);
+      const pending = pendingPermissions.get(body.request_id);
+      if (!pending) return sendJson(res, 404, { error: 'no such request' });
+      const decision = body.decision === 'allow' ? 'allow' : 'deny';
+      if (decision === 'allow' && body.remember) await setAlwaysAllowed(pending.tool_name);
+      pending.send({ behavior: decision, message: decision === 'deny' ? (body.message || 'denied by user') : undefined });
+      broadcast({ type: 'permission.resolved', request_id: body.request_id, decision, remember: !!body.remember });
+      return sendJson(res, 200, { ok: true });
+    }
+    if (m === 'GET' && url.pathname === '/permissions/pending') {
+      const list = [];
+      for (const [id, p] of pendingPermissions) {
+        list.push({ request_id: id, job_id: p.job_id, tool_name: p.tool_name, input: p.input, created_at: p.created_at });
+      }
+      return sendJson(res, 200, list);
+    }
+
     // ── Static frontend (+ SPA fallback) ───────────────────
     if (m === 'GET') return serveStatic(req, res);
     return notFound(res);
@@ -478,11 +676,41 @@ invoicesWatcher.on('add',    invoiceEvent('invoice.added'));
 invoicesWatcher.on('change', invoiceEvent('invoice.changed'));
 invoicesWatcher.on('unlink', invoiceEvent('invoice.removed'));
 
+// ── Discovery watcher: session jsonl → AI turns ──────────────
+// Claude Code lays sessions at ~/.claude/projects/<cwd-slug>/<sessionId>.jsonl
+// (depth 2). On any change to a jsonl whose sessionId belongs to a Runn job, we
+// fold the new AI turns in (serialised via the per-job queue). Every other
+// Claude session on this box — including the one editing Runn itself — is absent
+// from sessionJobIndex and ignored.
+const SESSIONS_ROOT = path.join(process.env.HOME || os.homedir(), '.claude', 'projects');
+const sessionsWatcher = chokidar.watch(SESSIONS_ROOT, {
+  ignored: (p) => p.endsWith('.tmp'),
+  ignoreInitial: true,
+  awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+  depth: 2,
+});
+function onSessionEvent(p) {
+  if (!p.endsWith('.jsonl')) return;
+  const sessionId = path.basename(p, '.jsonl');
+  const jobId = sessionJobIndex.get(sessionId);
+  if (!jobId) return;
+  enqueueJobOp(jobId, () => ingestSession(jobId, p));
+}
+sessionsWatcher.on('add', onSessionEvent);
+sessionsWatcher.on('change', onSessionEvent);
+
 // ── Boot ─────────────────────────────────────────────────────
 (async () => {
   await jobs.init();
   await invoices.init();
   await ensureDir(CLIENTS_DIR);
+  // Rebuild the session index from existing jobs and catch up any AI turns the
+  // worker missed while it was down (e.g. it died mid-turn before ingesting).
+  for (const j of await jobs.listJobs({ includeArchived: true })) {
+    if (!j.session_id) continue;
+    sessionJobIndex.set(j.session_id, j.id);
+    enqueueJobOp(j.id, () => ingestSession(j.id, null));
+  }
   server.listen(PORT, HOST, () => {
     const urls = [`http://localhost:${PORT}`];
     for (const ifaces of Object.values(os.networkInterfaces())) {

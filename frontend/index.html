@@ -527,6 +527,54 @@
   .divider { display: flex; align-items: center; gap: 12px; margin: 18px 2px; color: var(--muted); font-size: 12px; }
   .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 
+  /* Thinking bubble — shown on the AI side while status === 'doing' so the
+     human can see Claude is working. Three pulsing dots in an ai-style bubble. */
+  .turn.thinking .bubble { display: flex; gap: 5px; align-items: center; padding: 14px; }
+  .turn.thinking .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
+    animation: thinkpulse 1.2s ease-in-out infinite;
+  }
+  .turn.thinking .dot:nth-child(2) { animation-delay: .2s; }
+  .turn.thinking .dot:nth-child(3) { animation-delay: .4s; }
+  @keyframes thinkpulse { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
+
+  /* Permission prompts (the gated AI model). Sit between the transcript and the
+     composer; an amber card with Allow / Deny, or a red danger card for the
+     raw-SSH escape hatch (which also drops the "Always allow" affordance). */
+  .chat-permissions { flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; padding: 0 12px; }
+  .chat-permissions:empty { display: none; }
+  .chat-permission {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 10px 12px; border-radius: 8px; margin-top: 8px;
+    background: #fff7e6; border: 1px solid #f0c674; color: var(--ink); font-size: 13px;
+  }
+  .chat-permission .perm-head { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+  .chat-permission .perm-icon { font-size: 15px; }
+  .chat-permission .perm-title code {
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    background: rgba(0,0,0,.05); padding: 1px 5px; border-radius: 3px;
+  }
+  .chat-permission .perm-detail {
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted);
+    background: rgba(0,0,0,.04); padding: 6px 8px; border-radius: 4px;
+    overflow-x: auto; white-space: pre; max-height: 120px;
+  }
+  .chat-permission .perm-warning { font-size: 12px; color: #5c1d1d; padding: 4px 0; }
+  .chat-permission .perm-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .chat-permission .perm-btn {
+    font: inherit; font-size: 12px; padding: 5px 12px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 4px; cursor: pointer; color: var(--ink);
+  }
+  .chat-permission .perm-btn:hover:not(:disabled) { border-color: var(--muted); }
+  .chat-permission .perm-btn:disabled { opacity: .5; cursor: default; }
+  .chat-permission .perm-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .chat-permission .perm-btn.primary:hover:not(:disabled) { filter: brightness(0.95); }
+  .chat-permission .perm-deny { color: #b85c1f; }
+  .chat-permission.chat-permission-dangerous { background: #fdecea; border-color: #d93025; color: #5c1d1d; }
+  .chat-permission.chat-permission-dangerous .perm-head { font-weight: 700; }
+  .chat-permission.chat-permission-dangerous .perm-btn.primary { background: #d93025; border-color: #d93025; }
+
   /* composer */
   .composer { display: flex; gap: 8px; align-items: flex-end;
     padding: 10px 12px calc(10px + var(--safe-b)); border-top: 1px solid var(--border); background: var(--surface); }
@@ -652,6 +700,7 @@
       <div class="turns" id="turns">
         <div class="empty" id="emptyState">Select a job, or start a new one.</div>
       </div>
+      <div class="chat-permissions" id="chatPermissions"></div>
       <form class="composer" id="composer">
         <button type="button" id="inviteAiBtn" class="invite-ai" hidden>+ AI</button>
         <textarea id="msgInput" rows="1" placeholder="Select a job, or start a new one." disabled></textarea>
@@ -1965,21 +2014,34 @@
       wrap.appendChild(bubble);
       turnsEl.appendChild(wrap);
     });
+    // The thinking bubble: while the job is `doing`, Claude is working — show a
+    // pulsing AI bubble so the human knows a reply is coming. Its replies stream
+    // in as real ai turns (the discovery watcher folds them into job.turns), and
+    // the bubble clears when the job leaves `doing` (→ review/blocked).
+    if (j.status === 'doing') {
+      const t = document.createElement('div');
+      t.className = 'turn ai thinking';
+      t.innerHTML = '<div class="bubble"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
+      turnsEl.appendChild(t);
+    }
+    renderPermissions();
     turnsEl.scrollTop = turnsEl.scrollHeight;
   }
 
   // ── Data load ───────────────────────────────────
   async function load() {
     try {
-      const [jobs, clients, invoices, settings] = await Promise.all([
+      const [jobs, clients, invoices, settings, perms] = await Promise.all([
         fetch('/jobs').then((r) => r.json()),
         fetch('/clients').then((r) => r.json()),
         fetch('/invoices').then((r) => r.json()),
         fetch('/settings').then((r) => r.json()),
+        fetch('/permissions/pending').then((r) => r.json()).catch(() => []),
       ]);
       for (const c of clients) state.clients.set(c.id, c);
       for (const j of jobs) state.jobs.set(j.id, j);
       for (const inv of invoices) state.invoices.set(inv.id, inv);
+      for (const p of (perms || [])) pendingPerms.set(p.request_id, p);
       state.settings = settings || {};
       renderFilterOptions();
       renderList();
@@ -2020,6 +2082,13 @@
         state.invoices.delete(m.invoice.id);
         if (state.billingSel && state.billingSel.kind === 'invoice' && state.billingSel.id === m.invoice.id) state.billingSel = null;
         maybeRenderBilling();
+      } else if (m.type === 'permission.requested') {
+        pendingPerms.set(m.request_id, { request_id: m.request_id, job_id: m.job_id, tool_name: m.tool_name, input: m.input });
+        renderPermissions();
+        turnsEl.scrollTop = turnsEl.scrollHeight;
+      } else if (m.type === 'permission.resolved') {
+        pendingPerms.delete(m.request_id);
+        renderPermissions();
       }
     };
     ws.onclose = () => setTimeout(connectWS, 1500);
@@ -2106,6 +2175,75 @@
       console.error('invite failed', e);
     } finally {
       state.inviting = false; inviteAiBtn.disabled = false;
+    }
+  }
+
+  // ── Permission prompts (the gated AI model) ──────────────
+  // Claude routes every Write/Edit/Bash through the worker; a pending request is
+  // broadcast over /ws and parked here until the human clicks Allow/Deny.
+  const chatPermissions = $('chatPermissions');
+  const pendingPerms = new Map(); // request_id -> { request_id, job_id, tool_name, input }
+  const escapeHtml = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const isRawSshTool = (t) => /(?:^|__)raw_ssh_exec$/.test(String(t || ''));
+  const isApplyPlanTool = (t) => /(?:^|__)apply_plan$/.test(String(t || ''));
+
+  function renderPermissions() {
+    if (!chatPermissions) return;
+    chatPermissions.innerHTML = '';
+    const id = state.currentId;
+    if (!id || id === DRAFT) return;
+    for (const p of pendingPerms.values()) {
+      if (p.job_id && p.job_id !== id) continue; // belongs to another job
+      chatPermissions.appendChild(buildPermissionEl(p));
+    }
+  }
+
+  function buildPermissionEl(p) {
+    const el = document.createElement('div');
+    const inp = p.input || {};
+    const dangerous = isRawSshTool(p.tool_name);
+    const applyPlan = isApplyPlanTool(p.tool_name);
+    el.className = 'chat-permission' + (dangerous ? ' chat-permission-dangerous' : '');
+    el.dataset.requestId = p.request_id;
+    const detail = inp.file_path || inp.path || inp.command || '';
+    const detailHtml = detail ? `<div class="perm-detail">${escapeHtml(String(detail))}</div>` : '';
+    const why = dangerous && inp.justification
+      ? `<div class="perm-detail"><em>${escapeHtml(String(inp.justification))}</em></div>` : '';
+    const icon = dangerous ? '⚠️' : '🔐';
+    const title = dangerous
+      ? `Claude wants to run <code>${escapeHtml(p.tool_name)}</code> — RAW SSH ESCAPE HATCH`
+      : `Claude wants to use <code>${escapeHtml(p.tool_name)}</code>`;
+    const warningHtml = dangerous
+      ? `<div class="perm-warning">Bypasses the curated client-ops boundary. Read it carefully — this approval is single-use.</div>` : '';
+    // raw_ssh_exec and apply_plan are never blanket-approvable (the worker
+    // independently refuses to persist a rule); drop the button to match.
+    const alwaysBtn = (dangerous || applyPlan) ? ''
+      : `<button class="perm-btn perm-allow-always">Always allow</button>`;
+    el.innerHTML = `
+      <div class="perm-head"><span class="perm-icon">${icon}</span><span class="perm-title">${title}</span></div>
+      ${warningHtml}${detailHtml}${why}
+      <div class="perm-actions">
+        <button class="perm-btn perm-deny">Deny</button>
+        ${alwaysBtn}
+        <button class="perm-btn perm-allow primary">Allow</button>
+      </div>`;
+    el.querySelector('.perm-allow').addEventListener('click', () => decidePermission(p.request_id, 'allow', false));
+    const al = el.querySelector('.perm-allow-always');
+    if (al) al.addEventListener('click', () => decidePermission(p.request_id, 'allow', true));
+    el.querySelector('.perm-deny').addEventListener('click', () => decidePermission(p.request_id, 'deny', false));
+    return el;
+  }
+
+  async function decidePermission(requestId, decision, remember) {
+    const el = chatPermissions.querySelector(`[data-request-id="${CSS.escape(requestId)}"]`);
+    if (el) for (const b of el.querySelectorAll('button')) b.disabled = true;
+    try {
+      await postJson('/permissions/decide', { request_id: requestId, decision, remember });
+    } catch (err) {
+      console.error('permission decide failed', err);
+      if (el) for (const b of el.querySelectorAll('button')) b.disabled = false;
     }
   }
 
