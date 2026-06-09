@@ -707,10 +707,21 @@ sessionsWatcher.on('change', onSessionEvent);
   await ensureDir(CLIENTS_DIR);
   // Rebuild the session index from existing jobs and catch up any AI turns the
   // worker missed while it was down (e.g. it died mid-turn before ingesting).
+  // No Claude child survives a worker restart (systemd KillMode=control-group
+  // reaps the detached children), so any job left in `doing` is orphaned — its
+  // turn can never fire handleJobExit. Do a final catch-up ingest, then flip it
+  // to `review` so the UI spinner clears instead of hanging forever.
   for (const j of await jobs.listJobs({ includeArchived: true })) {
-    if (!j.session_id) continue;
-    sessionJobIndex.set(j.session_id, j.id);
-    enqueueJobOp(j.id, () => ingestSession(j.id, null));
+    const wasDoing = j.status === 'doing';
+    if (j.session_id) {
+      sessionJobIndex.set(j.session_id, j.id);
+      enqueueJobOp(j.id, async () => {
+        await ingestSession(j.id, null);
+        if (wasDoing) await jobs.patchJob(j.id, { status: 'review' });
+      });
+    } else if (wasDoing) {
+      enqueueJobOp(j.id, () => jobs.patchJob(j.id, { status: 'review' }));
+    }
   }
   server.listen(PORT, HOST, () => {
     const urls = [`http://localhost:${PORT}`];
