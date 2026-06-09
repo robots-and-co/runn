@@ -24,10 +24,17 @@ const invoicePath = (id) => path.join(INVOICES_DIR, `${id}.json`);
 const clientPath = (id) => path.join(CLIENTS_DIR, `${id}.json`);
 
 const nowIso = () => new Date().toISOString();
-const today = () => new Date().toISOString().slice(0, 10);
+// Invoice issue dates use the Melbourne calendar day, not UTC. toISOString() is
+// always UTC, so before ~10am local it would stamp yesterday's date on an
+// invoice. Pin the zone so it's right regardless of the host's clock.
+const today = () => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date());
+// Pure calendar arithmetic on a YYYY-MM-DD string, kept in UTC so no zone offset
+// can shift the day.
 function addDays(iso, days) {
-  const d = new Date(iso + 'T00:00:00');
-  d.setDate(d.getDate() + days);
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }

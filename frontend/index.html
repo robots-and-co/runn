@@ -776,17 +776,25 @@
   // A discount line is just a negative amount; render it as -$150.00, not $-150.00.
   const moneySigned = (sym, n) => { n = Number(n) || 0; return n < 0 ? `-${sym}${money2(-n)}` : `${sym}${money2(n)}`; };
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-  const today = () => new Date().toISOString().slice(0, 10);
+  // "Today" is the Melbourne calendar day, not UTC: toISOString() is always UTC,
+  // so before ~10am local it would read as yesterday. Pin the zone explicitly so
+  // the date is right wherever this runs (NUC, container, or a remote browser).
+  const TZ = 'Australia/Melbourne';
+  const today = () => new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+  // Pure calendar arithmetic on a YYYY-MM-DD string: parse and read back in UTC
+  // so no zone offset ever shifts the day.
   function addDays(iso, days) {
-    const d = new Date(iso + 'T00:00:00');
-    d.setDate(d.getDate() + days);
+    const d = new Date(iso + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + days);
     return d.toISOString().slice(0, 10);
   }
   // Calendar-week bounds for "this week": the current Sunday→Saturday span.
-  // getDay() is 0=Sun..6=Sat, so subtracting it lands on Sunday and adding the
-  // complement lands on Saturday. Same local-midnight parse the buckets use.
-  const startOfWeekIso = () => addDays(today(), -new Date(today() + 'T00:00:00').getDay());
-  const endOfWeekIso = () => addDays(today(), 6 - new Date(today() + 'T00:00:00').getDay());
+  // getUTCDay() is 0=Sun..6=Sat, so subtracting it lands on Sunday and adding the
+  // complement lands on Saturday. UTC parse keeps it day-shift free.
+  const startOfWeekIso = () => addDays(today(), -new Date(today() + 'T00:00:00Z').getUTCDay());
+  const endOfWeekIso = () => addDays(today(), 6 - new Date(today() + 'T00:00:00Z').getUTCDay());
   function fmtDate(iso) {
     if (!iso) return '';
     const d = new Date(iso.length === 10 ? iso + 'T00:00:00' : iso);
