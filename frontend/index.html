@@ -1942,7 +1942,7 @@
     enterChatView();
     renderList();
     renderChat();
-    msgInput.focus();
+    if (!isMobile()) msgInput.focus();   // don't pop the keyboard over the read view on mobile
   }
   function closeChat(opts) {
     const fromPop = opts === true || (opts && opts.fromPop === true);
@@ -2215,7 +2215,7 @@
     } finally {
       state.sending = false;
       sendBtn.disabled = msgInput.disabled;
-      msgInput.focus();
+      if (!isMobile()) msgInput.focus();   // keep the keyboard down so the reply is readable on mobile
     }
   }
   function autoGrow() {
