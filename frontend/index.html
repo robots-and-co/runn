@@ -654,14 +654,14 @@
     .chip-menu-item { font-size: 17px; padding: 15px 16px; }
     .job-menu-btn { font-size: 28px; padding: 6px 12px; }
 
-    /* + Job becomes a floating, autosized pill (FAB) instead of a full-width
-       bar — it tucks into the bottom-right and frees the read space. The
-       list-pane's perspective scopes this fixed box to the pane (which fills the
-       phone screen), and the chat/billing overlays (z 5/6) cover it when open,
-       so it only shows over the job list. Pad the list so the last row clears it. */
+    /* + Job is an autosized floating pill, right-aligned at the foot of the
+       list. It stays in normal flow (below the scrolling job list) so it's
+       ALWAYS visible — a position:fixed FAB got trapped by the list pane's
+       `perspective` on mobile and only surfaced after scrolling to the bottom. */
     .list-foot {
-      position: fixed; right: 16px; bottom: 16px;
-      width: auto; padding: 0; border-top: 0; z-index: 4;
+      display: flex; justify-content: flex-end;
+      padding: 10px 12px calc(10px + var(--safe-b));
+      border-top: 0; background: transparent;
     }
     .btn-newjob {
       width: auto; border-radius: 999px;
@@ -669,7 +669,6 @@
       box-shadow: 0 6px 18px -4px rgba(0, 0, 0, 0.4);
     }
     .newjob-picker { width: auto; min-width: 200px; }
-    .job-list { padding-bottom: 84px; }
   }
 </style>
 </head>
@@ -992,7 +991,13 @@
       meta.appendChild(sEl);
       row.appendChild(meta);
 
-      row.addEventListener('click', () => openJob(j.id));
+      // The card toggles its own detail pane: tap an unopened card to open it
+      // (pane 2) and start the work clock; tap the already-open card again to
+      // close the detail and stop tracking.
+      row.addEventListener('click', () => {
+        if (state.currentId === j.id) closeChat();
+        else openJob(j.id);
+      });
       jobListEl.appendChild(row);
     });
   }
