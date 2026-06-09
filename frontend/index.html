@@ -486,6 +486,38 @@
   }
   @keyframes timerpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 
+  /* Play/pause work-clock cluster (button + hours). Default PAUSED: the clock
+     only runs once the user presses play. The button is the single control over
+     billing time — opening a job no longer ticks. */
+  /* Absolutely centred in the header on every breakpoint: dead-centre on the
+     single-row desktop header, and on the 3-row mobile grid top:50% lands it on
+     the middle (2nd) row, also centred. A surface background masks anything it
+     might float over. */
+  .chat-head .timer {
+    display: inline-flex; align-items: center; gap: 8px;
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    background: var(--surface); padding: 0 6px; z-index: 2;
+  }
+  .chat-head .timer[hidden] { display: none; }
+  .chat-head .clock-btn {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; padding: 0; border-radius: 50%; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--brand); font-size: 12px; line-height: 1;
+  }
+  .chat-head .clock-btn:hover { border-color: var(--brand); }
+  .chat-head .clock-btn.running { background: #2f7a45; border-color: #2f7a45; color: #fff; }
+  .chat-head .clock-btn[hidden] { display: none; }
+  /* A flexible spacer pushes the right-hand chips to the edge so the timer can
+     sit dead-centre (see the desktop media query). Collapsed on mobile (grid). */
+  .chat-head .head-spacer { flex: 1 1 0; min-width: 0; }
+
+  /* Desktop: title sizes to content (capped so it can't reach the centred timer),
+     and the spacer pushes the right-hand chips to the edge. */
+  @media (min-width: 721px) {
+    .chat-head .ttl { flex: 0 1 auto; max-width: calc(50% - 96px); }
+  }
+
   .turns { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 18px 16px; }
   .empty {
     height: 100%; display: grid; place-items: center;
@@ -622,9 +654,11 @@
     }
     .chat-head .back     { grid-area: back; justify-self: start; }
     .chat-head .ttl      { grid-area: title; }
+    .chat-head .head-spacer { display: none; }
     #jobMenuBtn          { grid-area: menu; justify-self: end; }
     #chatValue           { grid-area: val;    justify-self: start; }
-    #chatHours           { grid-area: hours;  justify-self: start; }
+    /* #chatTimer is absolutely centred over the header (see base styles), so it's
+       not placed in the grid — its "hours" cell stays empty under it. */
     #chatClient          { grid-area: client; justify-self: start; }
     #chatDue             { grid-area: due;    justify-self: center; }
     #chatStatus          { grid-area: status; justify-self: end; }
@@ -701,10 +735,14 @@
       <div class="chat-head">
         <button class="back" id="backBtn" aria-label="Back">‹</button>
         <span class="ttl" id="chatTitle"></span>
+        <span class="head-spacer" aria-hidden="true"></span>
         <span class="job-val" id="chatValue" hidden></span>
-        <span class="hours" id="chatHours" hidden>
-          <input type="text" inputmode="decimal" class="hours-input" id="chatHoursInput" aria-label="Hours worked">
-          <span class="hours-unit">h</span>
+        <span class="timer" id="chatTimer" hidden>
+          <button class="clock-btn" id="clockBtn" type="button" aria-label="Start timer" aria-pressed="false">▶</button>
+          <span class="hours" id="chatHours" hidden>
+            <input type="text" inputmode="decimal" class="hours-input" id="chatHoursInput" aria-label="Hours worked">
+            <span class="hours-unit">h</span>
+          </span>
         </span>
         <span class="chip client" id="chatClient" hidden></span>
         <span class="due-chip" id="chatDue" hidden>
@@ -1224,9 +1262,10 @@
     if (j.work_seconds != null) return Number(j.work_seconds) || 0;
     return Math.round((Number(j.hours) || 0) * 3600);   // back-fill from old jobs
   }
-  // The work clock runs whenever the job carries a start-stamp — set when the
-  // user lands in the job (human time) OR when the AI is spawned. Decoupled from
-  // the thinking spinner, which keys off status === 'doing'.
+  // The work clock runs whenever the job carries a start-stamp. That stamp is set
+  // EITHER by the user pressing play (manual; the clock is default-paused) OR by
+  // the AI when it's spawned (status === 'doing'). Decoupled from the thinking
+  // spinner, which keys off status === 'doing'.
   function jobRunning(j) { return !!(j && j.doing_started_at); }
   function liveSeconds(j) {
     let s = jobSeconds(j);
@@ -1243,22 +1282,34 @@
   }
   const fmtHours = (h) => String(round2(h));
   function renderTimerDisplay() {
+    const cluster = $('chatTimer');
     const wrap = $('chatHours');
     const input = $('chatHoursInput');
     const valEl = $('chatValue');
+    const btn = $('clockBtn');
     const j = timer.jobId ? state.jobs.get(timer.jobId) : null;
     if (!j) {
-      wrap.hidden = true; wrap.classList.remove('running');
-      valEl.hidden = true;
+      cluster.hidden = true; wrap.hidden = true; wrap.classList.remove('running');
+      btn.hidden = true; valEl.hidden = true;
       return;
     }
     const running = jobRunning(j);
     const hrs = liveSeconds(j) / 3600;
+    cluster.hidden = false;
     wrap.hidden = false;
     wrap.classList.toggle('running', running);
     input.readOnly = running;   // editable only when the work clock is stopped
     // Don't clobber what the user is mid-edit (only possible while stopped).
     if (!(input === document.activeElement && !running)) input.value = fmtHours(hrs);
+    // Play/pause control. Hidden for terminal jobs (nothing more to bill) and
+    // while the AI owns the clock (status 'doing' — the spinner covers that and
+    // the backend refuses a manual stop). ▶ when paused, ⏸ when running.
+    const showBtn = clockBillable(j) && j.status !== 'doing';
+    btn.hidden = !showBtn;
+    btn.textContent = running ? '⏸' : '▶';
+    btn.classList.toggle('running', running);
+    btn.setAttribute('aria-label', running ? 'Pause timer' : 'Start timer');
+    btn.setAttribute('aria-pressed', running ? 'true' : 'false');
     // $ value — billable clients only.
     const c = clientOf(j.client_id);
     if (c && !c.non_billable && c.rate_per_hour) {
@@ -1269,10 +1320,14 @@
     }
   }
 
-  // ── Work-clock control ──────────────────────────
-  // The clock should run while the user is *in* a job and the tab is in front.
-  // We track which job is on the clock and reconcile on every transition (open,
-  // close, tab hide/show, create). Terminal jobs (done/invoiced/paid) don't bill.
+  // ── Work-clock control (default paused) ─────────────
+  // The clock NEVER auto-starts: opening a job must not tick (that ticking on
+  // landing caused anxiety). The user presses play (clockToggle) to run it and
+  // pause to stop. The only automatic move is *pausing* — when the job you were
+  // timing stops being the open, billable foreground job (you closed it, opened
+  // another, or it was marked done), stop its clock so it can't keep billing
+  // while you're elsewhere. The AI's own clock (status 'doing') is never tracked
+  // here, and the backend refuses a manual stop while it's running.
   let clockedJobId = null;
   function clockBillable(j) {
     return !!(j && j.status !== 'done' && j.status !== 'invoiced' && j.status !== 'paid');
@@ -1283,26 +1338,33 @@
     renderList();
     if (j.id === state.currentId) timerSync();
   }
+  // Play/pause, wired to #clockBtn. Starts the clock on the open job, or stops it
+  // if already running. No-op for drafts, terminal jobs, or while the AI owns it.
+  function clockToggle() {
+    const id = (state.currentId && state.currentId !== DRAFT) ? state.currentId : null;
+    if (!id) return;
+    const j = state.jobs.get(id);
+    if (!clockBillable(j) || (j && j.status === 'doing')) return;
+    if (jobRunning(j)) {
+      clockedJobId = null;
+      postJson(`/jobs/${id}/clock/stop`, {}).then(applyClockJob).catch(() => {});
+    } else {
+      clockedJobId = id;
+      postJson(`/jobs/${id}/clock/start`, {}).then(applyClockJob).catch(() => {});
+    }
+  }
+  // Reconcile on every navigation: pause the clocked job when it's no longer the
+  // open, billable foreground job. Never starts anything.
   function clockSync() {
-    const cur = (state.currentId && state.currentId !== DRAFT && !document.hidden) ? state.currentId : null;
-    const j = cur ? state.jobs.get(cur) : null;
-    const want = clockBillable(j) ? cur : null;
-    if (clockedJobId && clockedJobId !== want) {
+    const cur = (state.currentId && state.currentId !== DRAFT) ? state.currentId : null;
+    const keep = (cur && clockBillable(state.jobs.get(cur))) ? cur : null;
+    if (clockedJobId && clockedJobId !== keep) {
       const prev = clockedJobId; clockedJobId = null;
       postJson(`/jobs/${prev}/clock/stop`, {}).then(applyClockJob).catch(() => {});
     }
-    if (want) {
-      clockedJobId = want;
-      // (Re)start only if it isn't already ticking — e.g. after the AI hands the
-      // job back (status leaves `doing`, stamp cleared) while the user lingers.
-      if (!(j && j.doing_started_at)) {
-        postJson(`/jobs/${want}/clock/start`, {}).then(applyClockJob).catch(() => {});
-      }
-    }
   }
-  document.addEventListener('visibilitychange', clockSync);
-  // On unload a normal fetch may be cancelled — beacon the stop so the clock
-  // doesn't keep ticking after the tab closes.
+  // On tab close a normal fetch may be cancelled — beacon the stop so a clock the
+  // user left running doesn't keep ticking after the tab goes away.
   window.addEventListener('pagehide', () => {
     if (clockedJobId) { try { navigator.sendBeacon(`/jobs/${clockedJobId}/clock/stop`); } catch {} clockedJobId = null; }
   });
@@ -1937,6 +1999,7 @@
     state.picking = true;
     state.draftClientId = null;
     state.currentId = null;
+    clockSync();   // leaving the open job → pause its clock
     const sel = $('newJobPicker');
     sel.innerHTML = '';
     const ph = document.createElement('option');
@@ -1968,6 +2031,7 @@
     state.picking = false;
     state.draftClientId = clientId;
     state.currentId = DRAFT;
+    clockSync();   // leaving the open job → pause its clock
     resetNewJobPicker();
     enterChatView();
     renderList();
@@ -2237,7 +2301,7 @@
       const updated = await postJson(`/jobs/${id}/turn`, { role: 'user', text });
       state.jobs.set(updated.id, updated);
       renderList(); renderChat();
-      clockSync();   // a brand-new job (was DRAFT) goes on the clock now
+      clockSync();   // reconcile only — default-paused, so sending never auto-starts the clock
 
     } catch (e) {
       console.error('send failed', e);
@@ -2485,6 +2549,8 @@
   $('chatHoursInput').addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') { ev.preventDefault(); $('chatHoursInput').blur(); }
   });
+  // Play/pause the work clock. Default paused; this is the only manual control.
+  $('clockBtn').addEventListener('click', (ev) => { ev.stopPropagation(); clockToggle(); });
   $('jobMenuBtn').addEventListener('click', (ev) => {
     ev.stopPropagation();
     if ($('jobMenu').hidden) openJobMenu($('jobMenuBtn')); else closeJobMenu();
