@@ -2041,11 +2041,16 @@
       for (const c of clients) state.clients.set(c.id, c);
       for (const j of jobs) state.jobs.set(j.id, j);
       for (const inv of invoices) state.invoices.set(inv.id, inv);
+      // /permissions/pending is authoritative — rebuild from it (don't merge) so
+      // cards the worker has dropped (it restarted, or Claude's child died)
+      // disappear instead of lingering as un-dismissable popups.
+      pendingPerms.clear();
       for (const p of (perms || [])) pendingPerms.set(p.request_id, p);
       state.settings = settings || {};
       renderFilterOptions();
       renderList();
       renderChat();
+      renderPermissions();
     } catch (e) {
       console.error('load failed', e);
     }
@@ -2249,8 +2254,14 @@
     try {
       await postJson('/permissions/decide', { request_id: requestId, decision, remember });
     } catch (err) {
+      // The worker no longer has this request (it restarted, or Claude's child
+      // died) — the card is stale. Drop it locally and re-sync from the
+      // authoritative pending list so it disappears instead of sticking with
+      // dead buttons.
       console.error('permission decide failed', err);
-      if (el) for (const b of el.querySelectorAll('button')) b.disabled = false;
+      pendingPerms.delete(requestId);
+      renderPermissions();
+      load();
     }
   }
 

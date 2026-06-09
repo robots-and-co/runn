@@ -562,7 +562,15 @@ const server = http.createServer(async (req, res) => {
       // The MCP server may hang for minutes; disable keepalive so node doesn't
       // reap the socket before the human decides.
       res.setTimeout(0);
-      req.on('close', () => { pendingPermissions.delete(requestId); });
+      // If the socket closes before a decision (Claude's child was killed
+      // mid-turn), drop the pending request AND tell connected browsers so the
+      // card clears live instead of sticking around un-clickable. The guard
+      // skips the normal case where send() already deleted it after a decision.
+      req.on('close', () => {
+        if (pendingPermissions.delete(requestId)) {
+          broadcast({ type: 'permission.resolved', request_id: requestId, decision: 'deny', remember: false });
+        }
+      });
       broadcast({
         type: 'permission.requested',
         request_id: requestId,
