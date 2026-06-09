@@ -188,7 +188,8 @@ async function ingestSession(jobId, jsonlPath) {
   const p = jsonlPath || (await sessionPathForJob(job));
   if (!p) return;
   const parsed = await parseAiTurns(p);
-  const have = (job.turns || []).filter((t) => t.role === 'ai').length;
+  if (!Array.isArray(job.turns)) job.turns = [];
+  const have = job.turns.filter((t) => t.role === 'ai').length;
   if (parsed.length <= have) return; // nothing new
   for (const t of parsed.slice(have)) {
     job.turns.push({ role: 'ai', text: t.text, at: t.at || new Date().toISOString(), msg_id: t.id || null });
