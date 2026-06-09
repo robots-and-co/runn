@@ -467,6 +467,15 @@ const server = http.createServer(async (req, res) => {
       try { return sendJson(res, 200, await jobs.editTurn(id, idx, body.text)); }
       catch (e) { return badReq(res, e.message); }
     }
+    // The human work clock — the browser starts it when the user lands in a job
+    // and stops it when the job loses foreground (navigate away / tab hidden /
+    // unload). Independent of the AI spinner (status === 'doing').
+    if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/clock\/(start|stop)$/))) {
+      const id = mm[1], action = mm[2];
+      if (!(await jobs.readJobOr(id))) return notFound(res);
+      const job = action === 'start' ? await jobs.startClock(id) : await jobs.stopClock(id);
+      return sendJson(res, 200, job);
+    }
     if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/invite-ai$/))) {
       const id = mm[1];
       const job = await jobs.readJobOr(id);
@@ -721,14 +730,21 @@ sessionsWatcher.on('change', onSessionEvent);
   // to `review` so the UI spinner clears instead of hanging forever.
   for (const j of await jobs.listJobs({ includeArchived: true })) {
     const wasDoing = j.status === 'doing';
+    // A human work clock left running across a restart (the browser never got
+    // to POST clock/stop) would otherwise tick forever — fold it now. The
+    // `doing` case is handled by patchJob→review (which folds the clock too).
+    const staleClock = !wasDoing && j.doing_started_at;
     if (j.session_id) {
       sessionJobIndex.set(j.session_id, j.id);
       enqueueJobOp(j.id, async () => {
         await ingestSession(j.id, null);
         if (wasDoing) await jobs.patchJob(j.id, { status: 'review' });
+        else if (staleClock) await jobs.stopClock(j.id);
       });
     } else if (wasDoing) {
       enqueueJobOp(j.id, () => jobs.patchJob(j.id, { status: 'review' }));
+    } else if (staleClock) {
+      enqueueJobOp(j.id, () => jobs.stopClock(j.id));
     }
   }
   server.listen(PORT, HOST, () => {

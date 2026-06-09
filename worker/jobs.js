@@ -147,18 +147,52 @@ async function setStatus(id, status) {
 // Back-fills work_seconds from any pre-existing hand-entered hours. Mutates job.
 function applyTimerTransition(prevStatus, job) {
   if (prevStatus === 'doing' && job.status !== 'doing') {
-    if (job.doing_started_at) {
-      const elapsed = Math.round((Date.now() - new Date(job.doing_started_at).getTime()) / 1000);
-      if (elapsed > 0) {
-        if (job.work_seconds == null) job.work_seconds = Math.round((Number(job.hours) || 0) * 3600);
-        job.work_seconds += elapsed;
-        job.hours = Math.round((job.work_seconds / 3600) * 100) / 100;
-      }
-    }
-    job.doing_started_at = null;
+    foldClock(job);
   } else if (job.status === 'doing' && prevStatus !== 'doing') {
-    job.doing_started_at = nowIso();
+    // Don't clobber a clock the human already started by landing in the job —
+    // the elapsed time so far should count, so only stamp if nothing's running.
+    if (!job.doing_started_at) job.doing_started_at = nowIso();
   }
+}
+
+// Terminal statuses don't accrue time — landing in a wrapped-up job shouldn't
+// start billing it.
+const CLOCK_IDLE_STATUSES = new Set(['done', 'invoiced', 'paid']);
+// A single uninterrupted session is capped so a clock left running (a crash, a
+// closed laptop) can't fold an absurd span into the bill. The frontend stops
+// the clock when the job loses foreground, so real sessions stay well under.
+const MAX_CLOCK_SESSION_SECONDS = 8 * 3600;
+
+function foldClock(job) {
+  if (!job.doing_started_at) return false;
+  let elapsed = Math.round((Date.now() - new Date(job.doing_started_at).getTime()) / 1000);
+  job.doing_started_at = null;
+  if (!(elapsed > 0)) return true;
+  if (elapsed > MAX_CLOCK_SESSION_SECONDS) elapsed = MAX_CLOCK_SESSION_SECONDS;
+  if (job.work_seconds == null) job.work_seconds = Math.round((Number(job.hours) || 0) * 3600);
+  job.work_seconds += elapsed;
+  job.hours = Math.round((job.work_seconds / 3600) * 100) / 100;
+  return true;
+}
+
+// The human work clock: starts the moment the user lands in a job (the AI
+// spinner stays separate — it's driven by status === 'doing', not this). Idempotent.
+async function startClock(id) {
+  const job = await readJob(id);
+  if (CLOCK_IDLE_STATUSES.has(job.status)) return job;
+  if (job.doing_started_at) return job;       // already running
+  job.doing_started_at = nowIso();
+  return writeJob(job);
+}
+
+// Stops the human clock when the user leaves the job. If the AI owns the clock
+// (status === 'doing') we leave it alone — handleJobExit folds it on exit.
+async function stopClock(id) {
+  const job = await readJob(id);
+  if (job.status === 'doing') return job;     // AI is running; it owns the clock
+  if (!job.doing_started_at) return job;
+  foldClock(job);
+  return writeJob(job);
 }
 
 // Hard delete: drop the record and its notes companion. The chokidar unlink
@@ -199,6 +233,8 @@ module.exports = {
   editTurn,
   patchJob,
   setStatus,
+  startClock,
+  stopClock,
   deleteJob,
   readNotes,
   writeNotes,

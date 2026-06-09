@@ -429,6 +429,10 @@
     display: flex; align-items: center; gap: 10px;
     padding: 12px 16px; border-bottom: 1px solid var(--border);
     background: var(--surface); min-height: 56px;
+    /* Pin the header and lift it above the scrolling thread so it's always
+       clear which chat you're in (belt-and-suspenders with the flex layout). */
+    position: sticky; top: 0; z-index: 3;
+    box-shadow: 0 4px 10px -8px rgba(0, 0, 0, 0.35);
   }
   .chat-head .back {
     display: none; border: 0; background: none; font-size: 26px;
@@ -1190,7 +1194,10 @@
     if (j.work_seconds != null) return Number(j.work_seconds) || 0;
     return Math.round((Number(j.hours) || 0) * 3600);   // back-fill from old jobs
   }
-  function jobRunning(j) { return !!(j && j.status === 'doing' && j.doing_started_at); }
+  // The work clock runs whenever the job carries a start-stamp — set when the
+  // user lands in the job (human time) OR when the AI is spawned. Decoupled from
+  // the thinking spinner, which keys off status === 'doing'.
+  function jobRunning(j) { return !!(j && j.doing_started_at); }
   function liveSeconds(j) {
     let s = jobSeconds(j);
     if (jobRunning(j)) s += Math.max(0, (Date.now() - new Date(j.doing_started_at).getTime()) / 1000);
@@ -1231,6 +1238,44 @@
       valEl.hidden = true;
     }
   }
+
+  // ── Work-clock control ──────────────────────────
+  // The clock should run while the user is *in* a job and the tab is in front.
+  // We track which job is on the clock and reconcile on every transition (open,
+  // close, tab hide/show, create). Terminal jobs (done/invoiced/paid) don't bill.
+  let clockedJobId = null;
+  function clockBillable(j) {
+    return !!(j && j.status !== 'done' && j.status !== 'invoiced' && j.status !== 'paid');
+  }
+  function applyClockJob(j) {
+    if (!j || !j.id) return;
+    state.jobs.set(j.id, j);
+    renderList();
+    if (j.id === state.currentId) timerSync();
+  }
+  function clockSync() {
+    const cur = (state.currentId && state.currentId !== DRAFT && !document.hidden) ? state.currentId : null;
+    const j = cur ? state.jobs.get(cur) : null;
+    const want = clockBillable(j) ? cur : null;
+    if (clockedJobId && clockedJobId !== want) {
+      const prev = clockedJobId; clockedJobId = null;
+      postJson(`/jobs/${prev}/clock/stop`, {}).then(applyClockJob).catch(() => {});
+    }
+    if (want) {
+      clockedJobId = want;
+      // (Re)start only if it isn't already ticking — e.g. after the AI hands the
+      // job back (status leaves `doing`, stamp cleared) while the user lingers.
+      if (!(j && j.doing_started_at)) {
+        postJson(`/jobs/${want}/clock/start`, {}).then(applyClockJob).catch(() => {});
+      }
+    }
+  }
+  document.addEventListener('visibilitychange', clockSync);
+  // On unload a normal fetch may be cancelled — beacon the stop so the clock
+  // doesn't keep ticking after the tab closes.
+  window.addEventListener('pagehide', () => {
+    if (clockedJobId) { try { navigator.sendBeacon(`/jobs/${clockedJobId}/clock/stop`); } catch {} clockedJobId = null; }
+  });
 
   // ── Billing ─────────────────────────────────────
   // The $ total in the list header flips the LEFT pane between jobs and invoices.
@@ -1855,6 +1900,7 @@
     enterChatView();
     renderList();
     renderChat();
+    clockSync();
     if (window.matchMedia('(min-width: 721px)').matches) msgInput.focus();
   }
   function startNewJob() {
@@ -1905,6 +1951,7 @@
     state.picking = false;
     state.draftClientId = null;
     resetNewJobPicker();
+    clockSync();   // currentId is now null → stops the clock on the job we left
     renderList();
     renderChat();
     // Consume the pushed entry unless the browser already did (device back).
@@ -2072,7 +2119,7 @@
       if (m.type === 'job.added' || m.type === 'job.changed') {
         state.jobs.set(m.job.id, m.job);
         renderList();
-        if (m.job.id === state.currentId) renderChat();
+        if (m.job.id === state.currentId) { renderChat(); clockSync(); }
         maybeRenderBilling();
       } else if (m.type === 'job.removed') {
         state.jobs.delete(m.job.id);
@@ -2160,6 +2207,8 @@
       const updated = await postJson(`/jobs/${id}/turn`, { role: 'user', text });
       state.jobs.set(updated.id, updated);
       renderList(); renderChat();
+      clockSync();   // a brand-new job (was DRAFT) goes on the clock now
+
     } catch (e) {
       console.error('send failed', e);
       msgInput.value = text;          // restore so nothing is lost
