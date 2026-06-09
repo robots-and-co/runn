@@ -2052,9 +2052,16 @@
   }
 
   // ── WebSocket live updates ──────────────────────
+  let wsConnectedOnce = false;
   function connectWS() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
+    // On *reconnect* (the server restarted, the laptop woke, the network
+    // blipped) we've missed every broadcast sent while the socket was down, and
+    // nothing else re-fetches. Re-sync so a job that finished during the gap
+    // can't stay stuck on a stale `doing` status (a spinner that never clears).
+    // Skipped on the first open — startup load() already ran.
+    ws.onopen = () => { if (wsConnectedOnce) load(); wsConnectedOnce = true; };
     ws.onmessage = (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch { return; }
       if (m.type === 'job.added' || m.type === 'job.changed') {
