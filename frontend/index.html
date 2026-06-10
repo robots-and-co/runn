@@ -448,6 +448,15 @@
   .done-btn:active { filter: brightness(0.92); }
   .chat-head .ttl { font-size: 16px; font-weight: 600; flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Click-to-rename: the title is an editable field for real, saved jobs. */
+  .chat-head .ttl.editable { cursor: text; }
+  .chat-head .ttl.editable:hover { text-decoration: underline dotted; text-underline-offset: 3px; }
+  .chat-head .ttl-input {
+    flex: 1 1 auto; min-width: 0; font: inherit; font-size: 16px; font-weight: 600;
+    padding: 2px 7px; border: 1px solid var(--brand); border-radius: 6px;
+    background: var(--surface); color: inherit; outline: none;
+  }
+  .chat-head .ttl-input[hidden] { display: none; }
   .chat-head .ttl-badge {
     flex: none; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
     padding: 3px 9px; border-radius: 999px; white-space: nowrap;
@@ -516,6 +525,7 @@
      and the spacer pushes the right-hand chips to the edge. */
   @media (min-width: 721px) {
     .chat-head .ttl { flex: 0 1 auto; max-width: calc(50% - 96px); }
+    .chat-head .ttl-input { max-width: calc(50% - 96px); }
   }
 
   .turns { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 18px 16px; }
@@ -654,6 +664,7 @@
     }
     .chat-head .back     { grid-area: back; justify-self: start; }
     .chat-head .ttl      { grid-area: title; }
+    .chat-head .ttl-input { grid-area: title; width: 100%; box-sizing: border-box; }
     .chat-head .head-spacer { display: none; }
     #jobMenuBtn          { grid-area: menu; justify-self: end; }
     #chatValue           { grid-area: val;    justify-self: start; }
@@ -734,7 +745,8 @@
     <main class="chat-pane">
       <div class="chat-head">
         <button class="back" id="backBtn" aria-label="Back">‹</button>
-        <span class="ttl" id="chatTitle"></span>
+        <span class="ttl" id="chatTitle" tabindex="0"></span>
+        <input class="ttl-input" id="chatTitleInput" type="text" maxlength="120" autocomplete="off" aria-label="Job title" hidden>
         <span class="head-spacer" aria-hidden="true"></span>
         <span class="job-val" id="chatValue" hidden></span>
         <span class="timer" id="chatTimer" hidden>
@@ -799,6 +811,7 @@
     billingSel: null,      // null = list; {kind:'draft',clientId} | {kind:'invoice',id}
     editing: null,         // working copy of the invoice draft being composed
     editingTurn: null,     // {id, idx} of a private user turn being edited (pre-invite)
+    renaming: null,        // id of the job whose title is being inline-edited (chat header)
     settings: {},          // business/bank/GST defaults for invoice snapshots
     statusFilter: 'open',  // 'open' = active group (open/doing/review/blocked/hold); a status; or 'all'
     dueFilter: 'all',      // 'all' | 'overdue' | 'today' | 'thisweek' | 'none'
@@ -1098,6 +1111,47 @@
     const j = await patchJson('/jobs/' + id, { hours: h, work_seconds: Math.round(h * 3600) });
     state.jobs.set(j.id, j);
     renderList(); renderTimerDisplay();
+  }
+  async function setJobTitle(id, title) {
+    const j = await patchJson('/jobs/' + id, { title });
+    state.jobs.set(j.id, j);
+    renderList(); renderChat();
+  }
+  // Inline rename from the chat header. Click the title → it becomes a field,
+  // commit on Enter/blur, cancel on Escape. Clearing it to empty drops the
+  // override so the title falls back to the first message (titleOf()).
+  let titleEditCancelled = false;
+  function beginRenameTitle() {
+    const id = state.currentId;
+    if (!id || id === DRAFT || state.picking) return;
+    const j = state.jobs.get(id);
+    if (!j) return;
+    state.renaming = id;
+    titleEditCancelled = false;
+    const input = $('chatTitleInput');
+    input.value = titleOf(j) || '';
+    input.hidden = false;
+    $('chatTitle').hidden = true;
+    input.focus();
+    input.select();
+  }
+  function cancelRenameTitle() {
+    state.renaming = null;
+    titleEditCancelled = true;
+    renderChat();
+  }
+  async function commitRenameTitle() {
+    if (state.renaming == null) return;
+    const id = state.renaming;
+    const j = state.jobs.get(id);
+    const raw = $('chatTitleInput').value.trim();
+    const next = raw === '' ? null : raw;
+    const effective = (j && titleOf(j)) || null;
+    state.renaming = null;
+    renderChat();                      // restore the title span right away
+    if (next === effective) return;    // unchanged → nothing to save
+    try { await setJobTitle(id, next); }
+    catch (e) { console.error('rename failed', e); }
   }
   // Paint the header due chip for the open job: a pill that reads "Set due" when
   // empty or "Due <date>" when set, goes red when overdue, and shows a clear (×).
@@ -2063,7 +2117,14 @@
     $('chatDue').hidden = true;  // shown only for a real, saved job
     inviteAiBtn.hidden = true;   // shown below only for a private, not-yet-invited job
     timerSync();                 // attach/detach the work timer to the open job
+    // Title rename editor lives only while its own job stays the open one; any
+    // other render (job switch, draft, empty) tears it down and shows the span.
+    if (state.renaming && (state.picking || state.currentId === DRAFT || state.renaming !== state.currentId)) {
+      state.renaming = null;
+    }
+    if (!state.renaming) { $('chatTitle').hidden = false; $('chatTitleInput').hidden = true; }
     if (state.picking) {
+      $('chatTitle').classList.remove('editable');
       $('chatTitle').textContent = 'New job';
       $('chatClient').hidden = true;
       $('chatStatus').hidden = true;
@@ -2072,6 +2133,7 @@
       return;
     }
     if (state.currentId === DRAFT) {
+      $('chatTitle').classList.remove('editable');
       $('chatTitle').textContent = 'New job';
       const clEl = $('chatClient');
       clEl.textContent = clientName(state.draftClientId) || 'Personal';
@@ -2084,6 +2146,7 @@
     }
     const j = state.jobs.get(state.currentId);
     if (!j) {
+      $('chatTitle').classList.remove('editable');
       $('chatTitle').textContent = '';
       $('chatClient').hidden = true;
       $('chatStatus').hidden = true;
@@ -2092,7 +2155,9 @@
       return;
     }
     setComposer(true, 'Message…  (Enter to send)');
-    $('chatTitle').textContent = titleOf(j) || 'Untitled job';
+    if (!state.renaming) $('chatTitle').textContent = titleOf(j) || 'Untitled job';
+    $('chatTitle').classList.add('editable');
+    $('chatTitle').title = 'Click to rename';
     const cn = clientName(j.client_id);
     const clEl = $('chatClient');
     clEl.textContent = cn || 'Personal';
@@ -2551,6 +2616,26 @@
   });
   // Play/pause the work clock. Default paused; this is the only manual control.
   $('clockBtn').addEventListener('click', (ev) => { ev.stopPropagation(); clockToggle(); });
+  // Click (or focus + Enter) the chat-header title to rename the job inline.
+  $('chatTitle').addEventListener('click', (ev) => {
+    if (!state.currentId || state.currentId === DRAFT || state.picking) return;
+    ev.stopPropagation();
+    beginRenameTitle();
+  });
+  $('chatTitle').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); beginRenameTitle(); }
+  });
+  $('chatTitleInput').addEventListener('keydown', (ev) => {
+    ev.stopPropagation();   // keep typing out of global shortcuts
+    if (ev.key === 'Enter') { ev.preventDefault(); commitRenameTitle(); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); cancelRenameTitle(); }
+  });
+  // Click-away commits too. (Enter already committed above; the guard in
+  // commitRenameTitle makes the resulting blur a no-op.)
+  $('chatTitleInput').addEventListener('blur', () => {
+    if (titleEditCancelled) { titleEditCancelled = false; return; }
+    commitRenameTitle();
+  });
   $('jobMenuBtn').addEventListener('click', (ev) => {
     ev.stopPropagation();
     if ($('jobMenu').hidden) openJobMenu($('jobMenuBtn')); else closeJobMenu();
