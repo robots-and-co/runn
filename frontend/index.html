@@ -663,6 +663,20 @@
   .composer button.note-toggle[aria-pressed="true"] { background: #f3e6a8; color: #6b5a16; }
   .composer.note-mode textarea { border-color: #d8b94a; background: #fdf8e8; }
   .composer.note-mode button[type="submit"] { background: #b8941f; }
+
+  /* Toast — transient feedback for !commands (and the like). */
+  .toast-host {
+    position: fixed; left: 50%; bottom: calc(24px + var(--safe-b)); transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    z-index: 50; pointer-events: none;
+  }
+  .toast {
+    background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px;
+    font-size: 14px; max-width: 80vw; box-shadow: 0 6px 20px -6px rgba(0, 0, 0, 0.5);
+    opacity: 0; transform: translateY(8px); transition: opacity .18s ease, transform .18s ease;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.err { background: #b23b2a; }
   /* a private note rendered inline in the thread */
   .turn.note { justify-content: center; }
   .turn.note .note-card {
@@ -2466,9 +2480,57 @@
     if (!r.ok) throw new Error(await errMsg(r, url));
     return r.json();
   }
+  // ── Toast — transient feedback ───────────────────────────────
+  let toastHost = null;
+  function toast(msg, kind) {
+    if (!toastHost) {
+      toastHost = document.createElement('div');
+      toastHost.className = 'toast-host';
+      document.body.appendChild(toastHost);
+    }
+    const el = document.createElement('div');
+    el.className = 'toast' + (kind === 'err' ? ' err' : '');
+    el.textContent = msg;
+    toastHost.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('show'));
+    setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 220); }, 2400);
+  }
+
+  // ── Composer commands (!cmd) ─────────────────────────────────
+  // A leading ! runs a local command instead of sending the text to the AI —
+  // the composer's answer to slash commands. Each run(id, arg) gets the open
+  // job's id and any text after the command word. Add entries to grow the set.
+  const COMMANDS = {
+    stop: {
+      desc: 'Interrupt the AI mid-turn',
+      run: async (id) => {
+        if (!id || id === DRAFT) return toast('No job open', 'err');
+        const r = await postJson(`/jobs/${id}/interrupt`, {});
+        if (r.ok) toast('Stopped the AI');
+        else toast(r.reason === 'not_running' ? 'Nothing is running' : 'Could not stop', 'err');
+      },
+    },
+  };
+  const isCommand = (text) => /^!\S/.test(text);
+  async function runCommand(text) {
+    const [word, ...rest] = text.slice(1).split(/\s+/);
+    const cmd = COMMANDS[word.toLowerCase()];
+    if (!cmd) return toast(`Unknown command: !${word}`, 'err');
+    try { await cmd.run(state.currentId, rest.join(' ').trim()); }
+    catch (e) { console.error('command failed', e); toast('Command failed', 'err'); }
+  }
+
   async function sendCurrent() {
     const text = msgInput.value.trim();
-    if (!text || state.sending) return;
+    if (!text) return;
+    // A ! command is meta — it runs locally and bypasses both the send lock and
+    // note mode, so you can !stop even while a turn is in flight.
+    if (isCommand(text)) {
+      msgInput.value = ''; autoGrow();
+      if (!isMobile()) msgInput.focus();
+      return runCommand(text);
+    }
+    if (state.sending) return;
     state.sending = true; sendBtn.disabled = true;
     msgInput.value = ''; autoGrow();
     try {

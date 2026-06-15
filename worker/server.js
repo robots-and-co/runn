@@ -203,11 +203,16 @@ async function ingestSession(jobId, jsonlPath) {
 // status — both inside the per-job queue so no trailing watcher ingest can
 // clobber the status. patchJob stops the work clock; the jobs watcher
 // broadcasts job.changed so the UI updates live.
+// Jobs whose live turn the user interrupted with !stop. killSession exits the
+// child non-zero (a signal), but that's deliberate, not a crash — so the exit
+// handler lands the job in `review`, not `blocked`. The entry is consumed here.
+const interruptedJobs = new Set();
 function handleJobExit(jobId, code) {
   enqueueJobOp(jobId, async () => {
     try { await ingestSession(jobId, null); }
     catch (err) { console.error('[runn] handleJobExit ingest', jobId, err); }
-    await jobs.patchJob(jobId, { status: code === 0 ? 'review' : 'blocked' });
+    const interrupted = interruptedJobs.delete(jobId);
+    await jobs.patchJob(jobId, { status: (interrupted || code === 0) ? 'review' : 'blocked' });
   });
 }
 
@@ -503,6 +508,22 @@ const server = http.createServer(async (req, res) => {
       if (!(await jobs.readJobOr(id))) return notFound(res);
       const job = action === 'start' ? await jobs.startClock(id) : await jobs.stopClock(id);
       return sendJson(res, 200, job);
+    }
+    // !stop — interrupt the live AI turn for a job. Mark it interrupted (so the
+    // killed child's exit reads as `review`, not a crash), drop any buffered
+    // follow-ups, then signal the running claude child's process group.
+    if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/interrupt$/))) {
+      const id = mm[1];
+      const job = await jobs.readJobOr(id);
+      if (!job) return notFound(res);
+      if (!job.session_id || !bridge.isSessionLive(job.session_id)) {
+        return sendJson(res, 200, { ok: false, reason: 'not_running' });
+      }
+      interruptedJobs.add(id);
+      const dropped = bridge.clearPending(job.session_id);
+      const result = bridge.killSession(job.session_id);
+      if (!result.ok) interruptedJobs.delete(id);   // nothing signalled; don't mask a real exit
+      return sendJson(res, 200, { ...result, dropped });
     }
     if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/invite-ai$/))) {
       const id = mm[1];
