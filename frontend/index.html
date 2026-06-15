@@ -1189,7 +1189,7 @@
       sEl.title = 'Filter by ' + j.status;
       sEl.addEventListener('click', (ev) => {     // quick filter: toggle this status
         ev.stopPropagation();                     // don't open the job row
-        state.statusFilter = (state.statusFilter === j.status) ? 'all' : j.status;
+        state.statusFilter = (state.statusFilter === j.status) ? 'open' : j.status;
         renderFilterOptions();
         renderList();
       });
