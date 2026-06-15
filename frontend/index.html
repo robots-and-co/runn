@@ -1184,8 +1184,15 @@
       const di = dueInfo(j);
       if (di.set) { dEl.classList.add('due'); if (di.overdue) dEl.classList.add('overdue'); dEl.textContent = di.label; }
       meta.appendChild(dEl);
-      const sEl = statusChip(j.status);   // static — no jobId, so not a button
-      sEl.classList.add('meta-status');
+      const sEl = statusChip(j.status);   // static — no jobId, so not the picker
+      sEl.classList.add('meta-status', 'tap');
+      sEl.title = 'Filter by ' + j.status;
+      sEl.addEventListener('click', (ev) => {     // quick filter: toggle this status
+        ev.stopPropagation();                     // don't open the job row
+        state.statusFilter = (state.statusFilter === j.status) ? 'all' : j.status;
+        renderFilterOptions();
+        renderList();
+      });
       meta.appendChild(sEl);
       row.appendChild(meta);
 
