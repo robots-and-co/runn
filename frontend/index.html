@@ -27,7 +27,10 @@
     --safe-t: env(safe-area-inset-top, 0px);
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
+  /* App shell: the page itself never scrolls — scrolling lives in the inner
+     regions (.job-list, .turns, …). Without this lock a tall job list scrolls
+     the whole document on mobile, pushing the pinned + Job foot below the fold. */
+  html, body { height: 100%; margin: 0; overflow: hidden; }
   body {
     font-family: -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
     color: var(--ink);
@@ -42,6 +45,9 @@
   .list-pane {
     width: var(--list-w);
     min-width: var(--list-w);
+    height: 100dvh;          /* hard boundary so the foot reserves space and the */
+    min-height: 0;           /* job list (not the pane/document) is what scrolls  */
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     border-right: 1px solid var(--border);
