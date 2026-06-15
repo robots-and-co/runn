@@ -641,6 +641,23 @@
     background: var(--brand); color: #fff; white-space: nowrap;
   }
   .composer button.invite-ai[hidden] { display: none; }
+  /* note mode — jot a private margin note Claude never sees until promoted */
+  .composer button.note-toggle { background: var(--surface-2); color: var(--muted); padding: 0 12px; font-size: 18px; }
+  .composer button.note-toggle[aria-pressed="true"] { background: #f3e6a8; color: #6b5a16; }
+  .composer.note-mode textarea { border-color: #d8b94a; background: #fdf8e8; }
+  .composer.note-mode button[type="submit"] { background: #b8941f; }
+  /* a private note rendered inline in the thread */
+  .turn.note { justify-content: center; }
+  .turn.note .note-card {
+    max-width: 82%; background: #fdf8e8; border: 1px dashed #d8b94a; border-radius: 10px;
+    padding: 8px 12px; font-size: 14px; color: #6b5a16;
+  }
+  .turn.note .note-body { white-space: pre-wrap; }
+  .turn.note .note-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 6px; }
+  .turn.note .note-actions button {
+    border: 0; background: none; cursor: pointer; font-size: 12px; color: #8a7320; padding: 2px 4px;
+  }
+  .turn.note .note-actions button:hover { text-decoration: underline; }
 
   /* ── Responsive: collapse to one pane ───────────── */
   @media (max-width: 720px) {
@@ -773,6 +790,7 @@
       <div class="chat-permissions" id="chatPermissions"></div>
       <form class="composer" id="composer">
         <button type="button" id="inviteAiBtn" class="invite-ai" hidden>+ AI</button>
+        <button type="button" id="noteToggle" class="note-toggle" aria-pressed="false" title="Note mode — jot a private note Claude can't see (promote it to a message later)">📝</button>
         <textarea id="msgInput" rows="1" placeholder="Select a job, or start a new one." disabled></textarea>
         <button type="submit" id="sendBtn" disabled>Send</button>
       </form>
@@ -803,6 +821,7 @@
     clients: new Map(),    // id -> client
     currentId: null,
     sending: false,
+    noteMode: false,       // composer flips to writing private notes (Claude can't see them)
     filterClient: '',      // '' = all clients
     picking: false,        // choosing a client for a new job
     draftClientId: null,   // client chosen for the not-yet-saved draft
@@ -823,6 +842,7 @@
   const msgInput = $('msgInput');
   const sendBtn = $('sendBtn');
   const inviteAiBtn = $('inviteAiBtn');
+  const noteToggle = $('noteToggle');
 
   marked.setOptions({ breaks: true, gfm: true });
   const mdToHtml = (s) => DOMPurify.sanitize(marked.parse(s || ''));
@@ -2108,7 +2128,15 @@
   function setComposer(enabled, placeholder) {
     msgInput.disabled = !enabled;
     sendBtn.disabled = !enabled || state.sending;
-    msgInput.placeholder = placeholder;
+    msgInput.placeholder = (enabled && state.noteMode)
+      ? "Private note — Claude can't see it until you promote it…"
+      : placeholder;
+  }
+  function setNoteMode(on) {
+    state.noteMode = !!on;
+    noteToggle.setAttribute('aria-pressed', state.noteMode ? 'true' : 'false');
+    $('composer').classList.toggle('note-mode', state.noteMode);
+    if (state.currentId) renderChat();   // refresh the placeholder for the open job
   }
 
   function renderChat() {
@@ -2195,6 +2223,13 @@
         turnsEl.appendChild(div);
       }
       lastDay = day;
+
+      // Private note: rendered inline but visually set apart, with promote/delete
+      // actions. Notes are never markdown-rendered or sent to the AI.
+      if (turn.role === 'note') {
+        turnsEl.appendChild(buildNoteTurn(idx, turn.text));
+        return;
+      }
 
       const wrap = document.createElement('div');
       wrap.className = 'turn ' + (turn.role === 'user' ? 'user' : 'ai');
@@ -2363,8 +2398,9 @@
         id = job.id; state.currentId = job.id;
         state.draftClientId = null;
       }
-      const updated = await postJson(`/jobs/${id}/turn`, { role: 'user', text });
-      state.jobs.set(updated.id, updated);
+      const role = state.noteMode ? 'note' : 'user';
+      const updated = await postJson(`/jobs/${id}/turn`, { role, text });
+      if (updated && updated.id) state.jobs.set(updated.id, updated);
       renderList(); renderChat();
       clockSync();   // reconcile only — default-paused, so sending never auto-starts the clock
 
@@ -2477,6 +2513,52 @@
   // (distinct from state.editing, which is the invoice draft) so it only opens an
   // editor for that one turn of that one job, and clears itself when you navigate
   // away (the match fails on a different job).
+  // A private note rendered inline in the thread, with its margin actions.
+  function buildNoteTurn(idx, text) {
+    const wrap = document.createElement('div');
+    wrap.className = 'turn note';
+    const card = document.createElement('div');
+    card.className = 'note-card';
+    const body = document.createElement('div');
+    body.className = 'note-body';
+    body.textContent = text;        // plaintext — notes aren't markdown-rendered
+    card.appendChild(body);
+    const actions = document.createElement('div');
+    actions.className = 'note-actions';
+    const promote = document.createElement('button');
+    promote.type = 'button';
+    promote.textContent = '↑ Send to Claude';
+    promote.title = 'Promote this private note into a message to Claude';
+    promote.addEventListener('click', () => promoteNote(idx));
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.textContent = '✕';
+    del.title = 'Delete note';
+    del.addEventListener('click', () => deleteNote(idx));
+    actions.appendChild(promote);
+    actions.appendChild(del);
+    card.appendChild(actions);
+    wrap.appendChild(card);
+    return wrap;
+  }
+  async function promoteNote(idx) {
+    const id = state.currentId;
+    if (!id || id === DRAFT) return;
+    try {
+      const updated = await postJson(`/jobs/${id}/turns/${idx}/promote`, {});
+      if (updated && updated.id) state.jobs.set(updated.id, updated);
+      renderList(); renderChat(); clockSync();
+    } catch (e) { console.error('promote note failed', e); }
+  }
+  async function deleteNote(idx) {
+    const id = state.currentId;
+    if (!id || id === DRAFT) return;
+    try {
+      const updated = await delJson(`/jobs/${id}/turns/${idx}`);
+      if (updated && updated.id) state.jobs.set(updated.id, updated);
+      renderList(); renderChat();
+    } catch (e) { console.error('delete note failed', e); }
+  }
   function beginEditTurn(idx) {
     state.editingTurn = { id: state.currentId, idx };
     renderChat();
@@ -2723,6 +2805,7 @@
   });
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
   inviteAiBtn.addEventListener('click', inviteAi);
+  noteToggle.addEventListener('click', () => { setNoteMode(!state.noteMode); if (!isMobile()) msgInput.focus(); });
   msgInput.addEventListener('input', autoGrow);
   msgInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendCurrent(); }

@@ -467,6 +467,34 @@ const server = http.createServer(async (req, res) => {
       try { return sendJson(res, 200, await jobs.editTurn(id, idx, body.text)); }
       catch (e) { return badReq(res, e.message); }
     }
+    // Promote a private note into a real chat comment to the AI. The note flips
+    // to a `user` turn in place; if the AI's already been invited, its text is
+    // then dispatched to the live session (same path as a normal follow-up turn).
+    if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/turns\/(\d+)\/promote$/))) {
+      const id = mm[1];
+      const idx = Number(mm[2]);
+      const job = await jobs.readJobOr(id);
+      if (!job) return notFound(res);
+      let updated;
+      try { updated = await jobs.convertNoteTurn(id, idx); }
+      catch (e) { return badReq(res, e.message); }
+      if (updated.session_id) {
+        try { return await resumeJob(res, updated, updated.turns[idx].text); }
+        catch (e) {
+          console.error('[runn] promote-resume failed', id, e);
+          return sendJson(res, 500, { error: String(e.message || e) });
+        }
+      }
+      return sendJson(res, 200, updated);
+    }
+    // Delete a private note turn (notes only — jobs.deleteNoteTurn enforces it).
+    if (m === 'DELETE' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/turns\/(\d+)$/))) {
+      const id = mm[1];
+      const idx = Number(mm[2]);
+      if (!(await jobs.readJobOr(id))) return notFound(res);
+      try { return sendJson(res, 200, await jobs.deleteNoteTurn(id, idx)); }
+      catch (e) { return badReq(res, e.message); }
+    }
     // The human work clock — the browser starts it when the user lands in a job
     // and stops it when the job loses foreground (navigate away / tab hidden /
     // unload). Independent of the AI spinner (status === 'doing').

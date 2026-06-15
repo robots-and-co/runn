@@ -22,7 +22,10 @@ const JOBS_DIR = path.join(DATA_ROOT, 'jobs');
 // HUMAN (question/approval/decision). `blocked` = waiting on something/someone
 // OTHER than the human (third party, outage). The two are distinct.
 const STATUSES = ['open', 'doing', 'review', 'done', 'invoiced', 'paid', 'blocked', 'hold'];
-const ROLES = ['user', 'ai'];
+// 'note' = a private margin note. Recorded inline in the thread for position,
+// but never handed to or dispatched to the AI (inviteAi / the turn route both
+// filter on role === 'user'). Promote one to a real message with convertNoteTurn.
+const ROLES = ['user', 'ai', 'note'];
 
 const jobPath = (id) => path.join(JOBS_DIR, `${id}.json`);
 const notesPath = (id) => path.join(JOBS_DIR, `${id}.notes.md`);
@@ -118,6 +121,35 @@ async function editTurn(id, index, text) {
   if (turns[index].role !== 'user') throw new Error('only user turns are editable');
   turns[index].text = text;
   turns[index].edited_at = nowIso();
+  return writeJob(job);
+}
+
+// Promote a private note into a real chat comment IN PLACE, so it keeps its
+// position in the thread. The caller (server) then dispatches the text to the
+// AI. Notes are the human's private margin; promoting one is the explicit
+// "actually, send this to Claude". Rejects non-note turns.
+async function convertNoteTurn(id, index) {
+  const job = await readJob(id);
+  const turns = job.turns || [];
+  if (!Number.isInteger(index) || index < 0 || index >= turns.length) {
+    throw new Error('bad turn index');
+  }
+  if (turns[index].role !== 'note') throw new Error('only note turns can be promoted');
+  turns[index].role = 'user';
+  turns[index].promoted_at = nowIso();
+  return writeJob(job);
+}
+
+// Delete a private note turn. Restricted to notes: real user/ai turns are the
+// permanent record (and locked from editing once the AI is invited).
+async function deleteNoteTurn(id, index) {
+  const job = await readJob(id);
+  const turns = job.turns || [];
+  if (!Number.isInteger(index) || index < 0 || index >= turns.length) {
+    throw new Error('bad turn index');
+  }
+  if (turns[index].role !== 'note') throw new Error('only note turns can be deleted');
+  turns.splice(index, 1);
   return writeJob(job);
 }
 
@@ -225,6 +257,8 @@ module.exports = {
   newId,
   init,
   createJob,
+  convertNoteTurn,
+  deleteNoteTurn,
   readJob,
   readJobOr,
   writeJob,
