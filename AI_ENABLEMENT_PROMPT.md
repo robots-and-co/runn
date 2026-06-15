@@ -81,7 +81,7 @@ ship an auto-approve mode.
   study it.
 - **V2 (target):** `/home/waz/projects/runn-rebuild-dev/` (branch `rebuild`) —
   the job-centric rebuild. Deployed checkout on the NUC is `/home/waz/runn-rebuild`,
-  systemd `runn-rebuild.service` on **:17778**, data `/home/waz/runn-rebuild-data`
+  systemd `runn-rebuild.service` on **:17778**, data `/home/waz/runn-cards`
   (`RUNN_DATA`).
 - **You run inside the Runn worker container** on the dev box
   (`waz-B550I-AORUS-PRO-AX`). You see bind-mounts only: `~/runn-data`, `~/.claude`,
@@ -247,7 +247,7 @@ Each client JSON has a `workspace` string. Confirmed values:
 `Test2Client→test2client`, `Runn→runn`, `Waz→waz`, `ZIS→zis`.
 So **cwd = `/home/waz/projects/<client.workspace>`**. For a client-less
 ("Personal") job, fall back to `DEFAULT_LOCATION` (`~/runn-data`) — match V1.
-(The dev-box `~/runn-rebuild-data` copy may have NO clients dir; the real clients
+(The dev-box `~/runn-cards` copy may have NO clients dir; the real clients
 are on the NUC. If you test locally, seed a client with `workspace:"runn"`.)
 
 ### 5.5 Frontend (`frontend/index.html`, single-file app)
