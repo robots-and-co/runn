@@ -537,11 +537,12 @@
   .turn { display: flex; margin: 0 0 12px; }
   .turn.user { justify-content: flex-end; }
   .bubble {
-    max-width: 80%; padding: 10px 14px; border-radius: 16px;
+    max-width: 92%; padding: 10px 14px; border-radius: 16px;
     font-size: 15px; line-height: 1.45; word-wrap: break-word; overflow-wrap: anywhere;
   }
   .turn.user .bubble { background: var(--user-bubble); color: var(--user-ink); border-bottom-right-radius: 5px; }
-  .turn.ai .bubble { background: var(--ai-bubble); border: 1px solid var(--border); border-bottom-left-radius: 5px; }
+  /* AI replies read like Claude's chat: span the full column, not a narrow bubble. */
+  .turn.ai .bubble { max-width: 100%; background: var(--ai-bubble); border: 1px solid var(--border); border-bottom-left-radius: 5px; }
   .bubble :first-child { margin-top: 0; } .bubble :last-child { margin-bottom: 0; }
   .bubble pre { background: #f3efe7; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
   .turn.user .bubble pre { background: rgba(255,255,255,0.15); }
