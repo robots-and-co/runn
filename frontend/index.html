@@ -1932,25 +1932,6 @@
     });
   }
 
-  // Push the footer block (bank + totals) to the bottom of whatever A4 page it
-  // lands on. The doc is one continuous flow; this grows the .inv-spacer so the
-  // footer's top sits exactly one footer-height above the page boundary. If the
-  // footer would straddle a break, it's bumped down to the bottom of the next
-  // page. pageH is the printable page height in px (A4 minus margins). Shared by
-  // the on-screen preview and the print/PDF window (which inlines the same maths).
-  function pinFooterToPage(paper, pageH) {
-    const spacer = paper.querySelector('.inv-spacer');
-    const foot = paper.querySelector('.inv-foot');
-    if (!spacer || !foot) return;
-    spacer.style.flex = 'none';
-    spacer.style.minHeight = '0px';
-    spacer.style.height = '0px';
-    const top = foot.getBoundingClientRect().top - paper.getBoundingClientRect().top;
-    const fh = foot.getBoundingClientRect().height;
-    let pad = pageH - (top % pageH) - fh;
-    if (pad < -0.5) pad += pageH;            // footer crossed the break → next page bottom
-    if (pad > 0) spacer.style.height = Math.round(pad) + 'px';
-  }
   // Lay out the dashed page-break guides over the preview sheet, one per A4 break.
   function drawPageBreaks(page, pageH) {
     page.querySelectorAll('.inv-page-break').forEach((el) => el.remove());
@@ -2166,15 +2147,15 @@
     const logo = page.querySelector('.inv-logo');
     if (logo && !logo.complete) logo.addEventListener('load', layoutPreview, { once: true });
   }
-  // One A4 page at 96dpi is 1123px tall. Pin the footer to its page bottom, draw
-  // the break guides, then scale the whole sheet to fit the viewport width.
+  // One A4 page at 96dpi is 1123px tall. The footer is bottom-pinned by the same
+  // flex layout as the print sheet (a flex:1 spacer in .inv-paper); here we just
+  // draw the page-break guides and scale the whole sheet to fit the viewport.
   const A4_PAGE_PX = 1123;
   function layoutPreview() {
     const overlay = $('invPreview');
     if (!overlay || !overlay.classList.contains('open')) return;
     const page = overlay.querySelector('.inv-preview-page');
     page.style.transform = 'none';            // measure unscaled
-    pinFooterToPage(page, A4_PAGE_PX);
     drawPageBreaks(page, A4_PAGE_PX);
     scalePreview();
   }
@@ -2214,7 +2195,13 @@
            so the on-screen flow in this window matches the printed pagination and
            the footer-pin maths below lands on the right page. */
         body { width: 178mm; margin: 0 auto; color: #222; font: 13px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        .inv-paper { display: flex; flex-direction: column; min-height: 265mm; }
+        /* Flex column + a flex:1 spacer pins the footer to the page bottom on a
+           single-page invoice. min-height is set just UNDER one printable page
+           (A4 265mm minus a safety margin) so the spacer never grows the page past
+           a sheet — which would bump the unsplittable footer onto a blank page. On
+           a multi-page invoice the content exceeds this, the spacer collapses, and
+           the footer simply follows the items. */
+        .inv-paper { display: flex; flex-direction: column; min-height: 258mm; }
         .inv-items tr { break-inside: avoid; }
         .inv-foot { break-inside: avoid; }
         .inv-head { display: flex; justify-content: space-between; gap: 28px; align-items: flex-start; }
@@ -2247,27 +2234,7 @@
         .inv-foot-right .tr.balance .v { color: #c0291f; font-weight: 700; }
       </style></head><body>
       <div class="inv-paper">${doc}</div>
-      <script>(function(){
-        var PAGE = 265 * 96 / 25.4;   // printable A4 height (297 − 2×16mm) in px
-        function pin(){
-          var paper=document.querySelector('.inv-paper'),
-              spacer=document.querySelector('.inv-spacer'),
-              foot=document.querySelector('.inv-foot');
-          if(!paper||!spacer||!foot) return;
-          spacer.style.flex='none'; spacer.style.minHeight='0px'; spacer.style.height='0px';
-          var top=foot.getBoundingClientRect().top - paper.getBoundingClientRect().top;
-          var fh=foot.getBoundingClientRect().height;
-          var pad=PAGE-(top%PAGE)-fh;
-          if(pad< -0.5) pad+=PAGE;
-          if(pad>0) spacer.style.height=Math.round(pad)+'px';
-        }
-        var i=document.querySelector('.inv-logo');
-        if(i){
-          i.addEventListener('error',function(){i.style.display='none';var n=document.querySelector('.inv-from-name');if(n)n.hidden=false;pin();});
-          if(!i.complete) i.addEventListener('load',pin);
-        }
-        pin();
-      }())<\/script>
+      <script>(function(){var i=document.querySelector('.inv-logo');if(i)i.addEventListener('error',function(){i.style.display='none';var n=document.querySelector('.inv-from-name');if(n)n.hidden=false;});}())<\/script>
       </body></html>`;
   }
 
