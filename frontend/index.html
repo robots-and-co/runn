@@ -2198,16 +2198,17 @@
       <style>
         @page { size: A4; margin: 16mm; }
         * { box-sizing: border-box; }
-        /* Lay the document out at the exact printable width (A4 210mm − 2×16mm),
-           so the page flow + the fixed footer below share the same width. */
+        /* Lay the document out at the exact printable width (A4 210mm − 2×16mm). */
         body { width: 178mm; margin: 0 auto; color: #222; font: 13px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        /* The footer is fixed to the bottom of the page box (see .inv-foot below),
-           which Chrome anchors reliably in print — unlike a flex spacer, which
-           doesn't fill in the print path. padding-bottom reserves room so the last
-           page's content can't slide under it. */
-        .inv-paper { padding-bottom: 46mm; }
-        .inv-spacer { display: none; }
+        /* Flex column + a flex:1 spacer pins the footer to the page bottom on a
+           single-page invoice (verified in Chromium print). min-height is set just
+           UNDER one printable page (265mm) so the spacer can never grow the page
+           past a sheet and bump the footer onto a blank page. On a multi-page
+           invoice the rows overflow naturally: the <thead> repeats, the spacer
+           collapses, and the footer follows the last line item. */
+        .inv-paper { display: flex; flex-direction: column; min-height: 258mm; }
         .inv-items tr { break-inside: avoid; }
+        .inv-foot { break-inside: avoid; }
         .inv-head { display: flex; justify-content: space-between; gap: 28px; align-items: flex-start; }
         .inv-from { max-width: 58%; }
         .inv-logo { max-width: 280px; max-height: 150px; display: block; margin-bottom: 14px; }
@@ -2226,7 +2227,8 @@
         .inv-items thead th { border-bottom: 1px solid #dcdcdc; }
         .inv-items th:nth-child(2), .inv-items td:nth-child(2) { width: 150px; }
         .inv-items th:nth-child(3), .inv-items td:nth-child(3) { width: 150px; }
-        .inv-foot { position: fixed; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; gap: 28px; border: 1px solid #dcdcdc; border-radius: 4px; padding: 20px 24px; min-height: 122px; font-size: 12.5px; background: #fff; }
+        .inv-spacer { flex: 1 1 auto; }
+        .inv-foot { display: flex; justify-content: space-between; gap: 28px; border: 1px solid #dcdcdc; border-radius: 4px; padding: 20px 24px; min-height: 122px; font-size: 12.5px; }
         .inv-foot-left, .inv-foot-right { display: flex; flex-direction: column; justify-content: space-between; }
         .inv-foot .fr, .inv-foot .tr { display: flex; }
         .inv-foot-left .fr { gap: 8px; } .inv-foot-left .k { color: #555; min-width: 42px; }
