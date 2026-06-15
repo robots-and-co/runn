@@ -107,7 +107,11 @@
   }
   .job-row .meta .chip.tap:hover { filter: none; text-decoration: underline; }
 
-  .list-foot { padding: 12px; border-top: 1px solid var(--border); }
+  /* Lives as a direct child of .list-pane (NOT inside .list-flip): the flip
+     container sits in a 3D context (perspective + backface-visibility) that can
+     clip/displace descendants, which is what pushed + Job off-screen. Kept out
+     of that context and flex-shrink:0, it's always pinned at the pane's foot. */
+  .list-foot { flex: 0 0 auto; padding: 12px; border-top: 1px solid var(--border); }
   .btn-newjob {
     width: 100%; padding: 12px; border: 0; border-radius: 10px;
     background: var(--brand); color: var(--bg); font-size: 15px; font-weight: 600;
@@ -765,10 +769,10 @@
         </div>
         <div class="job-list" id="jobList"></div>
         <div class="billing-list" id="billingList"></div>
-        <div class="list-foot">
-          <button class="btn-newjob" id="newJobBtn">+ Job</button>
-          <select class="client-filter newjob-picker" id="newJobPicker" aria-label="Pick a client for the new job" hidden></select>
-        </div>
+      </div>
+      <div class="list-foot">
+        <button class="btn-newjob" id="newJobBtn">+ Job</button>
+        <select class="client-filter newjob-picker" id="newJobPicker" aria-label="Pick a client for the new job" hidden></select>
       </div>
     </aside>
 
