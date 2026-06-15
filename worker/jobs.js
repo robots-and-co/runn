@@ -21,7 +21,11 @@ const JOBS_DIR = path.join(DATA_ROOT, 'jobs');
 // The conveyor (RUNN_PLAN section 11, DECIDED). `review` = AI is waiting on the
 // HUMAN (question/approval/decision). `blocked` = waiting on something/someone
 // OTHER than the human (third party, outage). The two are distinct.
-const STATUSES = ['open', 'doing', 'review', 'done', 'invoiced', 'paid', 'blocked', 'hold'];
+// 'note' (a job STATUS — distinct from the 'note' turn ROLE below) is a
+// non-billable parking spot: a job kept purely as a reference note. It's never
+// 'done', so it never rolls into an invoice draft, and it's clock-idle so it
+// accrues no billable time. See the invoice rollup in invoices.js / index.html.
+const STATUSES = ['open', 'doing', 'review', 'done', 'invoiced', 'paid', 'blocked', 'hold', 'note'];
 // 'note' = a private margin note. Recorded inline in the thread for position,
 // but never handed to or dispatched to the AI (inviteAi / the turn route both
 // filter on role === 'user'). Promote one to a real message with convertNoteTurn.
@@ -189,7 +193,7 @@ function applyTimerTransition(prevStatus, job) {
 
 // Terminal statuses don't accrue time — landing in a wrapped-up job shouldn't
 // start billing it.
-const CLOCK_IDLE_STATUSES = new Set(['done', 'invoiced', 'paid']);
+const CLOCK_IDLE_STATUSES = new Set(['done', 'invoiced', 'paid', 'note']);
 // A single uninterrupted session is capped so a clock left running (a crash, a
 // closed laptop) can't fold an absurd span into the bill. The frontend stops
 // the clock when the job loses foreground, so real sessions stay well under.

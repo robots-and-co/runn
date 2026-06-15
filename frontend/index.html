@@ -142,6 +142,7 @@
   .chip.st-paid     { background:#d7efe0; color:#1f7a55; }
   .chip.st-blocked  { background:#ffe1dc; color:#b23b2a; }
   .chip.st-hold     { background:#ececec; color:#777; }
+  .chip.st-note     { background:#faf3c0; color:#897a1f; }
   /* selectable status chip — click opens the status picker */
   .chip.pick { cursor: pointer; }
   .chip.pick::after { content: '▾'; margin-left: 5px; font-size: 11px; opacity: .55; }
@@ -1000,7 +1001,7 @@
   function dueInfo(j) {
     const d = j && j.due_at;
     if (!d) return { set: false, label: '', overdue: false };
-    const overdue = d < today() && !['done', 'invoiced', 'paid'].includes(j.status);
+    const overdue = d < today() && !['done', 'invoiced', 'paid', 'note'].includes(j.status);
     return { set: true, label: fmtDate(d), overdue };
   }
   // Due bucket for the labeled list dividers (overdue / today / tomorrow / this
@@ -1010,7 +1011,7 @@
   function dueBucket(j) {
     const d = j && j.due_at;
     if (!d) return { rank: 0, key: 'none', label: 'no due' };
-    const wrapped = ['done', 'invoiced', 'paid'].includes(j.status);
+    const wrapped = ['done', 'invoiced', 'paid', 'note'].includes(j.status);
     const diff = Math.round((new Date(d + 'T00:00:00') - new Date(today() + 'T00:00:00')) / 86400000);
     if (diff < 0)   return wrapped ? { rank: 0, key: 'none', label: 'no due' } : { rank: 5, key: 'overdue', label: 'overdue' };
     if (diff === 0) return { rank: 4, key: 'today',    label: 'today' };
@@ -1035,7 +1036,7 @@
   // The 'open' filter is a group: every status that isn't wrapped up. The
   // picker also offers each status individually plus 'all'.
   const ACTIVE_STATUSES = ['open', 'doing', 'review', 'blocked', 'hold'];
-  const STATUS_FILTERS = ['open', 'doing', 'review', 'blocked', 'hold', 'done', 'invoiced', 'paid', 'all'];
+  const STATUS_FILTERS = ['open', 'doing', 'review', 'blocked', 'hold', 'done', 'invoiced', 'paid', 'note', 'all'];
   function matchesStatusFilter(j) {
     const sf = state.statusFilter;
     if (sf === 'all') return true;
@@ -1179,7 +1180,7 @@
   }
 
   // ── Status picker (selectable chip → dropdown) ──
-  const STATUS_ORDER = ['open', 'doing', 'review', 'blocked', 'hold', 'done', 'invoiced', 'paid'];
+  const STATUS_ORDER = ['open', 'doing', 'review', 'blocked', 'hold', 'done', 'invoiced', 'paid', 'note'];
   let chipMenuJobId = null;
   function openChipMenu(anchorEl, jobId, current) {
     const menu = $('chipMenu');
@@ -1495,7 +1496,7 @@
   // here, and the backend refuses a manual stop while it's running.
   let clockedJobId = null;
   function clockBillable(j) {
-    return !!(j && j.status !== 'done' && j.status !== 'invoiced' && j.status !== 'paid');
+    return !!(j && j.status !== 'done' && j.status !== 'invoiced' && j.status !== 'paid' && j.status !== 'note');
   }
   function applyClockJob(j) {
     if (!j || !j.id) return;
