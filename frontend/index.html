@@ -2951,7 +2951,9 @@
   noteToggle.addEventListener('click', () => { setNoteMode(!state.noteMode); if (!isMobile()) msgInput.focus(); });
   msgInput.addEventListener('input', autoGrow);
   msgInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendCurrent(); }
+    // On mobile, Enter is a newline — never a send (the Send button submits).
+    // Desktop keeps Enter-to-send (Shift+Enter for a newline).
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile()) { e.preventDefault(); sendCurrent(); }
   });
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
