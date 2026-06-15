@@ -545,6 +545,18 @@
   .bubble :first-child { margin-top: 0; } .bubble :last-child { margin-bottom: 0; }
   .bubble pre { background: #f3efe7; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
   .turn.user .bubble pre { background: rgba(255,255,255,0.15); }
+  /* copy-to-clipboard button on each rendered code block */
+  .code-wrap { position: relative; }
+  .code-wrap pre { margin: 0; }
+  .copy-btn {
+    position: absolute; top: 6px; right: 6px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--muted); border-radius: 6px;
+    font-size: 11px; font-weight: 600; padding: 2px 8px; cursor: pointer;
+    opacity: 0; transition: opacity .12s;
+  }
+  .code-wrap:hover .copy-btn, .copy-btn:focus { opacity: 1; }
+  .copy-btn.copied { color: var(--brand); border-color: var(--brand); opacity: 1; }
+  @media (hover: none) { .copy-btn { opacity: 1; } }   /* touch: no hover, keep it visible */
   .bubble code { font-family: ui-monospace, Menlo, monospace; font-size: 0.9em; }
   /* Edit affordance on a private (pre-invite) user turn. Kept low-key but always
      visible (so it's discoverable on touch, where there's no hover). */
@@ -846,6 +858,52 @@
 
   marked.setOptions({ breaks: true, gfm: true });
   const mdToHtml = (s) => DOMPurify.sanitize(marked.parse(s || ''));
+  // Copy to clipboard, with a fallback for non-secure (plain-http LAN) contexts
+  // where navigator.clipboard is unavailable.
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {}
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.setAttribute('readonly', '');
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch { return false; }
+  }
+  // Wrap every rendered code block in a positioned container and pin a Copy
+  // button to it. The wrap (not the scrolling <pre>) carries the button so it
+  // stays put when wide code scrolls horizontally.
+  function addCopyButtons(root) {
+    root.querySelectorAll('pre').forEach((pre) => {
+      if (pre.parentElement && pre.parentElement.classList.contains('code-wrap')) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'code-wrap';
+      pre.parentNode.insertBefore(wrap, pre);
+      wrap.appendChild(pre);
+      const code = pre.querySelector('code') || pre;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'copy-btn';
+      btn.textContent = 'Copy';
+      btn.title = 'Copy to clipboard';
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const ok = await copyText(code.innerText.replace(/\n+$/, ''));
+        btn.textContent = ok ? 'Copied' : 'Failed';
+        btn.classList.toggle('copied', ok);
+        setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1200);
+      });
+      wrap.appendChild(btn);
+    });
+  }
 
   const clientName = (id) => (id && state.clients.get(id)?.name) || null;
   const clientOf = (id) => (id ? state.clients.get(id) : null);
@@ -2252,6 +2310,7 @@
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
       bubble.innerHTML = mdToHtml(turn.text);
+      addCopyButtons(bubble);
       wrap.appendChild(bubble);
       turnsEl.appendChild(wrap);
     });
