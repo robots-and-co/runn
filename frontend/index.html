@@ -2197,12 +2197,25 @@
     $('composer').classList.toggle('note-mode', state.noteMode);
     if (state.currentId) renderChat();   // refresh the placeholder for the open job
   }
+  // The 📝 toggle is the after-AI counterpart of "+ AI": notes only make sense
+  // once Claude's been invited (before that, every message is already private).
+  // So it shows only when the job has a session — never alongside "+ AI" — and
+  // navigating to a pre-invite/draft context drops you back out of note mode.
+  function setNoteAvailable(aiOpen) {
+    noteToggle.hidden = !aiOpen;
+    if (!aiOpen && state.noteMode) {
+      state.noteMode = false;
+      noteToggle.setAttribute('aria-pressed', 'false');
+      $('composer').classList.remove('note-mode');
+    }
+  }
 
   function renderChat() {
     $('jobMenuBtn').hidden = true;
     $('chatDoneBtn').classList.remove('show');   // re-shown below only for an active, saved job
     $('chatDue').hidden = true;  // shown only for a real, saved job
     inviteAiBtn.hidden = true;   // shown below only for a private, not-yet-invited job
+    noteToggle.hidden = true;    // shown below only once the job has been opened to AI
     timerSync();                 // attach/detach the work timer to the open job
     // Title rename editor lives only while its own job stays the open one; any
     // other render (job switch, draft, empty) tears it down and shows the span.
@@ -2217,6 +2230,7 @@
       $('chatStatus').hidden = true;
       turnsEl.innerHTML = '<div class="empty">Pick a client to start.</div>';
       setComposer(false, 'Pick a client to begin…');
+      setNoteAvailable(false);
       return;
     }
     if (state.currentId === DRAFT) {
@@ -2228,6 +2242,7 @@
       clEl.hidden = false;
       $('chatStatus').hidden = true;
       turnsEl.innerHTML = '<div class="empty">Type your first message to start this job.</div>';
+      setNoteAvailable(false);   // before setComposer, so the placeholder isn't computed from a stale note mode
       setComposer(true, 'Message…  (Enter to send)');
       return;
     }
@@ -2239,8 +2254,10 @@
       $('chatStatus').hidden = true;
       turnsEl.innerHTML = '<div class="empty">Select a job, or start a new one.</div>';
       setComposer(false, 'Select a job, or start a new one.');
+      setNoteAvailable(false);
       return;
     }
+    setNoteAvailable(!!j.session_id);   // 📝 is the after-AI counterpart of "+ AI"; before setComposer for placeholder
     setComposer(true, 'Message…  (Enter to send)');
     if (!state.renaming) $('chatTitle').textContent = titleOf(j) || 'Untitled job';
     $('chatTitle').classList.add('editable');
