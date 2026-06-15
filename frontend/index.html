@@ -473,12 +473,31 @@
     padding: 3px 9px; border-radius: 999px; white-space: nowrap;
   }
   .chat-head .ttl-badge[hidden] { display: none; }
-  /* $ value of the open job (billable clients only); hidden otherwise. */
-  .chat-head .job-val {
-    flex: none; font-size: 13px; font-weight: 700; color: var(--brand);
-    white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+  /* $ amount of the open job (billable clients only). Shows hours×rate live, or a
+     hand-entered override when set. Editable when the clock is paused; editing it
+     writes only the amount, never the logged time. */
+  .chat-head .amount {
+    flex: none; display: inline-flex; align-items: baseline;
+    font-size: 13px; font-weight: 700; color: var(--brand); white-space: nowrap;
+    font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
   }
-  .chat-head .job-val[hidden] { display: none; }
+  .chat-head .amount[hidden] { display: none; }
+  .chat-head .amount-sym { opacity: .7; margin-right: 1px; }
+  .chat-head .amount-input {
+    width: 6.5ch; border: 0; padding: 0; background: none; color: inherit;
+    font: inherit; text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .chat-head .amount-input:focus { outline: none; }
+  .chat-head .amount-input:read-write {
+    border-bottom: 1px dashed var(--border); cursor: text;
+  }
+  .chat-head .amount-input:read-write:hover { border-bottom-color: var(--brand); }
+  /* Manual override — a hand-entered amount, not hours×rate. Amber + a ✎ so it
+     reads as deliberately set, not auto-computed. */
+  .chat-head .amount.manual { color: #a9711a; }
+  .chat-head .amount.manual .amount-sym::before {
+    content: '✎'; font-weight: 400; margin-right: 4px; opacity: .85;
+  }
   /* Hours = the editable work figure (decimal hours). It's a wrapper so the live
      timer + green running-dot survive, with a borderless inline input inside.
      readOnly while the work clock runs (status doing); editable when stopped. */
@@ -707,14 +726,14 @@
     .chat-head .back { display: block; }
 
     /* Phone: spread the header over three rows.
-       Row1: ‹ Title ⋯   Row2: $value Hours   Row3: Client Due Status.
+       Row1: ‹ Title ⋯   Row2: (timer, centred)   Row3: Client Due Status.
        (min-height:56px absorbs the empty-state rows, so no phantom gap.) */
     .chat-head {
       display: grid; align-items: center;
       grid-template-columns: auto 1fr auto;
       grid-template-areas:
         "back   title  menu"
-        "val    hours  done"
+        ".      hours  done"
         "client due    status";
     }
     .chat-head .back     { grid-area: back; justify-self: start; }
@@ -722,9 +741,8 @@
     .chat-head .ttl-input { grid-area: title; width: 100%; box-sizing: border-box; }
     .chat-head .head-spacer { display: none; }
     #jobMenuBtn          { grid-area: menu; justify-self: end; }
-    #chatValue           { grid-area: val;    justify-self: start; }
-    /* #chatTimer is absolutely centred over the header (see base styles), so it's
-       not placed in the grid — its "hours" cell stays empty under it. */
+    /* #chatTimer (clock + hours + $) is absolutely centred over the header (see
+       base styles), so it's not placed in the grid — its "hours" cell stays empty. */
     #chatClient          { grid-area: client; justify-self: start; }
     #chatDue             { grid-area: due;    justify-self: center; }
     #chatStatus          { grid-area: status; justify-self: end; }
@@ -811,12 +829,15 @@
         <span class="ttl" id="chatTitle" tabindex="0"></span>
         <input class="ttl-input" id="chatTitleInput" type="text" maxlength="120" autocomplete="off" aria-label="Job title" hidden>
         <span class="head-spacer" aria-hidden="true"></span>
-        <span class="job-val" id="chatValue" hidden></span>
         <span class="timer" id="chatTimer" hidden>
           <button class="clock-btn" id="clockBtn" type="button" aria-label="Start timer" aria-pressed="false">▶</button>
           <span class="hours" id="chatHours" hidden>
             <input type="text" inputmode="decimal" class="hours-input" id="chatHoursInput" aria-label="Hours worked">
             <span class="hours-unit">h</span>
+          </span>
+          <span class="amount" id="chatAmount" hidden>
+            <span class="amount-sym">$</span>
+            <input type="text" inputmode="decimal" class="amount-input" id="chatAmountInput" aria-label="Job amount">
           </span>
         </span>
         <span class="chip client" id="chatClient" hidden></span>
@@ -947,6 +968,9 @@
     const c = clientOf(j.client_id);
     if (!c || c.non_billable || !c.rate_per_hour) return 0;
     if (j.status !== 'done') return 0;
+    // A hand-entered amount overrides hours × rate — the price lives on the job
+    // record, so the invoice can't drift from it. See setJobAmount.
+    if (j.amount_override != null && j.amount_override !== '') return round2(Number(j.amount_override));
     return (Number(j.hours) || 0) * Number(c.rate_per_hour);
   }
   const fmtMoney = (n) => '$' + Math.round(n).toLocaleString();
@@ -1224,6 +1248,24 @@
     state.jobs.set(j.id, j);
     renderList(); renderTimerDisplay();
   }
+  // Hand-edit the billable $ on the job — a manual override of hours × rate. This
+  // writes ONLY amount_override; it never touches hours/work_seconds, so logged
+  // time is preserved. An empty field clears the override (back to auto). Keeping
+  // the price on the job record is what stops invoices drifting from it.
+  async function setJobAmount(id, raw) {
+    const s = String(raw).replace(/[^0-9.]/g, '');   // tolerate the $ and thousands commas
+    let override;
+    if (s === '') {
+      override = null;
+    } else {
+      const v = parseFloat(s);
+      if (!isFinite(v) || v < 0) { renderTimerDisplay(); return; }
+      override = round2(v);
+    }
+    const j = await patchJson('/jobs/' + id, { amount_override: override });
+    state.jobs.set(j.id, j);
+    renderList(); renderTimerDisplay();
+  }
   async function setJobTitle(id, title) {
     const j = await patchJson('/jobs/' + id, { title });
     state.jobs.set(j.id, j);
@@ -1451,12 +1493,13 @@
     const cluster = $('chatTimer');
     const wrap = $('chatHours');
     const input = $('chatHoursInput');
-    const valEl = $('chatValue');
+    const amtWrap = $('chatAmount');
+    const amtInput = $('chatAmountInput');
     const btn = $('clockBtn');
     const j = timer.jobId ? state.jobs.get(timer.jobId) : null;
     if (!j) {
       cluster.hidden = true; wrap.hidden = true; wrap.classList.remove('running');
-      btn.hidden = true; valEl.hidden = true;
+      btn.hidden = true; amtWrap.hidden = true;
       return;
     }
     const running = jobRunning(j);
@@ -1476,13 +1519,23 @@
     btn.classList.toggle('running', running);
     btn.setAttribute('aria-label', running ? 'Pause timer' : 'Start timer');
     btn.setAttribute('aria-pressed', running ? 'true' : 'false');
-    // $ value — billable clients only.
+    // $ amount — billable clients only. Shows hours×rate live, OR a hand-entered
+    // override when one's set (amber + ✎). Editable only while the clock is
+    // stopped; editing it writes the amount alone and never the logged time.
     const c = clientOf(j.client_id);
     if (c && !c.non_billable && c.rate_per_hour) {
-      valEl.textContent = money(hrs * Number(c.rate_per_hour));
-      valEl.hidden = false;
+      const manual = j.amount_override != null && j.amount_override !== '';
+      const amt = manual ? round2(Number(j.amount_override)) : round2(hrs * Number(c.rate_per_hour));
+      amtWrap.hidden = false;
+      amtWrap.classList.toggle('manual', manual);
+      amtWrap.title = manual
+        ? 'Manual amount — overrides hours × rate. Clear the field to revert to auto.'
+        : 'Auto: hours × rate. Type an amount to set it manually.';
+      amtInput.readOnly = running;
+      // Don't clobber what the user is mid-edit (only possible while stopped).
+      if (!(amtInput === document.activeElement && !running)) amtInput.value = money2(amt);
     } else {
-      valEl.hidden = true;
+      amtWrap.hidden = true;
     }
   }
 
@@ -2853,6 +2906,19 @@
   });
   $('chatHoursInput').addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') { ev.preventDefault(); $('chatHoursInput').blur(); }
+  });
+  // Editable $ amount: commit on blur/change (Enter blurs). Like hours, ignored
+  // while the clock runs (the input is readOnly then; guard anyway). Empty clears
+  // the override; a number sets a manual amount. Never touches the clock.
+  $('chatAmountInput').addEventListener('change', () => {
+    const id = timer.jobId;
+    if (!id) return;
+    const j = state.jobs.get(id);
+    if (jobRunning(j)) { renderTimerDisplay(); return; }
+    setJobAmount(id, $('chatAmountInput').value).catch((e) => console.error('amount edit failed', e));
+  });
+  $('chatAmountInput').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); $('chatAmountInput').blur(); }
   });
   // Play/pause the work clock. Default paused; this is the only manual control.
   $('clockBtn').addEventListener('click', (ev) => { ev.stopPropagation(); clockToggle(); });
