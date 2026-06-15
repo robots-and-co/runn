@@ -753,15 +753,23 @@
     .chip-menu-item { font-size: 17px; padding: 15px 16px; }
     .job-menu-btn { font-size: 28px; padding: 6px 12px; }
 
-    /* + Job is an autosized floating pill, right-aligned at the foot of the
-       list. It stays in normal flow (below the scrolling job list) so it's
-       ALWAYS visible — a position:fixed FAB got trapped by the list pane's
-       `perspective` on mobile and only surfaced after scrolling to the bottom. */
+    /* + Job is a floating pill fixed to the VIEWPORT, bottom-right — always on
+       screen no matter what scrolls. The earlier attempt failed because
+       `position:fixed` anchors to the nearest transformed/perspective ancestor,
+       and .list-pane sets `perspective`; that trapped the FAB inside the pane.
+       Fix: drop the perspective on mobile (the list flip just goes flat) so the
+       FAB anchors to the viewport instead. */
+    .list-pane { perspective: none; }
     .list-foot {
+      position: fixed; right: 16px; bottom: calc(16px + var(--safe-b)); z-index: 20;
       display: flex; justify-content: flex-end;
-      padding: 10px 12px calc(10px + var(--safe-b));
-      border-top: 0; background: transparent;
+      padding: 0; border-top: 0; background: transparent;
     }
+    /* leave room so the last job row can't hide behind the floating pill */
+    .job-list { padding-bottom: 88px; }
+    /* the FAB belongs to the list view only — hide it under the chat/billing
+       overlays (which slide over the list on mobile). */
+    body.show-chat .list-foot, body.show-billing .list-foot { display: none; }
     .btn-newjob {
       width: auto; border-radius: 999px;
       padding: 14px 22px; font-size: 16px;
