@@ -97,6 +97,24 @@ function enqueueJobOp(jobId, op) {
   next.finally(() => { if (jobOpChains.get(jobId) === next) jobOpChains.delete(jobId); });
   return next;
 }
+// HTTP-handler counterpart of enqueueJobOp. The watcher's ingest and the exit
+// handler aren't the only read-modify-writers of a job file — every mutating
+// HTTP endpoint (appendTurn, patchJob, clock, edit/promote/demote/delete a
+// turn) is too. If one runs OFF this chain, a watcher ingest that fires in the
+// same window reads the pre-mutation job, folds an AI turn in, and writes the
+// whole job back — silently clobbering the HTTP change (e.g. a just-sent user
+// turn vanishes, and the job loses its title). So funnel HTTP mutations through
+// the same FIFO chain. Unlike enqueueJobOp this propagates the op's result/error
+// back to the caller (the handler needs them); only the chain tail swallows
+// rejections so one failed op can't poison the next.
+function runJobOp(jobId, op) {
+  const prev = jobOpChains.get(jobId) || Promise.resolve();
+  const result = prev.then(op);
+  const tail = result.catch(() => {});
+  jobOpChains.set(jobId, tail);
+  tail.finally(() => { if (jobOpChains.get(jobId) === tail) jobOpChains.delete(jobId); });
+  return result;
+}
 
 const firstLine = (s) => String(s || '').split('\n')[0].slice(0, 120).trim();
 
@@ -323,21 +341,21 @@ async function inviteAi(res, job) {
         prepare: buildSpawnParams,
         onSpawned: (r) => {
           sessionJobIndex.set(r.session_id, id);
-          jobs.patchJob(id, { session_id: r.session_id, status: 'doing', ai_pending: false })
+          runJobOp(id, () => jobs.patchJob(id, { session_id: r.session_id, status: 'doing', ai_pending: false }))
             .catch((err) => console.error('[invite] queued spawn bookkeeping failed', err));
         },
         onSpawnError: (err) => {
           console.error('[invite] queued spawn failed', err);
-          jobs.patchJob(id, { ai_pending: false }).catch(() => {});
+          runJobOp(id, () => jobs.patchJob(id, { ai_pending: false })).catch(() => {});
         },
       });
-      await jobs.patchJob(id, { ai_pending: true });
+      await runJobOp(id, () => jobs.patchJob(id, { ai_pending: true }));
       return sendJson(res, 202, { queued: true, busy: true, holder: e.holder });
     }
     throw e;
   }
   sessionJobIndex.set(result.session_id, id);
-  await jobs.patchJob(id, { session_id: result.session_id, status: 'doing' });
+  await runJobOp(id, () => jobs.patchJob(id, { session_id: result.session_id, status: 'doing' }));
   return sendJson(res, 201, await jobs.readJob(id));
 }
 
@@ -358,13 +376,13 @@ async function resumeJob(res, job, text) {
     if (e.code === 'CWD_BUSY') {
       bridge.enqueueMessage(job.session_id, {
         ...params,
-        onStart: () => { jobs.patchJob(id, { status: 'doing' }).catch(() => {}); },
+        onStart: () => { runJobOp(id, () => jobs.patchJob(id, { status: 'doing' })).catch(() => {}); },
       });
       return sendJson(res, 202, { queued: true });
     }
     throw e;
   }
-  await jobs.patchJob(id, { status: 'doing' });
+  await runJobOp(id, () => jobs.patchJob(id, { status: 'doing' }));
   return sendJson(res, 201, await jobs.readJob(id));
 }
 
@@ -613,11 +631,11 @@ const server = http.createServer(async (req, res) => {
     if (m === 'PATCH' && (mm = url.pathname.match(/^\/jobs\/([^/]+)$/))) {
       const body = await readBody(req);
       try {
-        return sendJson(res, 200, await jobs.patchJob(mm[1], body));
+        return sendJson(res, 200, await runJobOp(mm[1], () => jobs.patchJob(mm[1], body)));
       } catch (e) { return badReq(res, e.message); }
     }
     if (m === 'DELETE' && (mm = url.pathname.match(/^\/jobs\/([^/]+)$/))) {
-      await jobs.deleteJob(mm[1]);
+      await runJobOp(mm[1], () => jobs.deleteJob(mm[1]));
       await deleteJobAttachments(mm[1]);
       return sendJson(res, 200, { ok: true });
     }
@@ -642,7 +660,7 @@ const server = http.createServer(async (req, res) => {
       }
       const meta = saved.map(({ absPath, ...rest }) => rest);
       let job;
-      try { job = await jobs.appendTurn(id, { role: body.role, text: body.text, attachments: meta }); }
+      try { job = await runJobOp(id, () => jobs.appendTurn(id, { role: body.role, text: body.text, attachments: meta })); }
       catch (e) { return badReq(res, e.message); }
       // The invite gate: Claude is never spawned by a turn. Before invite a job
       // is the human's private space — turns are recorded only. After invite
@@ -668,7 +686,7 @@ const server = http.createServer(async (req, res) => {
       // The lock: once AI is invited, the turns are the record it received and
       // can no longer be edited. Before invite they're the human's private notes.
       if (job.session_id) return sendJson(res, 409, { error: 'locked: AI already invited' });
-      try { return sendJson(res, 200, await jobs.editTurn(id, idx, body.text)); }
+      try { return sendJson(res, 200, await runJobOp(id, () => jobs.editTurn(id, idx, body.text))); }
       catch (e) { return badReq(res, e.message); }
     }
     // Promote a private note into a real chat comment to the AI. The note flips
@@ -680,7 +698,7 @@ const server = http.createServer(async (req, res) => {
       const job = await jobs.readJobOr(id);
       if (!job) return notFound(res);
       let updated;
-      try { updated = await jobs.convertNoteTurn(id, idx); }
+      try { updated = await runJobOp(id, () => jobs.convertNoteTurn(id, idx)); }
       catch (e) { return badReq(res, e.message); }
       if (updated.session_id) {
         try { return await resumeJob(res, updated, updated.turns[idx].text); }
@@ -701,7 +719,7 @@ const server = http.createServer(async (req, res) => {
       const job = await jobs.readJobOr(id);
       if (!job) return notFound(res);
       if (job.session_id) return sendJson(res, 409, { error: 'locked: AI already invited' });
-      try { return sendJson(res, 200, await jobs.demoteUserTurn(id, idx)); }
+      try { return sendJson(res, 200, await runJobOp(id, () => jobs.demoteUserTurn(id, idx))); }
       catch (e) { return badReq(res, e.message); }
     }
     // Delete a private note turn (notes only — jobs.deleteNoteTurn enforces it).
@@ -709,7 +727,7 @@ const server = http.createServer(async (req, res) => {
       const id = mm[1];
       const idx = Number(mm[2]);
       if (!(await jobs.readJobOr(id))) return notFound(res);
-      try { return sendJson(res, 200, await jobs.deleteNoteTurn(id, idx)); }
+      try { return sendJson(res, 200, await runJobOp(id, () => jobs.deleteNoteTurn(id, idx))); }
       catch (e) { return badReq(res, e.message); }
     }
     // The human work clock — the browser starts it when the user lands in a job
@@ -718,7 +736,7 @@ const server = http.createServer(async (req, res) => {
     if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/clock\/(start|stop)$/))) {
       const id = mm[1], action = mm[2];
       if (!(await jobs.readJobOr(id))) return notFound(res);
-      const job = action === 'start' ? await jobs.startClock(id) : await jobs.stopClock(id);
+      const job = await runJobOp(id, () => (action === 'start' ? jobs.startClock(id) : jobs.stopClock(id)));
       return sendJson(res, 200, job);
     }
     // !stop — interrupt the live AI turn for a job. Mark it interrupted (so the
