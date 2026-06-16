@@ -155,11 +155,16 @@ function releaseCwd(cwd) {
   activeCwds.delete(cwd);
   // (runningChildren is keyed by session_id and cleaned up in each child's exit
   // handler — nothing to drop here.)
-  // After releasing the cwd, check if a queued message is waiting for it and
-  // fire the next one. Wrapped so a dispatch failure can't poison the release
-  // — the AI exit chain still needs to run cleanly.
-  try { dispatchPendingForCwd(cwd); }
-  catch (err) { console.error('[bridge] dispatchPendingForCwd threw', err); }
+  // After releasing the cwd, fire the next thing waiting on it. Follow-up turns
+  // (resume an already-running chat) take priority over brand-new chats waiting
+  // to spawn; we dispatch at most one of either per free event, since the first
+  // dispatch re-claims the cwd. Wrapped so a dispatch failure can't poison the
+  // release — the AI exit chain still needs to run cleanly.
+  try {
+    const sent = dispatchPendingForCwd(cwd);
+    if (!sent) dispatchPendingSpawnForCwd(cwd);
+  }
+  catch (err) { console.error('[bridge] dispatch on cwd release threw', err); }
 }
 function whoHoldsCwd(cwd) {
   const cur = activeCwds.get(cwd);
@@ -206,8 +211,58 @@ function dispatchPendingForCwd(cwd) {
       .catch(err => {
         console.error(`[bridge] queued message dispatch failed for ${sessionId.slice(0,8)}`, err);
       });
-    return; // one dispatch per cwd-free event
+    return true; // one dispatch per cwd-free event
   }
+  return false;
+}
+
+// ── Pending spawn buffer ────────────────────────────────────
+// The new-chat counterpart of pendingMessages. When a user hands a brand-new
+// job over to AI ("+ AI") while the target working tree is busy with another
+// chat, the invite can't spawn yet — and there's no session_id to key a pending
+// MESSAGE off. So we queue the *spawn* itself here, keyed by cwd, and fire it
+// from releaseCwd once the tree frees. Each entry carries a prepare() thunk
+// (re-read at dispatch time so turns added while waiting are still included)
+// plus onSpawned/onSpawnError callbacks for the caller's bookkeeping.
+const pendingSpawns = new Map(); // cwd → [{ location, holder, prepare, onSpawned, onSpawnError }]
+function enqueueSpawn(params) {
+  const cwd = (params.location && params.location.cwd) || DEFAULT_LOCATION.cwd;
+  if (!pendingSpawns.has(cwd)) pendingSpawns.set(cwd, []);
+  const q = pendingSpawns.get(cwd);
+  // Dedupe by holder so a double-clicked "+ AI" can't enqueue (and later spawn)
+  // the same job twice — keep the first, ignore the rest.
+  if (params.holder && q.some((e) => e.holder === params.holder)) return q.length;
+  q.push(params);
+  return q.length;
+}
+function pendingSpawnCount(cwd) {
+  const q = pendingSpawns.get(cwd);
+  return q ? q.length : 0;
+}
+function dispatchPendingSpawnForCwd(cwd) {
+  if (activeCwds.has(cwd)) return false;
+  const q = pendingSpawns.get(cwd);
+  if (!q || !q.length) return false;
+  const next = q.shift();
+  if (q.length === 0) pendingSpawns.delete(cwd);
+  // prepare() is async (it re-reads the job), so the cwd is only actually
+  // claimed inside spawnSession a tick later. If something else grabs it in
+  // that window, spawnSession throws CWD_BUSY — requeue at the front and wait
+  // for the next free event. All other claim/release stays owned by spawnSession.
+  Promise.resolve()
+    .then(() => next.prepare())
+    .then((spawnParams) => spawnSession(spawnParams))
+    .then((result) => { if (typeof next.onSpawned === 'function') next.onSpawned(result); })
+    .catch((err) => {
+      if (err && err.code === 'CWD_BUSY') {
+        const cur = pendingSpawns.get(cwd) || [];
+        cur.unshift(next);
+        pendingSpawns.set(cwd, cur);
+        return;
+      }
+      if (typeof next.onSpawnError === 'function') next.onSpawnError(err);
+    });
+  return true;
 }
 
 // Spawn a fresh Claude session non-interactively. Resolves as soon as the
@@ -478,6 +533,8 @@ module.exports = {
   whoHoldsCwd,
   enqueueMessage,
   pendingMessageCount,
+  enqueueSpawn,
+  pendingSpawnCount,
   killSession,
   clearPending,
   isSessionLive,

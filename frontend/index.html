@@ -637,6 +637,11 @@
   .turn.thinking .dot:nth-child(2) { animation-delay: .2s; }
   .turn.thinking .dot:nth-child(3) { animation-delay: .4s; }
   @keyframes thinkpulse { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
+  /* Queued-invite variant: a muted text line instead of dots, gently pulsing. */
+  .turn.thinking .bubble.waiting {
+    font-size: 13px; font-style: italic; color: var(--muted);
+    animation: thinkpulse 1.8s ease-in-out infinite;
+  }
 
   /* Permission prompts (the gated AI model). Sit between the transcript and the
      composer; an amber card with Allow / Deny, or a red danger card for the
@@ -2511,7 +2516,7 @@
     const turns = j.turns || [];
     // The invite gate: offer "+ AI" once the human has written something but
     // before they've handed the job over (no session yet). Hidden after invite.
-    inviteAiBtn.hidden = !!j.session_id || turns.length === 0;
+    inviteAiBtn.hidden = !!j.session_id || !!j.ai_pending || turns.length === 0;
     if (!turns.length) {
       turnsEl.innerHTML = '<div class="empty">No messages yet.</div>';
       return;
@@ -2590,6 +2595,14 @@
       const t = document.createElement('div');
       t.className = 'turn ai thinking';
       t.innerHTML = '<div class="bubble"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
+      turnsEl.appendChild(t);
+    } else if (j.ai_pending) {
+      // Invite queued behind another chat in the same working tree — it'll start
+      // on its own once that one finishes. Show a labelled waiting bubble so the
+      // human knows it's coming and didn't silently no-op.
+      const t = document.createElement('div');
+      t.className = 'turn ai thinking';
+      t.innerHTML = '<div class="bubble waiting">Waiting for the running chat to finish…</div>';
       turnsEl.appendChild(t);
     }
     renderPermissions();

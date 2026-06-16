@@ -262,21 +262,27 @@ async function setAlwaysAllowed(toolName) {
 async function inviteAi(res, job) {
   const id = job.id;
   if (job.session_id) return sendJson(res, 409, { error: 'AI already invited' });
+  // A queued invite (waiting on a busy tree) hasn't got a session_id yet — guard
+  // on ai_pending too so a second invite can't enqueue/spawn the job twice.
+  if (job.ai_pending) return sendJson(res, 202, { queued: true, busy: true });
   const location = await resolveLocation(job);
   const token = tokenForJob(id, location.cwd);
-  const companion = (await jobs.readNotes(id)).trim();
-  const userTurns = (job.turns || []).filter((t) => t.role === 'user').map((t) => t.text);
+  // Build the spawn params from the job's CURRENT turns/notes. Re-run fresh at
+  // dispatch time when an invite has to queue (busy tree), so any turns the user
+  // adds while waiting are still folded into the handover prompt.
   // bridge composes the spawn prompt as `${title}\n\n${notes}`. Keep title and
   // body DISJOINT (V1's model) so the handover isn't duplicated: when the job is
   // unnamed, its first message becomes the title line and the remaining messages
   // (plus the notes companion) form the body; when already named, every message
   // goes in the body.
-  const title = job.title || firstLine(userTurns[0] || '') || 'New job';
-  const bodyTurns = job.title ? userTurns : userTurns.slice(1);
-  const promptBody = [...bodyTurns, companion].filter(Boolean).join('\n\n');
-  let result;
-  try {
-    result = await bridge.spawnSession({
+  const buildSpawnParams = async () => {
+    const j = await jobs.readJob(id);
+    const companion = (await jobs.readNotes(id)).trim();
+    const userTurns = (j.turns || []).filter((t) => t.role === 'user').map((t) => t.text);
+    const title = j.title || firstLine(userTurns[0] || '') || 'New job';
+    const bodyTurns = j.title ? userTurns : userTurns.slice(1);
+    const promptBody = [...bodyTurns, companion].filter(Boolean).join('\n\n');
+    return {
       title,
       notes: promptBody,
       location,
@@ -285,12 +291,37 @@ async function inviteAi(res, job) {
       // Every file attached to a user turn before invite rides along — bridge
       // prepends the <RUNN-ATTACHMENTS> marker so the spawn prompt points Claude
       // at all of them.
-      attachments: jobAttachmentSpawnList(job),
+      attachments: jobAttachmentSpawnList(j),
       onExit: (code) => handleJobExit(id, code),
       holder: 'job:' + id,
-    });
+    };
+  };
+  let result;
+  try {
+    result = await bridge.spawnSession(await buildSpawnParams());
   } catch (e) {
-    if (e.code === 'CWD_BUSY') return sendJson(res, 202, { queued: true, busy: true, holder: e.holder });
+    if (e.code === 'CWD_BUSY') {
+      // The tree's busy with another chat. Queue this invite — it auto-starts
+      // when the tree frees (mirrors the follow-up turn path). `ai_pending`
+      // flags the wait so the UI hides "+ AI" and shows a waiting bubble until
+      // the session actually spawns.
+      bridge.enqueueSpawn({
+        location,
+        holder: 'job:' + id,
+        prepare: buildSpawnParams,
+        onSpawned: (r) => {
+          sessionJobIndex.set(r.session_id, id);
+          jobs.patchJob(id, { session_id: r.session_id, status: 'doing', ai_pending: false })
+            .catch((err) => console.error('[invite] queued spawn bookkeeping failed', err));
+        },
+        onSpawnError: (err) => {
+          console.error('[invite] queued spawn failed', err);
+          jobs.patchJob(id, { ai_pending: false }).catch(() => {});
+        },
+      });
+      await jobs.patchJob(id, { ai_pending: true });
+      return sendJson(res, 202, { queued: true, busy: true, holder: e.holder });
+    }
     throw e;
   }
   sessionJobIndex.set(result.session_id, id);
@@ -951,6 +982,11 @@ sessionsWatcher.on('change', onSessionEvent);
       enqueueJobOp(j.id, () => jobs.patchJob(j.id, { status: 'review' }));
     } else if (staleClock) {
       enqueueJobOp(j.id, () => jobs.stopClock(j.id));
+    } else if (j.ai_pending) {
+      // A queued invite that never spawned (the pending-spawn buffer is in-memory
+      // and doesn't survive a restart). Clear the flag so "+ AI" comes back and
+      // the job isn't stuck showing a waiting bubble forever.
+      enqueueJobOp(j.id, () => jobs.patchJob(j.id, { ai_pending: false }));
     }
   }
   server.listen(PORT, HOST, () => {
