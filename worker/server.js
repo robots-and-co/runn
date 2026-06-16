@@ -691,6 +691,19 @@ const server = http.createServer(async (req, res) => {
       }
       return sendJson(res, 200, updated);
     }
+    // Demote a user turn back into a private note (inverse of promote). Only
+    // before invite: once the AI's been handed the thread, the turns are the
+    // record it received and lock. Lets the human pull a pre-invite message out
+    // of the handover so it won't hit Claude.
+    if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/turns\/(\d+)\/demote$/))) {
+      const id = mm[1];
+      const idx = Number(mm[2]);
+      const job = await jobs.readJobOr(id);
+      if (!job) return notFound(res);
+      if (job.session_id) return sendJson(res, 409, { error: 'locked: AI already invited' });
+      try { return sendJson(res, 200, await jobs.demoteUserTurn(id, idx)); }
+      catch (e) { return badReq(res, e.message); }
+    }
     // Delete a private note turn (notes only — jobs.deleteNoteTurn enforces it).
     if (m === 'DELETE' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/turns\/(\d+)$/))) {
       const id = mm[1];

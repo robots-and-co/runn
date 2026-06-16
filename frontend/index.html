@@ -648,6 +648,8 @@
   }
   .te-save { background: var(--brand); color: #fff; }
   .te-cancel { background: var(--surface-2); color: var(--ink); }
+  /* Demote-to-note sits apart on the left; Cancel/Save stay right. */
+  .te-note { background: #f3e6a8; color: #6b5a16; margin-right: auto; }
 
   .divider { display: flex; align-items: center; gap: 12px; margin: 18px 2px; color: var(--muted); font-size: 12px; }
   .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
@@ -3170,6 +3172,18 @@
       renderList(); renderChat();
     } catch (e) { console.error('delete note failed', e); }
   }
+  // Demote a pre-invite user turn into a private note so it won't be sent to
+  // Claude on invite. Reversible via the note's "↑ Send to Claude" (promote).
+  async function demoteTurn(idx) {
+    const id = state.currentId;
+    if (!id || id === DRAFT) return;
+    state.editingTurn = null;
+    try {
+      const updated = await postJson(`/jobs/${id}/turns/${idx}/demote`, {});
+      if (updated && updated.id) state.jobs.set(updated.id, updated);
+    } catch (e) { console.error('demote turn failed', e); }
+    renderList(); renderChat();
+  }
   function beginEditTurn(idx) {
     state.editingTurn = { id: state.currentId, idx };
     renderChat();
@@ -3204,13 +3218,19 @@
     });
     const actions = document.createElement('div');
     actions.className = 'turn-edit-actions';
+    // Demote → note: pulls this turn out of the handover so it won't hit Claude
+    // on invite. Reversible via the note card's "↑ Send to Claude".
+    const note = document.createElement('button');
+    note.type = 'button'; note.className = 'te-note'; note.textContent = '📝 Note';
+    note.title = 'Make this a private note (not sent to Claude)';
+    note.addEventListener('click', () => demoteTurn(idx));
     const cancel = document.createElement('button');
     cancel.type = 'button'; cancel.className = 'te-cancel'; cancel.textContent = 'Cancel';
     cancel.addEventListener('click', cancelEditTurn);
     const save = document.createElement('button');
     save.type = 'button'; save.className = 'te-save'; save.textContent = 'Save';
     save.addEventListener('click', () => saveEditTurn(idx, ta.value));
-    actions.appendChild(cancel); actions.appendChild(save);
+    actions.appendChild(note); actions.appendChild(cancel); actions.appendChild(save);
     wrap.appendChild(ta); wrap.appendChild(actions);
     setTimeout(() => { grow(); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
   }

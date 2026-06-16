@@ -150,6 +150,22 @@ async function convertNoteTurn(id, index) {
   return writeJob(job);
 }
 
+// Demote a user turn back into a private note IN PLACE — the inverse of
+// convertNoteTurn. Lets the human pull a pre-invite message out of the handover
+// so it won't hit Claude on invite (it stays as a margin note). Rejects
+// non-user turns; the server enforces the pre-invite lock.
+async function demoteUserTurn(id, index) {
+  const job = await readJob(id);
+  const turns = job.turns || [];
+  if (!Number.isInteger(index) || index < 0 || index >= turns.length) {
+    throw new Error('bad turn index');
+  }
+  if (turns[index].role !== 'user') throw new Error('only user turns can be demoted');
+  turns[index].role = 'note';
+  turns[index].demoted_at = nowIso();
+  return writeJob(job);
+}
+
 // Delete a private note turn. Restricted to notes: real user/ai turns are the
 // permanent record (and locked from editing once the AI is invited).
 async function deleteNoteTurn(id, index) {
@@ -268,6 +284,7 @@ module.exports = {
   init,
   createJob,
   convertNoteTurn,
+  demoteUserTurn,
   deleteNoteTurn,
   readJob,
   readJobOr,
