@@ -228,6 +228,22 @@
   .chip-menu-item.is-current { background: var(--surface-2); font-weight: 600; }
   .chip-menu-item.danger { color: #b23b2a; }
   .chip-menu-item .chip { pointer-events: none; }
+  /* Command palette — pops above the composer the moment you type a leading ! */
+  .cmd-palette {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    padding: 6px; margin-bottom: 8px; display: flex; flex-direction: column;
+    gap: 2px; max-height: 240px; overflow-y: auto;
+  }
+  .cmd-palette[hidden] { display: none; }
+  .cmd-item {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 9px 12px; background: none; border: 0; border-radius: 9px;
+    cursor: pointer; font: inherit; color: var(--ink); text-align: left; width: 100%;
+  }
+  .cmd-item:hover, .cmd-item.active { background: var(--surface-2); }
+  .cmd-item .cmd-name { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .cmd-item .cmd-desc { color: var(--muted); font-size: 13px; }
 
   /* chat header overflow menu (archive / delete) */
   .job-menu-btn {
@@ -935,6 +951,7 @@
       </div>
       <div class="chat-permissions" id="chatPermissions"></div>
       <div class="composer-attachments" id="composerAttachments" hidden></div>
+      <div class="cmd-palette" id="cmdPalette" hidden></div>
       <form class="composer" id="composer">
         <button type="button" id="inviteAiBtn" class="invite-ai" hidden>+ AI</button>
         <button type="button" id="noteToggle" class="note-toggle" aria-pressed="false" title="Note mode — jot a private note Claude can't see (promote it to a message later)">📝</button>
@@ -2805,6 +2822,67 @@
     catch (e) { console.error('command failed', e); toast('Command failed', 'err'); }
   }
 
+  // ── Command palette ──────────────────────────────────────────
+  // A leading ! (and no space yet — still typing the command word) pops a
+  // filtered picker above the composer. ↑/↓ to move, Enter/Tab/click to pick.
+  // Reads straight from COMMANDS so a new entry shows up here for free.
+  const cmdPalette = $('cmdPalette');
+  let palItems = [];   // command keys currently shown, top-to-bottom
+  let palIdx = -1;      // highlighted row
+  const palOpen = () => !cmdPalette.hidden;
+  // Active while the input is "!word" with no space — once you hit space you're
+  // typing args, so the picker steps out of the way.
+  function paletteMatch(value) {
+    const m = /^!(\S*)$/.exec(value);
+    if (!m) return null;
+    const q = m[1].toLowerCase();
+    return Object.keys(COMMANDS).filter((k) => k.startsWith(q));
+  }
+  function renderPalette() {
+    cmdPalette.innerHTML = '';
+    palItems.forEach((key, i) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'cmd-item' + (i === palIdx ? ' active' : '');
+      item.dataset.cmd = key;
+      item.innerHTML = `<span class="cmd-name">!${escapeHtml(key)}</span>` +
+        `<span class="cmd-desc">${escapeHtml(COMMANDS[key].desc || '')}</span>`;
+      // mousedown (not click) so the textarea keeps focus through the pick.
+      item.addEventListener('mousedown', (e) => { e.preventDefault(); acceptPalette(key); });
+      cmdPalette.appendChild(item);
+    });
+  }
+  function syncPalette() {
+    const matches = paletteMatch(msgInput.value);
+    if (!matches || !matches.length) return closePalette();
+    palItems = matches;
+    if (palIdx < 0 || palIdx >= palItems.length) palIdx = 0;
+    renderPalette();
+    cmdPalette.hidden = false;
+  }
+  function closePalette() { cmdPalette.hidden = true; palItems = []; palIdx = -1; }
+  function movePalette(delta) {
+    if (!palItems.length) return;
+    palIdx = (palIdx + delta + palItems.length) % palItems.length;
+    renderPalette();
+    const active = cmdPalette.querySelector('.cmd-item.active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+  }
+  // Pick a command: zero-arg ones (like !stop) fire immediately; ones that take
+  // args get filled in with a trailing space so you can type the rest.
+  function acceptPalette(key) {
+    const cmd = COMMANDS[key];
+    closePalette();
+    if (cmd && cmd.args) {
+      msgInput.value = `!${key} `;
+      autoGrow();
+      if (!isMobile()) msgInput.focus();
+    } else {
+      msgInput.value = `!${key}`;
+      sendCurrent();
+    }
+  }
+
   // ── Chat attachments (composer side) ─────────────────────────
   // Files staged in state.pendingAttachments are read to base64 and ride along
   // with the next message in the POST body; the worker persists them and feeds
@@ -2884,6 +2962,7 @@
   }
 
   async function sendCurrent() {
+    closePalette();
     const text = msgInput.value.trim();
     const attachments = state.pendingAttachments;
     // A message can be attachments-only — but a bare empty composer does nothing.
@@ -3293,6 +3372,7 @@
     if (!jm.hidden && !jm.contains(ev.target)) closeJobMenu();
     const com = $('composerMenu');
     if (!com.hidden && !com.contains(ev.target)) closeComposerMenu();
+    if (palOpen() && !cmdPalette.contains(ev.target) && ev.target !== msgInput) closePalette();
     const clm = $('clientMenu');
     if (!clm.hidden && !clm.contains(ev.target)) closeClientMenu();
     const cfm = $('clientFilterMenu');
@@ -3351,12 +3431,22 @@
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
   inviteAiBtn.addEventListener('click', inviteAi);
   noteToggle.addEventListener('click', () => { setNoteMode(!state.noteMode); if (!isMobile()) msgInput.focus(); });
-  msgInput.addEventListener('input', autoGrow);
+  msgInput.addEventListener('input', () => { autoGrow(); syncPalette(); });
   msgInput.addEventListener('keydown', (e) => {
+    // Command palette steals the navigation keys while it's open.
+    if (palOpen()) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); return movePalette(1); }
+      if (e.key === 'ArrowUp') { e.preventDefault(); return movePalette(-1); }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); return closePalette(); }
+      if ((e.key === 'Enter' && !e.shiftKey && !e.isComposing) || e.key === 'Tab') {
+        if (palIdx >= 0 && palItems[palIdx]) { e.preventDefault(); return acceptPalette(palItems[palIdx]); }
+      }
+    }
     // On mobile, Enter is a newline — never a send (the Send button submits).
     // Desktop keeps Enter-to-send (Shift+Enter for a newline).
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile()) { e.preventDefault(); sendCurrent(); }
   });
+  msgInput.addEventListener('blur', () => { if (palOpen()) setTimeout(closePalette, 120); });
   // Attachments: picker, clipboard paste, and drag-drop onto the transcript.
   attachBtn.addEventListener('click', () => { if (!attachBtn.disabled) attachInput.click(); });
   attachInput.addEventListener('change', () => { addFiles(attachInput.files); attachInput.value = ''; });
