@@ -1207,9 +1207,11 @@
     renderTotal(base);                       // $ total always sums the full set (incl. done)
     const jobs = base.filter((j) => matchesStatusFilter(j) && matchesDueFilter(j));
     // Order by due urgency (overdue → today → … → no due) so the labeled
-    // dividers group cleanly. Within a bucket, on-hold jobs sink below the
-    // rest; remaining ties fall back to most-recently-touched.
+    // dividers group cleanly. Within a bucket, review jobs rise to the top and
+    // on-hold jobs sink below the rest; remaining ties fall back to
+    // most-recently-touched.
     jobs.sort((a, b) => (dueBucket(b).rank - dueBucket(a).rank)
+      || ((b.status === 'review') - (a.status === 'review'))
       || ((a.status === 'hold') - (b.status === 'hold'))
       || String(b.updated_at).localeCompare(String(a.updated_at)));
     jobListEl.innerHTML = '';
