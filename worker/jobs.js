@@ -25,7 +25,9 @@ const JOBS_DIR = path.join(DATA_ROOT, 'jobs');
 // non-billable parking spot: a job kept purely as a reference note. It's never
 // 'done', so it never rolls into an invoice draft, and it's clock-idle so it
 // accrues no billable time. See the invoice rollup in invoices.js / index.html.
-const STATUSES = ['open', 'doing', 'review', 'done', 'invoiced', 'paid', 'blocked', 'hold', 'note'];
+// 'urgent' = active work that jumps the queue: it sorts above every due bucket
+// (see dueBucket in index.html) so it always reads at the top of the list.
+const STATUSES = ['urgent', 'open', 'doing', 'review', 'done', 'invoiced', 'paid', 'blocked', 'hold', 'note'];
 // 'note' = a private margin note. Recorded inline in the thread for position,
 // but never handed to or dispatched to the AI (inviteAi / the turn route both
 // filter on role === 'user'). Promote one to a real message with convertNoteTurn.
