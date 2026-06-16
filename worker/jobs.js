@@ -104,11 +104,15 @@ async function listJobs({ includeArchived = false } = {}) {
 
 // Append one turn. session_event marks a dated session/day divider inside the
 // single continuous thread (sessions are not separate objects).
-async function appendTurn(id, { role, text, session_event = null, at = null }) {
+async function appendTurn(id, { role, text, session_event = null, at = null, attachments = null }) {
   if (!ROLES.includes(role)) throw new Error(`bad turn role: ${role}`);
   const job = await readJob(id);
   const turn = { role, text, at: at || nowIso() };
   if (session_event) turn.session_event = session_event;
+  // Chat attachments saved to disk by the server ride along as metadata
+  // ({ name, mime, bytes, filename }) so the frontend can render them and the
+  // spawn/resume paths can rebuild the <RUNN-ATTACHMENTS> marker.
+  if (Array.isArray(attachments) && attachments.length) turn.attachments = attachments;
   job.turns.push(turn);
   return writeJob(job);
 }

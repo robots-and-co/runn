@@ -30,11 +30,17 @@ const bridge = require('./bridge');
 // ── Config ───────────────────────────────────────────────────
 const CLIENTS_DIR = path.join(DATA_ROOT, 'clients');
 const ASSETS_DIR = path.join(DATA_ROOT, 'assets');
+// Chat attachments live one dir per job at ~/runn-data/attachments/<job_id>/.
+const ATTACHMENTS_DIR = path.join(DATA_ROOT, 'attachments');
 const SETTINGS_PATH = path.join(DATA_ROOT, 'settings.json');
 const PORT = Number(process.env.PORT || 17777);
 const HOST = process.env.HOST || '0.0.0.0';
 const FRONTEND_DIR = path.join(__dirname, '..', 'frontend');
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
+// Caps for the attachment-bearing /jobs/:id/turn JSON body. Each file rides in
+// as base64, so the body cap (above) must comfortably exceed these.
+const MAX_ATTACHMENTS_PER_MESSAGE = 8;
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
 
 const clientPath = (id) => path.join(CLIENTS_DIR, `${id}.json`);
 
@@ -276,6 +282,10 @@ async function inviteAi(res, job) {
       location,
       permissionToken: token,
       permissionMode: 'default', // gated via --permission-prompt-tool, not a mode
+      // Every file attached to a user turn before invite rides along — bridge
+      // prepends the <RUNN-ATTACHMENTS> marker so the spawn prompt points Claude
+      // at all of them.
+      attachments: jobAttachmentSpawnList(job),
       onExit: (code) => handleJobExit(id, code),
       holder: 'job:' + id,
     });
@@ -365,9 +375,136 @@ function ctFor(p) {
        :                            'application/octet-stream';
 }
 
+// ── Chat attachments ─────────────────────────────────────────
+// Files dropped into the chat composer (image paste, drag-drop, picker) land
+// at ~/runn-data/attachments/<job_id>/<ts36>-<rand>-<safe-name> and are
+// referenced back to Claude by absolute path inside a <RUNN-ATTACHMENTS>
+// marker block prepended to the turn's prompt text (bridge.attachmentsMarker).
+// Claude's own Read tool then loads them — images/PDFs visually, text as text.
+// The marker is sent to the AI only; the stored turn keeps plain text plus
+// structured `attachments` metadata, which the frontend renders as chips.
+// Permissive allow-list: anything we trust Claude can do something useful with.
+// EXT_TO_MIME is the fallback when the browser sends no Content-Type.
+const ATTACHMENT_MIME_ALLOW = new Set([
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+  'application/pdf',
+  'text/plain', 'text/markdown', 'text/csv',
+  'application/json',
+]);
+const EXT_TO_MIME = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.gif': 'image/gif',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv',
+  '.json': 'application/json',
+};
+
+function sanitiseAttachmentName(name) {
+  // Strip path separators, NUL, newlines, and any leading dots. Then collapse
+  // anything outside a conservative ASCII alphabet so we never produce a name
+  // the static route can't safely serve back. Cap length so the prefixed
+  // <ts>-<rand>-<name> stays well under any FS limit. Loses unicode; v1 trade.
+  const base = String(name || 'file').replace(/[\\/\0\r\n]/g, '_').replace(/^\.+/, '');
+  const cleaned = base.replace(/[^A-Za-z0-9._\- ]/g, '_').slice(0, 80) || 'file';
+  return cleaned;
+}
+
+// Persist base64 attachments for a job to disk; returns metadata to record on
+// the turn ({ name, mime, bytes, filename }) plus the absPath the marker needs.
+async function saveAttachments(jobId, attachments) {
+  if (!Array.isArray(attachments) || !attachments.length) return [];
+  if (attachments.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+    const e = new Error(`too many attachments (max ${MAX_ATTACHMENTS_PER_MESSAGE})`);
+    e.code = 'ATTACH_TOO_MANY';
+    throw e;
+  }
+  const dir = path.join(ATTACHMENTS_DIR, jobId);
+  await fsp.mkdir(dir, { recursive: true });
+  const out = [];
+  for (const a of attachments) {
+    if (!a || typeof a.data !== 'string') {
+      const e = new Error('attachment.data required'); e.code = 'ATTACH_BAD'; throw e;
+    }
+    const buf = Buffer.from(a.data, 'base64');
+    if (!buf.length) { const e = new Error('attachment empty'); e.code = 'ATTACH_BAD'; throw e; }
+    if (buf.length > MAX_ATTACHMENT_BYTES) {
+      const e = new Error(`attachment "${a.name || ''}" exceeds ${MAX_ATTACHMENT_BYTES} bytes`);
+      e.code = 'ATTACH_TOO_BIG'; throw e;
+    }
+    const safeName = sanitiseAttachmentName(a.name);
+    const ext = path.extname(safeName).toLowerCase();
+    const mime = ATTACHMENT_MIME_ALLOW.has(a.mime) ? a.mime : (EXT_TO_MIME[ext] || null);
+    if (!mime) {
+      const e = new Error(`unsupported attachment type: ${a.mime || ext || 'unknown'}`);
+      e.code = 'ATTACH_UNSUPPORTED'; throw e;
+    }
+    const stamp = Date.now().toString(36) + '-' + crypto.randomBytes(2).toString('hex');
+    const filename = `${stamp}-${safeName}`;
+    const full = path.join(dir, filename);
+    // Defence-in-depth path-traversal guard: re-verify after the join.
+    if (!path.normalize(full).startsWith(dir + path.sep)) {
+      const e = new Error('path traversal blocked'); e.code = 'ATTACH_BAD'; throw e;
+    }
+    // Atomic write so a half-written file is never read by Claude or served.
+    const tmp = full + '.tmp';
+    await fsp.writeFile(tmp, buf);
+    await fsp.rename(tmp, full);
+    out.push({ name: safeName, mime, bytes: buf.length, filename, absPath: full });
+  }
+  return out;
+}
+
+// Prepend the <RUNN-ATTACHMENTS> marker (built from saved files) to the user's
+// text — this is the version handed to Claude, never the version stored.
+function buildPromptWithAttachments(text, saved) {
+  const header = bridge.attachmentsMarker(saved);
+  if (!header) return String(text || '').trim();
+  const body = (text && text.trim()) ? text.trim() : 'Please analyse the attached file(s).';
+  return `${header}\n\n${body}`;
+}
+
+// Map a turn's stored attachment metadata (filename-only on disk) to the
+// { absPath, mime } shape the marker builder + spawn path expect. Recomputes
+// absPath from the job id so the job JSON never has to carry host paths.
+function turnAttachmentSpawnList(jobId, turn) {
+  const list = turn && Array.isArray(turn.attachments) ? turn.attachments : [];
+  const dir = path.join(ATTACHMENTS_DIR, jobId);
+  return list.map((a) => ({ absPath: path.join(dir, a.filename), mime: a.mime }));
+}
+
+// Gather every attachment across a job's user turns into one spawn list — the
+// invite path hands the whole accumulated thread to Claude at once.
+function jobAttachmentSpawnList(job) {
+  const out = [];
+  for (const t of (job.turns || [])) {
+    if (t.role === 'user') out.push(...turnAttachmentSpawnList(job.id, t));
+  }
+  return out;
+}
+
+async function deleteJobAttachments(jobId) {
+  // Best-effort recursive remove; never throws into the calling route.
+  try { await fsp.rm(path.join(ATTACHMENTS_DIR, jobId), { recursive: true, force: true }); }
+  catch (err) { console.error('[runn] deleteJobAttachments failed', err); }
+}
+
 function serveStatic(req, res) {
   let p = req.url.split('?')[0];
   if (p === '/') p = '/index.html';
+  // /attachments/<job_id>/<filename> served from ~/runn-data/attachments/.
+  if (p.startsWith('/attachments/')) {
+    let rel;
+    try { rel = decodeURIComponent(p.slice('/attachments/'.length)); }
+    catch { res.writeHead(400); res.end('bad url'); return; }
+    const full = path.normalize(path.join(ATTACHMENTS_DIR, rel));
+    if (!full.startsWith(ATTACHMENTS_DIR + path.sep)) { res.writeHead(403); res.end(); return; }
+    fs.readFile(full, (err, data) => {
+      if (err) { res.writeHead(404); res.end('not found'); return; }
+      res.writeHead(200, { 'content-type': ctFor(rel) });
+      res.end(data);
+    });
+    return;
+  }
   // /assets/* served from ~/runn-data/assets/ (logo etc).
   if (p.startsWith('/assets/')) {
     let rel;
@@ -438,20 +575,39 @@ const server = http.createServer(async (req, res) => {
     }
     if (m === 'DELETE' && (mm = url.pathname.match(/^\/jobs\/([^/]+)$/))) {
       await jobs.deleteJob(mm[1]);
+      await deleteJobAttachments(mm[1]);
       return sendJson(res, 200, { ok: true });
     }
     if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/turn$/))) {
       const id = mm[1];
       const body = await readBody(req);
       if (!body.role || typeof body.text !== 'string') return badReq(res, 'role and text required');
+      // Attachments ride only on real (user) messages — never private notes,
+      // which Claude can't see until they're promoted into a plain message.
+      const hasAttachments = Array.isArray(body.attachments) && body.attachments.length > 0;
+      if (hasAttachments && body.role !== 'user') return badReq(res, 'attachments only allowed on user turns');
+      // A message may be attachments-only (no text) — "here, look at this".
+      if (!body.text.trim() && !hasAttachments) return badReq(res, 'text or attachments required');
+      if (!(await jobs.readJobOr(id))) return notFound(res);
+      // Persist any inline attachments to disk first; the saved metadata (minus
+      // the host absPath) is what we record on the turn. `saved` keeps absPath
+      // for the marker we hand the live session below.
+      let saved = [];
+      if (hasAttachments) {
+        try { saved = await saveAttachments(id, body.attachments); }
+        catch (e) { return badReq(res, e.message); }
+      }
+      const meta = saved.map(({ absPath, ...rest }) => rest);
       let job;
-      try { job = await jobs.appendTurn(id, body); }
+      try { job = await jobs.appendTurn(id, { role: body.role, text: body.text, attachments: meta }); }
       catch (e) { return badReq(res, e.message); }
       // The invite gate: Claude is never spawned by a turn. Before invite a job
       // is the human's private space — turns are recorded only. After invite
-      // (job.session_id set), a user turn resumes the existing session.
+      // (job.session_id set), a user turn resumes the existing session, with the
+      // attachment marker prepended so "the image goes with it".
       if (body.role === 'user' && job.session_id) {
-        try { return await resumeJob(res, job, body.text); }
+        const promptText = buildPromptWithAttachments(body.text, saved);
+        try { return await resumeJob(res, job, promptText); }
         catch (e) {
           console.error('[runn] resume failed', id, e);
           return sendJson(res, 500, { error: String(e.message || e) });
@@ -771,6 +927,7 @@ sessionsWatcher.on('change', onSessionEvent);
   await jobs.init();
   await invoices.init();
   await ensureDir(CLIENTS_DIR);
+  await ensureDir(ATTACHMENTS_DIR);
   // Rebuild the session index from existing jobs and catch up any AI turns the
   // worker missed while it was down (e.g. it died mid-turn before ingesting).
   // No Claude child survives a worker restart (systemd KillMode=control-group

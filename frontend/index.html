@@ -701,6 +701,56 @@
   .composer.note-mode textarea { border-color: #d8b94a; background: #fdf8e8; }
   .composer.note-mode button[type="submit"] { background: #b8941f; }
 
+  /* ── Chat attachments ──────────────────────────────────────
+     Composer-side chips (a row above the input, before send) and
+     transcript-side chips/thumbnails (above the user bubble's text). Both
+     rows need the explicit [hidden] override — a class `display` otherwise
+     wins over the boolean attribute. */
+  .composer-attach {
+    width: 38px; height: 44px; padding: 0; font-size: 19px;
+    background: var(--surface-2); color: var(--muted);
+  }
+  .composer-attach:hover:not(:disabled) { color: var(--ink); }
+  .composer-attachments {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 8px 12px 0; background: var(--surface);
+  }
+  .composer-attachments[hidden] { display: none; }
+  .attach-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 6px 4px 4px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    font-size: 12px; line-height: 1.2; max-width: 220px; color: var(--ink);
+    text-decoration: none;
+  }
+  .attach-chip img {
+    width: 36px; height: 36px; object-fit: cover; border-radius: 4px;
+    flex-shrink: 0; background: var(--surface-2);
+  }
+  .attach-chip .attach-icon {
+    width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; background: var(--surface-2); border-radius: 4px; font-size: 18px;
+  }
+  .attach-chip .attach-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0; color: var(--muted);
+  }
+  a.attach-chip:hover .attach-name { color: var(--ink); }
+  .attach-chip .attach-x {
+    border: none; background: none; cursor: pointer;
+    color: var(--muted); font-size: 16px; line-height: 1; padding: 0 2px;
+    flex-shrink: 0;
+  }
+  .attach-chip .attach-x:hover { color: var(--ink); }
+  /* Attachment row inside a user bubble (transcript display). */
+  .turn-col { display: flex; flex-direction: column; max-width: 92%; min-width: 0; }
+  .turn.user .turn-col { align-items: flex-end; }
+  .turn-col .bubble { max-width: 100%; }
+  .turn-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+  .turn.user .turn-attachments { justify-content: flex-end; }
+  /* Drag-drop drop-target ring on the transcript. */
+  .turns.drop-target { outline: 2px dashed var(--accent); outline-offset: -6px; background: rgba(184, 92, 31, 0.04); }
+
   /* Toast — transient feedback for !commands (and the like). */
   .toast-host {
     position: fixed; left: 50%; bottom: calc(24px + var(--safe-b)); transform: translateX(-50%);
@@ -866,9 +916,12 @@
         <div class="empty" id="emptyState">Select a job, or start a new one.</div>
       </div>
       <div class="chat-permissions" id="chatPermissions"></div>
+      <div class="composer-attachments" id="composerAttachments" hidden></div>
       <form class="composer" id="composer">
         <button type="button" id="inviteAiBtn" class="invite-ai" hidden>+ AI</button>
         <button type="button" id="noteToggle" class="note-toggle" aria-pressed="false" title="Note mode — jot a private note Claude can't see (promote it to a message later)">📝</button>
+        <button type="button" id="attachBtn" class="composer-attach" title="Attach a file (or paste / drag-drop)" aria-label="Attach a file">📎</button>
+        <input type="file" id="attachInput" multiple hidden accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv,application/json,.png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.md,.csv,.json">
         <textarea id="msgInput" rows="1" placeholder="Select a job, or start a new one." disabled></textarea>
         <button type="submit" id="sendBtn" disabled>Send</button>
       </form>
@@ -900,6 +953,7 @@
     currentId: null,
     sending: false,
     noteMode: false,       // composer flips to writing private notes (Claude can't see them)
+    pendingAttachments: [], // files staged in the composer, sent with the next message
     filterClient: '',      // '' = all clients
     picking: false,        // choosing a client for a new job
     draftClientId: null,   // client chosen for the not-yet-saved draft
@@ -921,6 +975,9 @@
   const sendBtn = $('sendBtn');
   const inviteAiBtn = $('inviteAiBtn');
   const noteToggle = $('noteToggle');
+  const attachBtn = $('attachBtn');
+  const attachInput = $('attachInput');
+  const composerAttachments = $('composerAttachments');
 
   marked.setOptions({ breaks: true, gfm: true });
   const mdToHtml = (s) => DOMPurify.sanitize(marked.parse(s || ''));
@@ -2264,6 +2321,7 @@
     state.currentId = id;
     state.editingTurn = null;
     state.picking = false;
+    clearPendingAttachments();   // staged files belong to the job you were in
     resetNewJobPicker();
     enterChatView();
     renderList();
@@ -2307,6 +2365,7 @@
     state.picking = false;
     state.draftClientId = clientId;
     state.currentId = DRAFT;
+    clearPendingAttachments();
     clockSync();   // leaving the open job → pause its clock
     resetNewJobPicker();
     enterChatView();
@@ -2320,6 +2379,7 @@
     state.currentId = null;
     state.picking = false;
     state.draftClientId = null;
+    clearPendingAttachments();
     resetNewJobPicker();
     clockSync();   // currentId is now null → stops the clock on the job we left
     renderList();
@@ -2330,6 +2390,9 @@
   function setComposer(enabled, placeholder) {
     msgInput.disabled = !enabled;
     sendBtn.disabled = !enabled || state.sending;
+    // Attachments ride only on real messages, never private notes — disable the
+    // picker in note mode (and whenever the composer itself is disabled).
+    attachBtn.disabled = !enabled || state.noteMode;
     msgInput.placeholder = (enabled && state.noteMode)
       ? "Private note — Claude can't see it until you promote it…"
       : placeholder;
@@ -2338,6 +2401,7 @@
     state.noteMode = !!on;
     noteToggle.setAttribute('aria-pressed', state.noteMode ? 'true' : 'false');
     $('composer').classList.toggle('note-mode', state.noteMode);
+    if (state.noteMode) clearPendingAttachments();   // notes can't carry files
     if (state.currentId) renderChat();   // refresh the placeholder for the open job
   }
   // The 📝 toggle is the after-AI counterpart of "+ AI": notes only make sense
@@ -2351,6 +2415,28 @@
       noteToggle.setAttribute('aria-pressed', 'false');
       $('composer').classList.remove('note-mode');
     }
+  }
+
+  // Transcript-side attachment chips for a user turn — image chips show a
+  // thumbnail, others a file icon; each links to the stored file. Returns null
+  // when the turn has no attachments.
+  function buildTurnAttachments(jobId, turn) {
+    const list = turn && Array.isArray(turn.attachments) ? turn.attachments : [];
+    if (!list.length) return null;
+    const row = document.createElement('div');
+    row.className = 'turn-attachments';
+    for (const a of list) {
+      const href = `/attachments/${encodeURIComponent(jobId)}/${encodeURIComponent(a.filename)}`;
+      const link = document.createElement('a');
+      link.className = 'attach-chip';
+      link.href = href; link.target = '_blank'; link.rel = 'noopener';
+      const thumb = (a.mime && a.mime.startsWith('image/'))
+        ? `<img src="${href}" alt="">`
+        : `<span class="attach-icon">📄</span>`;
+      link.innerHTML = `${thumb}<span class="attach-name">${escapeHtml(a.name)}</span>`;
+      row.appendChild(link);
+    }
+    return row;
   }
 
   function renderChat() {
@@ -2467,6 +2553,25 @@
         editBtn.textContent = '✎';
         editBtn.addEventListener('click', () => beginEditTurn(idx));
         wrap.appendChild(editBtn);
+      }
+      // Attachment chips (user turns only) sit above the bubble; an
+      // attachments-only message renders the chips with no bubble.
+      const attEl = turn.role === 'user' ? buildTurnAttachments(j.id, turn) : null;
+      const hasText = turn.text && turn.text.trim();
+      if (attEl) {
+        const col = document.createElement('div');
+        col.className = 'turn-col';
+        col.appendChild(attEl);
+        if (hasText) {
+          const b = document.createElement('div');
+          b.className = 'bubble';
+          b.innerHTML = mdToHtml(turn.text);
+          addCopyButtons(b);
+          col.appendChild(b);
+        }
+        wrap.appendChild(col);
+        turnsEl.appendChild(wrap);
+        return;
       }
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
@@ -2645,9 +2750,89 @@
     catch (e) { console.error('command failed', e); toast('Command failed', 'err'); }
   }
 
+  // ── Chat attachments (composer side) ─────────────────────────
+  // Files staged in state.pendingAttachments are read to base64 and ride along
+  // with the next message in the POST body; the worker persists them and feeds
+  // Claude their paths. Mirrors the backend's allow-list and caps so we reject
+  // before upload rather than after.
+  const ATTACH_MAX = 8;
+  const ATTACH_MAX_BYTES = 15 * 1024 * 1024;
+  const ATTACH_ALLOW = new Set([
+    'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+    'application/pdf', 'text/plain', 'text/markdown', 'text/csv', 'application/json',
+  ]);
+  const ATTACH_EXT = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+    gif: 'image/gif', pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown',
+    csv: 'text/csv', json: 'application/json',
+  };
+  function attachMimeFor(file) {
+    if (file.type && ATTACH_ALLOW.has(file.type)) return file.type;
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    return ATTACH_EXT[ext] || null;
+  }
+  function readFileBase64(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(',', 2)[1] || '');  // strip data: prefix
+      r.onerror = () => reject(r.error || new Error('read failed'));
+      r.readAsDataURL(file);
+    });
+  }
+  async function addFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    if (state.noteMode) return toast("Notes can't carry files", 'err');
+    for (const file of files) {
+      if (state.pendingAttachments.length >= ATTACH_MAX) { toast(`Max ${ATTACH_MAX} files`, 'err'); break; }
+      const mime = attachMimeFor(file);
+      if (!mime) { toast(`Unsupported: ${file.name}`, 'err'); continue; }
+      if (file.size > ATTACH_MAX_BYTES) { toast(`${file.name} is too big (15MB max)`, 'err'); continue; }
+      try {
+        const data = await readFileBase64(file);
+        const url = (mime.startsWith('image/')) ? URL.createObjectURL(file) : null;  // local thumbnail preview
+        state.pendingAttachments.push({ name: file.name, mime, data, url });
+      } catch (e) { console.error('attach read failed', e); toast(`Couldn't read ${file.name}`, 'err'); }
+    }
+    renderPendingAttachments();
+  }
+  function removePendingAttachment(i) {
+    const a = state.pendingAttachments[i];
+    if (a && a.url) { try { URL.revokeObjectURL(a.url); } catch {} }
+    state.pendingAttachments.splice(i, 1);
+    renderPendingAttachments();
+  }
+  function clearPendingAttachments() {
+    for (const a of state.pendingAttachments) { if (a.url) { try { URL.revokeObjectURL(a.url); } catch {} } }
+    state.pendingAttachments = [];
+    if (attachInput) attachInput.value = '';
+    renderPendingAttachments();
+  }
+  const ATTACH_ICON = '📄';
+  function renderPendingAttachments() {
+    if (!composerAttachments) return;
+    composerAttachments.innerHTML = '';
+    composerAttachments.hidden = state.pendingAttachments.length === 0;
+    state.pendingAttachments.forEach((a, i) => {
+      const chip = document.createElement('span');
+      chip.className = 'attach-chip';
+      const thumb = a.url
+        ? `<img src="${a.url}" alt="">`
+        : `<span class="attach-icon">${ATTACH_ICON}</span>`;
+      chip.innerHTML = `${thumb}<span class="attach-name">${escapeHtml(a.name)}</span>`;
+      const x = document.createElement('button');
+      x.type = 'button'; x.className = 'attach-x'; x.setAttribute('aria-label', 'Remove'); x.textContent = '×';
+      x.addEventListener('click', () => removePendingAttachment(i));
+      chip.appendChild(x);
+      composerAttachments.appendChild(chip);
+    });
+  }
+
   async function sendCurrent() {
     const text = msgInput.value.trim();
-    if (!text) return;
+    const attachments = state.pendingAttachments;
+    // A message can be attachments-only — but a bare empty composer does nothing.
+    if (!text && !attachments.length) return;
     // A ! command is meta — it runs locally and bypasses both the send lock and
     // note mode, so you can !stop even while a turn is in flight.
     if (isCommand(text)) {
@@ -2656,8 +2841,12 @@
       return runCommand(text);
     }
     if (state.sending) return;
+    // Notes never carry files; attachments only on real messages.
+    const sendAttachments = state.noteMode ? [] : attachments.map(({ name, mime, data }) => ({ name, mime, data }));
     state.sending = true; sendBtn.disabled = true;
     msgInput.value = ''; autoGrow();
+    // Clear the staged chips optimistically so a fast second send can't double them.
+    if (sendAttachments.length) clearPendingAttachments();
     try {
       let id = state.currentId;
       if (id === DRAFT) {
@@ -2667,7 +2856,9 @@
         state.draftClientId = null;
       }
       const role = state.noteMode ? 'note' : 'user';
-      const updated = await postJson(`/jobs/${id}/turn`, { role, text });
+      const body = { role, text };
+      if (sendAttachments.length) body.attachments = sendAttachments;
+      const updated = await postJson(`/jobs/${id}/turn`, body);
       if (updated && updated.id) state.jobs.set(updated.id, updated);
       renderList(); renderChat();
       clockSync();   // reconcile only — default-paused, so sending never auto-starts the clock
@@ -2675,6 +2866,10 @@
     } catch (e) {
       console.error('send failed', e);
       msgInput.value = text;          // restore so nothing is lost
+      // Re-stage the files (without object-URL previews — the blobs are gone) so
+      // the user can retry rather than silently losing them.
+      for (const a of sendAttachments) state.pendingAttachments.push({ ...a, url: null });
+      renderPendingAttachments();
     } finally {
       state.sending = false;
       sendBtn.disabled = msgInput.disabled;
@@ -3092,6 +3287,25 @@
     // On mobile, Enter is a newline — never a send (the Send button submits).
     // Desktop keeps Enter-to-send (Shift+Enter for a newline).
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile()) { e.preventDefault(); sendCurrent(); }
+  });
+  // Attachments: picker, clipboard paste, and drag-drop onto the transcript.
+  attachBtn.addEventListener('click', () => { if (!attachBtn.disabled) attachInput.click(); });
+  attachInput.addEventListener('change', () => { addFiles(attachInput.files); attachInput.value = ''; });
+  msgInput.addEventListener('paste', (e) => {
+    const files = Array.from(e.clipboardData ? e.clipboardData.files : []);
+    if (files.length && !msgInput.disabled && !state.noteMode) { e.preventDefault(); addFiles(files); }
+  });
+  // Drag-drop: only meaningful when a job is open and the composer is live.
+  const dropOk = () => !msgInput.disabled && !state.noteMode;
+  turnsEl.addEventListener('dragover', (e) => {
+    if (!dropOk() || !(e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files'))) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; turnsEl.classList.add('drop-target');
+  });
+  turnsEl.addEventListener('dragleave', (e) => { if (e.target === turnsEl) turnsEl.classList.remove('drop-target'); });
+  turnsEl.addEventListener('drop', (e) => {
+    turnsEl.classList.remove('drop-target');
+    if (!dropOk() || !(e.dataTransfer && e.dataTransfer.files.length)) return;
+    e.preventDefault(); addFiles(e.dataTransfer.files);
   });
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
