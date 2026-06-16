@@ -718,6 +718,12 @@
     padding: 0 12px; font-size: 18px;
   }
   .composer button.composer-attach:hover:not(:disabled) { color: var(--ink); background: var(--border); }
+  /* Overflow ("⋯") — phone-only; holds 📝 + 📎 so the input keeps its width. */
+  .composer button.composer-more {
+    display: none; background: var(--surface-2); color: var(--muted);
+    padding: 0 12px; font-size: 22px; line-height: 1;
+  }
+  .composer button.composer-more:hover:not(:disabled) { color: var(--ink); background: var(--border); }
   .composer-attachments {
     display: flex; flex-wrap: wrap; gap: 6px;
     padding: 8px 12px 0; background: var(--surface);
@@ -863,6 +869,11 @@
       box-shadow: 0 6px 18px -4px rgba(0, 0, 0, 0.4);
     }
     .newjob-picker { width: auto; min-width: 200px; }
+
+    /* Phone composer: tuck 📝 + 📎 behind the ⋯ overflow so the text input
+       isn't squashed down to a sliver. (+ AI / Send stay inline.) */
+    .composer button.note-toggle, .composer button.composer-attach { display: none; }
+    .composer button.composer-more { display: inline-flex; align-items: center; justify-content: center; }
   }
 </style>
 </head>
@@ -929,6 +940,8 @@
         <button type="button" id="noteToggle" class="note-toggle" aria-pressed="false" title="Note mode — jot a private note Claude can't see (promote it to a message later)">📝</button>
         <button type="button" id="attachBtn" class="composer-attach" title="Attach a file (or paste / drag-drop)" aria-label="Attach a file">📎</button>
         <input type="file" id="attachInput" multiple hidden accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv,application/json,.png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.md,.csv,.json">
+        <!-- Phone-only: 📝 + 📎 collapse into this overflow so the input isn't squashed. -->
+        <button type="button" id="composerMoreBtn" class="composer-more" title="More" aria-label="More actions">⋯</button>
         <textarea id="msgInput" rows="1" placeholder="Select a job, or start a new one." disabled></textarea>
         <button type="submit" id="sendBtn" disabled>Send</button>
       </form>
@@ -945,6 +958,7 @@
   </div>
   <div class="chip-menu" id="chipMenu" hidden></div>
   <div class="chip-menu" id="jobMenu" hidden></div>
+  <div class="chip-menu" id="composerMenu" hidden></div>
   <div class="chip-menu" id="clientMenu" hidden></div>
   <div class="chip-menu" id="clientFilterMenu" hidden></div>
   <div class="chip-menu" id="dueFilterMenu" hidden></div>
@@ -984,6 +998,7 @@
   const noteToggle = $('noteToggle');
   const attachBtn = $('attachBtn');
   const attachInput = $('attachInput');
+  const composerMoreBtn = $('composerMoreBtn');
   const composerAttachments = $('composerAttachments');
 
   marked.setOptions({ breaks: true, gfm: true });
@@ -1434,6 +1449,28 @@
     placeMenu(menu, anchorEl, 'right');
   }
   function closeJobMenu() { $('jobMenu').hidden = true; }
+
+  // Phone-only overflow fronting 📝 + 📎. Items mirror the inline buttons'
+  // availability: attach unless disabled (note mode / no job), note only once
+  // Claude's been invited. The is-current dot reflects active note mode.
+  function openComposerMenu(anchorEl) {
+    const menu = $('composerMenu');
+    menu.innerHTML = '';
+    const mk = (action, label, current) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'chip-menu-item' + (current ? ' is-current' : '');
+      item.dataset.action = action;
+      item.textContent = label;
+      menu.appendChild(item);
+    };
+    if (!attachBtn.disabled) mk('attach', '📎  Attach a file');
+    if (!noteToggle.hidden) mk('note', '📝  Note mode', state.noteMode);
+    if (!menu.children.length) return;   // nothing to offer — leave it closed
+    menu.hidden = false;
+    placeMenu(menu, anchorEl, 'right');
+  }
+  function closeComposerMenu() { $('composerMenu').hidden = true; }
 
   // ── Client picker (click the client chip to re-assign the job) ──
   let clientMenuJobId = null;
@@ -2402,6 +2439,7 @@
     // Attachments ride only on real messages, never private notes — disable the
     // picker in note mode (and whenever the composer itself is disabled).
     attachBtn.disabled = !enabled || state.noteMode;
+    composerMoreBtn.disabled = !enabled;   // the phone overflow that fronts 📝/📎
     msgInput.placeholder = (enabled && state.noteMode)
       ? "Private note — Claude can't see it until you promote it…"
       : placeholder;
@@ -3229,6 +3267,17 @@
     closeClientMenu();
     setJobClient(id, next).catch((e) => console.error('client change failed', e));
   });
+  composerMoreBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if ($('composerMenu').hidden) openComposerMenu(composerMoreBtn); else closeComposerMenu();
+  });
+  $('composerMenu').addEventListener('click', (ev) => {
+    const item = ev.target.closest('.chip-menu-item');
+    if (!item) return;
+    closeComposerMenu();
+    if (item.dataset.action === 'attach') { if (!attachBtn.disabled) attachInput.click(); }
+    else if (item.dataset.action === 'note') { setNoteMode(!state.noteMode); }
+  });
   $('jobMenu').addEventListener('click', (ev) => {
     const item = ev.target.closest('.chip-menu-item');
     if (!item) return;
@@ -3242,6 +3291,8 @@
     if (!cm.hidden && !cm.contains(ev.target)) closeChipMenu();
     const jm = $('jobMenu');
     if (!jm.hidden && !jm.contains(ev.target)) closeJobMenu();
+    const com = $('composerMenu');
+    if (!com.hidden && !com.contains(ev.target)) closeComposerMenu();
     const clm = $('clientMenu');
     if (!clm.hidden && !clm.contains(ev.target)) closeClientMenu();
     const cfm = $('clientFilterMenu');
@@ -3257,6 +3308,7 @@
     if (preview && preview.classList.contains('open')) { ev.stopPropagation(); return closePreview(); }
     if (!$('chipMenu').hidden) { ev.stopPropagation(); closeChipMenu(); }
     if (!$('jobMenu').hidden) { ev.stopPropagation(); closeJobMenu(); }
+    if (!$('composerMenu').hidden) { ev.stopPropagation(); closeComposerMenu(); }
     if (!$('clientMenu').hidden) { ev.stopPropagation(); closeClientMenu(); }
     if (!$('clientFilterMenu').hidden) { ev.stopPropagation(); closeClientFilterMenu(); }
     if (!$('dueFilterMenu').hidden) { ev.stopPropagation(); closeDueFilterMenu(); }
