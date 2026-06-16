@@ -280,7 +280,19 @@ async function inviteAi(res, job) {
     const companion = (await jobs.readNotes(id)).trim();
     const userTurns = (j.turns || []).filter((t) => t.role === 'user').map((t) => t.text);
     const title = j.title || firstLine(userTurns[0] || '') || 'New job';
-    const bodyTurns = j.title ? userTurns : userTurns.slice(1);
+    // When unnamed, the FIRST LINE of the first turn becomes the title — but the
+    // rest of that turn (later lines, or text past firstLine's 120-char cap) must
+    // still reach Claude. Slicing off the whole first turn used to drop it all.
+    let bodyTurns;
+    if (j.title) {
+      bodyTurns = userTurns;
+    } else {
+      const firstTurn = userTurns[0] || '';
+      const firstLineRaw = firstTurn.split('\n')[0];
+      const overflow = firstLineRaw.length > 120 ? firstLineRaw.slice(120) : '';
+      const firstRemainder = [overflow, ...firstTurn.split('\n').slice(1)].join('\n').trim();
+      bodyTurns = [firstRemainder, ...userTurns.slice(1)];
+    }
     const promptBody = [...bodyTurns, companion].filter(Boolean).join('\n\n');
     return {
       title,
