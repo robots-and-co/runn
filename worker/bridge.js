@@ -319,6 +319,14 @@ function spawnSession({ title, notes, location, permissionToken, permissionMode,
     return Promise.reject(new Error(`unknown location.type: ${location.type}`));
   }
   const cwd = location.cwd;
+  // A job can be assigned to a client whose workspace folder doesn't exist on
+  // disk yet (e.g. a client created without ever seeding its tree). Spawning
+  // `claude` with a missing cwd fails with a cryptic `spawn <bin> ENOENT`, which
+  // the invite path surfaces as a silent 500 — "crickets". Materialise the tree
+  // first so the session always has somewhere to run; not every client is a code
+  // repo, an empty dir is a fine place for notes-style work.
+  try { fs.mkdirSync(cwd, { recursive: true }); }
+  catch (err) { return Promise.reject(new Error(`cannot create workspace ${cwd}: ${err.message}`)); }
   // Claim the cwd before spawning — synchronous so two concurrent calls
   // can't both pass the check. Released when the child exits (the wrapped
   // onExit below).

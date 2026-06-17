@@ -3042,6 +3042,7 @@
       renderList(); renderChat();
     } catch (e) {
       console.error('invite failed', e);
+      toast(`Couldn't invite AI: ${e.message || e}`, 'err');
     } finally {
       state.inviting = false; inviteAiBtn.disabled = false;
     }
