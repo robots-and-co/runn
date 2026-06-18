@@ -393,12 +393,9 @@
   .inv-items th:nth-child(3), .inv-items td:nth-child(3) { width: 150px; }
   .inv-items .rm-cell { width: 26px; padding-left: 8px; }
   .inv-items .rm { border: 0; background: none; color: #b33; cursor: pointer; font-size: 18px; line-height: 1; padding: 0 2px; }
-  .inv-items input.li-desc, .inv-items input.li-amt {
-    font: inherit; font-size: 13px; border: 0; border-bottom: 1px dashed #cdcdcd;
-    background: transparent; color: inherit; padding: 1px 0; width: 100%;
-  }
-  .inv-items input.li-amt { text-align: right; font-variant-numeric: tabular-nums; }
-  .inv-items input.li-desc:focus, .inv-items input.li-amt:focus { outline: none; border-bottom-color: var(--brand); }
+  .inv-items tr.li-link { cursor: pointer; }
+  .inv-items tr.li-link:hover td { background: #f4f7ff; }
+  .inv-items tr.li-link:hover td:first-child { color: var(--brand); }
   .inv-addline {
     margin: 12px 0 0; border: 1px dashed #cdcdcd; background: transparent; color: #777;
     border-radius: 5px; padding: 6px 12px; cursor: pointer; font: inherit; font-size: 12.5px;
@@ -1998,10 +1995,10 @@
       : `Tax Invoice ${esc(o.number)}`;
     const toLines = (o.to.lines || []).map((l) => `<div>${esc(l)}</div>`).join('');
 
-    const rows = o.items.map((it, i) => o.editable ? `<tr>
-        <td><input class="li-desc" type="text" data-i="${i}" value="${esc(it.description)}" placeholder="Description"></td>
+    const rows = o.items.map((it, i) => o.editable ? `<tr class="li-row${it.job_id ? ' li-link' : ''}"${it.job_id ? ` data-job="${esc(it.job_id)}" title="Open this job"` : ''}>
+        <td>${esc(it.description)}</td>
         <td>${esc(fmtDateInv(it.date))}</td>
-        <td class="r"><input class="li-amt" type="number" step="0.01" data-i="${i}" value="${esc(it.amount)}"></td>
+        <td class="r">${moneySigned(sym, it.amount)}</td>
         <td class="rm-cell"><button class="rm" type="button" data-i="${i}" title="Remove line">×</button></td>
       </tr>` : `<tr>
         <td>${esc(it.description)}</td>
@@ -2038,7 +2035,6 @@
         <tbody>${rows}</tbody>
       </table>
       <hr class="inv-rule">
-      ${o.editable ? `<button type="button" class="inv-addline" id="invAddLine">+ Add line</button>` : ''}
       <div class="inv-spacer"></div>
       <div class="inv-foot">
         <div class="inv-foot-left">
@@ -2138,13 +2134,6 @@
     body.appendChild(wrap);
     wireLogoFallback(paper);
 
-    const sym = s.currency_symbol || '$';
-    const refreshTotals = () => {
-      const t = calcTotals(ed.items, 0, ed.gstRate);
-      const fr = paper.querySelector('.inv-foot-right');
-      if (fr) fr.innerHTML = footRightInner(t, 0, t.total, sym);
-    };
-
     paper.querySelectorAll('.inv-items .rm').forEach((btn) => {
       btn.addEventListener('click', () => {
         ed.items.splice(Number(btn.dataset.i), 1);
@@ -2152,21 +2141,13 @@
         renderBilling();   // trimming the last line drops the draft back to the list
       });
     });
-    paper.querySelectorAll('.inv-items input.li-desc').forEach((inp) => {
-      inp.addEventListener('input', () => { ed.items[Number(inp.dataset.i)].description = inp.value; });
-    });
-    paper.querySelectorAll('.inv-items input.li-amt').forEach((inp) => {
-      inp.addEventListener('input', () => {
-        ed.items[Number(inp.dataset.i)].amount = round2(inp.value);
-        refreshTotals();
+    // A line item is a window onto its job: click the row to open it and edit
+    // its details there. Amount/description aren't editable on the invoice itself.
+    paper.querySelectorAll('.inv-items tr.li-link').forEach((tr) => {
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('.rm')) return;   // the × removes; it doesn't navigate
+        openJob(tr.dataset.job);
       });
-    });
-    const addBtn = paper.querySelector('#invAddLine');
-    if (addBtn) addBtn.addEventListener('click', () => {
-      ed.items.push({ job_id: null, description: '', date: today(), amount: 0 });
-      renderBilling();
-      const descs = document.querySelectorAll('.inv-items input.li-desc');
-      if (descs.length) descs[descs.length - 1].focus();
     });
     const num = paper.querySelector('#invNum');
     const due = paper.querySelector('#invDue');
