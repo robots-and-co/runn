@@ -631,9 +631,13 @@
   .report-head button { border: none; background: transparent; cursor: pointer; font-size: 14px; line-height: 1; color: var(--muted); padding: 2px 6px; border-radius: 5px; }
   .report-head button:hover { background: rgba(0,0,0,0.06); }
   .report-card iframe { display: block; width: 100%; border: 0; background: #fff; }
-  .report-card.expanded { position: fixed; inset: 4vh 4vw; z-index: 1000; margin: 0; display: flex; flex-direction: column; box-shadow: 0 12px 48px rgba(0,0,0,0.35); }
-  .report-card.expanded iframe { flex: 1; height: auto !important; }
-  .report-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 999; }
+  /* Fullscreen view lives at <body> level (NOT a class on the card): on mobile
+     the panes are transformed, which creates a stacking/containing context, so a
+     position:fixed inside a pane is viewport-wrong AND stacks below a body-level
+     backdrop. Rendering the modal under <body> escapes the transform entirely. */
+  .report-modal { position: fixed; inset: 0; z-index: 4000; display: flex; flex-direction: column; padding: 4vh 4vw; background: rgba(0,0,0,0.55); }
+  .report-modal .report-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 12px 48px rgba(0,0,0,0.4); }
+  .report-modal iframe { flex: 1; width: 100%; border: 0; background: #fff; }
   /* Edit affordance on a private (pre-invite) user turn. Kept low-key but always
      visible (so it's discoverable on touch, where there's no hover). */
   .turn-edit {
@@ -1115,27 +1119,39 @@
       + 'color:#2a2620;padding:12px;box-sizing:border-box}*{box-sizing:border-box}</style>'
       + '</head><body>' + html + reporter + '</body></html>';
   }
-  function toggleReportExpand(card) {
-    const expanded = card.classList.toggle('expanded');
-    let backdrop = document.getElementById('reportBackdrop');
-    if (expanded) {
-      if (!backdrop) {
-        backdrop = document.createElement('div');
-        backdrop.id = 'reportBackdrop';
-        backdrop.className = 'report-backdrop';
-        document.body.appendChild(backdrop);
-      }
-      backdrop.onclick = () => toggleReportExpand(card);
-      backdrop.hidden = false;
-    } else if (backdrop) {
-      backdrop.hidden = true;
-    }
+  // Open a fullscreen copy at <body> level (see .report-modal CSS for why a class
+  // on the card won't work on mobile). A fresh iframe + fresh id keeps it isolated
+  // from the inline frame; closing just removes the modal.
+  function openReportModal(html) {
+    const modal = document.createElement('div');
+    modal.className = 'report-modal';
+    const panel = document.createElement('div');
+    panel.className = 'report-panel';
+    const head = document.createElement('div');
+    head.className = 'report-head';
+    head.innerHTML = '<span class="report-title">📊 Report</span>';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.textContent = '✕';
+    closeBtn.title = 'Close';
+    head.appendChild(closeBtn);
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.srcdoc = reportSrcdoc(html, ++reportSeq);   // unregistered id → message handler ignores it; CSS sizes it
+    panel.appendChild(head);
+    panel.appendChild(frame);
+    modal.appendChild(panel);
+    const close = () => modal.remove();
+    closeBtn.addEventListener('click', close);
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });  // click the dark margin to dismiss
+    document.body.appendChild(modal);
   }
   function renderReports(root) {
     root.querySelectorAll('code.language-runn-report').forEach((code) => {
       const pre = code.closest('pre');
       if (!pre) return;
       const id = ++reportSeq;
+      const html = code.textContent || '';
       const card = document.createElement('div');
       card.className = 'report-card';
       const head = document.createElement('div');
@@ -1145,13 +1161,13 @@
       expandBtn.type = 'button';
       expandBtn.textContent = '⤢';
       expandBtn.title = 'Expand';
-      expandBtn.addEventListener('click', () => toggleReportExpand(card));
+      expandBtn.addEventListener('click', () => openReportModal(html));
       head.appendChild(expandBtn);
       const frame = document.createElement('iframe');
       frame.setAttribute('sandbox', 'allow-scripts');
       frame.setAttribute('scrolling', 'no');
       frame.style.height = '120px';
-      frame.srcdoc = reportSrcdoc(code.textContent || '', id);
+      frame.srcdoc = reportSrcdoc(html, id);
       reportFrames.set(id, frame);
       card.appendChild(head);
       card.appendChild(frame);
@@ -1168,7 +1184,6 @@
     if (!frame) return;
     if (!frame.isConnected) { reportFrames.delete(d.id); return; }   // prune stale frames
     if (frame.contentWindow !== e.source) return;                    // ignore spoofed sources
-    if (frame.closest('.report-card.expanded')) return;              // fullscreen sizes itself
     frame.style.height = Math.max(40, Math.min(2400, Number(d.h) || 0)) + 'px';
   });
 
