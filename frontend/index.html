@@ -622,6 +622,18 @@
   .copy-btn.copied { color: var(--brand); border-color: var(--brand); opacity: 1; }
   @media (hover: none) { .copy-btn { opacity: 1; } }   /* touch: no hover, keep it visible */
   .bubble code { font-family: ui-monospace, Menlo, monospace; font-size: 0.9em; }
+  /* Interactive report: a ```runn-report block rendered as a sandboxed iframe.
+     The iframe runs the AI's JS in an opaque origin (no allow-same-origin) under
+     a locked CSP — it can't reach Runn's DOM/API or the network. */
+  .report-card { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 8px 0; background: #fff; }
+  .report-head { display: flex; align-items: center; gap: 6px; padding: 5px 10px; background: #f3efe7; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  .report-head .report-title { font-weight: 600; flex: 1; }
+  .report-head button { border: none; background: transparent; cursor: pointer; font-size: 14px; line-height: 1; color: var(--muted); padding: 2px 6px; border-radius: 5px; }
+  .report-head button:hover { background: rgba(0,0,0,0.06); }
+  .report-card iframe { display: block; width: 100%; border: 0; background: #fff; }
+  .report-card.expanded { position: fixed; inset: 4vh 4vw; z-index: 1000; margin: 0; display: flex; flex-direction: column; box-shadow: 0 12px 48px rgba(0,0,0,0.35); }
+  .report-card.expanded iframe { flex: 1; height: auto !important; }
+  .report-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 999; }
   /* Edit affordance on a private (pre-invite) user turn. Kept low-key but always
      visible (so it's discoverable on touch, where there's no hover). */
   .turn-edit {
@@ -1074,6 +1086,91 @@
       wrap.appendChild(btn);
     });
   }
+
+  // ── Interactive reports ───────────────────────────────────────────────────
+  // An AI turn may emit a ```runn-report fenced block whose body is a
+  // self-contained HTML/CSS/JS document. We render it in a sandboxed iframe:
+  //   sandbox="allow-scripts" (and NOT allow-same-origin) → the script runs in
+  //   an opaque origin, so it can't touch Runn's DOM, our 127.0.0.1 API, cookies
+  //   or storage; a locked CSP (connect-src 'none') blocks all network egress.
+  // JS works for live controls/visualisations, but data the AI inlines can't
+  // leave the frame. Ephemeral: rebuilt from the turn text on every render.
+  let reportSeq = 0;
+  const reportFrames = new Map();
+  function reportSrcdoc(html, id) {
+    const csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+      + "img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'";
+    // Reports can't read their own height from the parent (opaque origin), so the
+    // frame posts its height up and the parent sizes it (see the message listener).
+    const reporter = '<scr' + 'ipt>(function(){function s(){try{parent.postMessage('
+      + '{__runnReport:1,id:' + id + ',h:document.documentElement.scrollHeight},"*");}catch(e){}}'
+      + 'addEventListener("load",s);if(window.ResizeObserver){new ResizeObserver(s)'
+      + '.observe(document.documentElement);}setTimeout(s,60);setTimeout(s,400);})();</scr' + 'ipt>';
+    // Always wrap in our own shell so we control <head> + CSP. A stray full
+    // document from the AI still parses fine — the browser keeps our head.
+    return '<!doctype html><html><head><meta charset="utf-8">'
+      + '<meta http-equiv="Content-Security-Policy" content="' + csp + '">'
+      + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+      + '<style>html,body{margin:0}body{font:14px/1.5 system-ui,-apple-system,sans-serif;'
+      + 'color:#2a2620;padding:12px;box-sizing:border-box}*{box-sizing:border-box}</style>'
+      + '</head><body>' + html + reporter + '</body></html>';
+  }
+  function toggleReportExpand(card) {
+    const expanded = card.classList.toggle('expanded');
+    let backdrop = document.getElementById('reportBackdrop');
+    if (expanded) {
+      if (!backdrop) {
+        backdrop = document.createElement('div');
+        backdrop.id = 'reportBackdrop';
+        backdrop.className = 'report-backdrop';
+        document.body.appendChild(backdrop);
+      }
+      backdrop.onclick = () => toggleReportExpand(card);
+      backdrop.hidden = false;
+    } else if (backdrop) {
+      backdrop.hidden = true;
+    }
+  }
+  function renderReports(root) {
+    root.querySelectorAll('code.language-runn-report').forEach((code) => {
+      const pre = code.closest('pre');
+      if (!pre) return;
+      const id = ++reportSeq;
+      const card = document.createElement('div');
+      card.className = 'report-card';
+      const head = document.createElement('div');
+      head.className = 'report-head';
+      head.innerHTML = '<span class="report-title">📊 Report</span>';
+      const expandBtn = document.createElement('button');
+      expandBtn.type = 'button';
+      expandBtn.textContent = '⤢';
+      expandBtn.title = 'Expand';
+      expandBtn.addEventListener('click', () => toggleReportExpand(card));
+      head.appendChild(expandBtn);
+      const frame = document.createElement('iframe');
+      frame.setAttribute('sandbox', 'allow-scripts');
+      frame.setAttribute('scrolling', 'no');
+      frame.style.height = '120px';
+      frame.srcdoc = reportSrcdoc(code.textContent || '', id);
+      reportFrames.set(id, frame);
+      card.appendChild(head);
+      card.appendChild(frame);
+      // Swap out the code block (or its code-wrap, if addCopyButtons ran first).
+      const target = pre.parentElement && pre.parentElement.classList.contains('code-wrap')
+        ? pre.parentElement : pre;
+      target.replaceWith(card);
+    });
+  }
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || d.__runnReport !== 1) return;
+    const frame = reportFrames.get(d.id);
+    if (!frame) return;
+    if (!frame.isConnected) { reportFrames.delete(d.id); return; }   // prune stale frames
+    if (frame.contentWindow !== e.source) return;                    // ignore spoofed sources
+    if (frame.closest('.report-card.expanded')) return;              // fullscreen sizes itself
+    frame.style.height = Math.max(40, Math.min(2400, Number(d.h) || 0)) + 'px';
+  });
 
   const clientName = (id) => (id && state.clients.get(id)?.name) || null;
   const clientOf = (id) => (id ? state.clients.get(id) : null);
@@ -2637,6 +2734,7 @@
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
       bubble.innerHTML = mdToHtml(turn.text);
+      if (turn.role !== 'user') renderReports(bubble);   // runs before addCopyButtons so report blocks get no copy btn
       addCopyButtons(bubble);
       wrap.appendChild(bubble);
       turnsEl.appendChild(wrap);
