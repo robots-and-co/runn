@@ -288,6 +288,11 @@ const RESPONSE_DIRECTIVE = [
   'Only expand into detail, lists, or step-by-step when the human explicitly asks',
   'for it (e.g. "details", "explain", "why", "show me"). Until then, shortest',
   'reply that fully answers wins.',
+  '',
+  'Speak plain English. The reader does not work in IT and does not want dev or',
+  'corporate jargon. Say what you mean in everyday words. If a technical term is',
+  'truly unavoidable, give a plain-English gloss in the same breath. No buzzwords,',
+  'no unexplained acronyms, nothing the reader has to mentally translate.',
 ].join('\n');
 
 // Combine the per-card context (client/project notes, or null) with the always-on
