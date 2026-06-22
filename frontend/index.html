@@ -2884,8 +2884,6 @@
       summary.append(caret, sumText);
       summary.addEventListener('click', () => bubble.classList.toggle('expanded'));
       bubble.append(summary, full);
-      // The newest response opens by default so the live answer shows without a click.
-      if (k >= turns.length) bubble.classList.add('expanded');
       wrap.appendChild(bubble);
       turnsEl.appendChild(wrap);
       i = k;
