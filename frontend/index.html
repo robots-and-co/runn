@@ -218,10 +218,6 @@
   .divider-label.is-active { background: var(--brand); color: #fff; }
   .list-divider[data-bucket="overdue"] .divider-label.is-active { background: #b23b2a; color: #fff; }
   .list-divider[data-bucket="urgent"] .divider-label.is-active { background: #c1302a; color: #fff; }
-  /* Orchestrated thread header — a build line, distinct from due-bucket dividers. */
-  .list-divider.thread-divider { color: var(--brand); margin-top: 22px; font-weight: 600; }
-  .list-divider.thread-divider::before, .list-divider.thread-divider::after { background: var(--brand); opacity: .35; }
-  .thread-label { padding: 2px 8px; }
 
   /* status picker menu (shared, body-level, fixed-positioned at the chip) */
   .chip-menu {
@@ -1387,78 +1383,62 @@
     renderTotal(base);                       // $ total always sums the full set (incl. done)
     const jobs = base.filter((j) => matchesStatusFilter(j) && matchesDueFilter(j));
     jobListEl.innerHTML = '';
-    if (!jobs.length) {
+    const showEmpty = () => {
       const e = document.createElement('div');
       e.className = 'empty';
       e.style.padding = '40px 24px';
       e.textContent = base.length ? 'No jobs match this filter.'
                     : state.filterClient ? 'No jobs for this client yet.' : 'No jobs yet — hit + Job to start.';
       jobListEl.appendChild(e);
+    };
+
+    // Drilled into a project (via the picker): just that project's jobs, in
+    // build order — no date buckets, no group header.
+    if (state.filterProject) {
+      const items = jobs.slice().sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+      if (!items.length) return showEmpty();
+      items.forEach((j) => jobListEl.appendChild(buildJobRow(j)));
       return;
     }
 
-    // Orchestrated jobs render in their thread groups, sorted by build order
-    // (not by due date). Standard jobs keep the due-bucket flow below them.
-    const orchestrated = jobs.filter((j) => j.type === 'orchestrated' && j.thread);
+    // Main timeline: standard (ad-hoc) jobs only. Orchestrated jobs live in
+    // their project and are reached through the client→project picker, so they
+    // don't crowd the timeline.
     const standard = jobs.filter((j) => !(j.type === 'orchestrated' && j.thread));
-
-    if (orchestrated.length) {
-      const threads = new Map();
-      for (const j of orchestrated) {
-        if (!threads.has(j.thread)) threads.set(j.thread, []);
-        threads.get(j.thread).push(j);
-      }
-      const DONE = new Set(['done', 'invoiced', 'paid']);
-      for (const [name, items] of [...threads.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))) {
-        items.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
-        const doneN = items.filter((j) => DONE.has(j.status)).length;
+    if (!standard.length) return showEmpty();
+    // Order by due urgency (overdue → today → … → no due) so the labeled
+    // dividers group cleanly. Within a bucket, review jobs rise to the top and
+    // on-hold jobs sink below the rest; remaining ties fall back to
+    // most-recently-touched.
+    standard.sort((a, b) => (dueBucket(b).rank - dueBucket(a).rank)
+      || ((b.status === 'review') - (a.status === 'review'))
+      || ((a.status === 'hold') - (b.status === 'hold'))
+      || String(b.updated_at).localeCompare(String(a.updated_at)));
+    const buckets = standard.map(dueBucket);
+    // Show dividers when there's more than one bucket, or a due filter is active.
+    const showDividers = new Set(buckets.map((b) => b.key)).size > 1 || state.dueFilter !== 'all';
+    let prevKey = null;
+    standard.forEach((j, i) => {
+      const b = buckets[i];
+      if (showDividers && b.key !== prevKey) {
         const sep = document.createElement('div');
-        sep.className = 'list-divider thread-divider';
-        const lbl = document.createElement('span');
-        lbl.className = 'divider-label thread-label';
-        lbl.textContent = name + ' · ' + doneN + '/' + items.length;
+        sep.className = 'list-divider';
+        sep.dataset.bucket = b.key;
+        const lbl = document.createElement('button');
+        lbl.type = 'button';
+        lbl.className = 'divider-label' + (state.dueFilter === b.key ? ' is-active' : '');
+        lbl.textContent = b.label;
+        lbl.addEventListener('click', () => {       // quick filter: toggle this bucket
+          state.dueFilter = (state.dueFilter === b.key) ? 'all' : b.key;
+          renderFilterOptions();
+          renderList();
+        });
         sep.appendChild(lbl);
         jobListEl.appendChild(sep);
-        items.forEach((j) => jobListEl.appendChild(buildJobRow(j)));
       }
-    }
-
-    if (standard.length) {
-      // Order by due urgency (overdue → today → … → no due) so the labeled
-      // dividers group cleanly. Within a bucket, review jobs rise to the top and
-      // on-hold jobs sink below the rest; remaining ties fall back to
-      // most-recently-touched.
-      standard.sort((a, b) => (dueBucket(b).rank - dueBucket(a).rank)
-        || ((b.status === 'review') - (a.status === 'review'))
-        || ((a.status === 'hold') - (b.status === 'hold'))
-        || String(b.updated_at).localeCompare(String(a.updated_at)));
-      const buckets = standard.map(dueBucket);
-      // Show dividers when there's more than one bucket, when a due filter is
-      // active, or when thread groups sit above (so standard work is separated).
-      const showDividers = new Set(buckets.map((b) => b.key)).size > 1 || state.dueFilter !== 'all' || orchestrated.length > 0;
-      let prevKey = null;
-      standard.forEach((j, i) => {
-        const b = buckets[i];
-        if (showDividers && b.key !== prevKey) {
-          const sep = document.createElement('div');
-          sep.className = 'list-divider';
-          sep.dataset.bucket = b.key;
-          const lbl = document.createElement('button');
-          lbl.type = 'button';
-          lbl.className = 'divider-label' + (state.dueFilter === b.key ? ' is-active' : '');
-          lbl.textContent = b.label;
-          lbl.addEventListener('click', () => {       // quick filter: toggle this bucket
-            state.dueFilter = (state.dueFilter === b.key) ? 'all' : b.key;
-            renderFilterOptions();
-            renderList();
-          });
-          sep.appendChild(lbl);
-          jobListEl.appendChild(sep);
-        }
-        prevKey = b.key;
-        jobListEl.appendChild(buildJobRow(j));
-      });
-    }
+      prevKey = b.key;
+      jobListEl.appendChild(buildJobRow(j));
+    });
   }
 
   // Build one job-row element — shared by the thread groups and the standard
