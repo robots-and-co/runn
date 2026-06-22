@@ -948,6 +948,7 @@
       <div class="list-flip" id="listFlip">
         <div class="list-sub">
           <button class="filter-chip chip client pick" id="clientFilterChip" type="button" aria-label="Filter by client">All</button>
+          <button class="filter-chip chip pick" id="projectFilterChip" type="button" aria-label="Filter by project" hidden>All projects</button>
           <button class="filter-chip chip pick due-filter" id="dueFilterChip" type="button" aria-label="Filter by due date">Any</button>
           <button class="filter-chip chip pick" id="statusFilterChip" type="button" aria-label="Filter by status">open</button>
         </div>
@@ -1020,6 +1021,7 @@
   <div class="chip-menu" id="composerMenu" hidden></div>
   <div class="chip-menu" id="clientMenu" hidden></div>
   <div class="chip-menu" id="clientFilterMenu" hidden></div>
+  <div class="chip-menu" id="projectFilterMenu" hidden></div>
   <div class="chip-menu" id="dueFilterMenu" hidden></div>
   <div class="chip-menu" id="statusFilterMenu" hidden></div>
 
@@ -1035,6 +1037,7 @@
     noteMode: false,       // composer flips to writing private notes (Claude can't see them)
     pendingAttachments: [], // files staged in the composer, sent with the next message
     filterClient: '',      // '' = all clients
+    filterProject: '',     // '' = all projects (only meaningful within a client)
     picking: false,        // choosing a client for a new job
     draftClientId: null,   // client chosen for the not-yet-saved draft
     invoicesPane: false,   // left pane flipped from jobs → invoices (tap the $ total)
@@ -1317,7 +1320,17 @@
   function visibleJobs() {
     let jobs = [...state.jobs.values()].filter((j) => !j.archived);
     if (state.filterClient) jobs = jobs.filter((j) => j.client_id === state.filterClient);
+    if (state.filterProject) jobs = jobs.filter((j) => j.thread === state.filterProject);
     return jobs.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  }
+  // Distinct project (thread) names among a client's orchestrated jobs.
+  function projectsForClient(clientId) {
+    const names = new Set();
+    for (const j of state.jobs.values()) {
+      if (j.archived || j.client_id !== clientId) continue;
+      if (j.type === 'orchestrated' && j.thread) names.add(j.thread);
+    }
+    return [...names].sort((a, b) => String(a).localeCompare(String(b)));
   }
   function renderTotal(jobs) {
     const total = jobs.reduce((s, j) => s + jobValue(j), 0);
@@ -1352,6 +1365,18 @@
     const c = state.filterClient ? state.clients.get(state.filterClient) : null;
     if (state.filterClient && !c) state.filterClient = '';   // client vanished → fall back to All
     $('clientFilterChip').textContent = c ? c.name : 'All';
+    // Project chip: only shown inside a client that has projects (nested picker).
+    const projChip = $('projectFilterChip');
+    const projs = state.filterClient ? projectsForClient(state.filterClient) : [];
+    if (state.filterProject && !projs.includes(state.filterProject)) state.filterProject = '';
+    if (projs.length) {
+      projChip.hidden = false;
+      projChip.textContent = state.filterProject || 'All projects';
+      projChip.classList.toggle('is-active', !!state.filterProject);
+    } else {
+      projChip.hidden = true;
+      state.filterProject = '';
+    }
     const sc = $('statusFilterChip');
     const sf = state.statusFilter;
     sc.className = 'filter-chip chip pick' + (sf === 'all' ? '' : ' st-' + sf);
@@ -1726,6 +1751,23 @@
     placeMenu(menu, anchorEl, 'left');
   }
   function closeClientFilterMenu() { $('clientFilterMenu').hidden = true; }
+  function openProjectFilterMenu(anchorEl) {
+    const menu = $('projectFilterMenu');
+    menu.innerHTML = '';
+    const mk = (value, label, isCurrent) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'chip-menu-item' + (isCurrent ? ' is-current' : '');
+      item.dataset.project = value;
+      item.textContent = label;
+      menu.appendChild(item);
+    };
+    mk('', 'All projects', !state.filterProject);
+    for (const name of projectsForClient(state.filterClient)) mk(name, name, name === state.filterProject);
+    menu.hidden = false;
+    placeMenu(menu, anchorEl, 'left');
+  }
+  function closeProjectFilterMenu() { $('projectFilterMenu').hidden = true; }
   function openDueFilterMenu(anchorEl) {
     const menu = $('dueFilterMenu');
     menu.innerHTML = '';
@@ -3649,6 +3691,8 @@
     if (!clm.hidden && !clm.contains(ev.target)) closeClientMenu();
     const cfm = $('clientFilterMenu');
     if (!cfm.hidden && !cfm.contains(ev.target) && ev.target !== $('clientFilterChip')) closeClientFilterMenu();
+    const pfm = $('projectFilterMenu');
+    if (!pfm.hidden && !pfm.contains(ev.target) && ev.target !== $('projectFilterChip')) closeProjectFilterMenu();
     const dfm = $('dueFilterMenu');
     if (!dfm.hidden && !dfm.contains(ev.target) && ev.target !== $('dueFilterChip')) closeDueFilterMenu();
     const sfm = $('statusFilterMenu');
@@ -3663,6 +3707,7 @@
     if (!$('composerMenu').hidden) { ev.stopPropagation(); closeComposerMenu(); }
     if (!$('clientMenu').hidden) { ev.stopPropagation(); closeClientMenu(); }
     if (!$('clientFilterMenu').hidden) { ev.stopPropagation(); closeClientFilterMenu(); }
+    if (!$('projectFilterMenu').hidden) { ev.stopPropagation(); closeProjectFilterMenu(); }
     if (!$('dueFilterMenu').hidden) { ev.stopPropagation(); closeDueFilterMenu(); }
     if (!$('statusFilterMenu').hidden) { ev.stopPropagation(); closeStatusFilterMenu(); }
   });
@@ -3675,7 +3720,19 @@
     const item = ev.target.closest('.chip-menu-item');
     if (!item) return;
     state.filterClient = item.dataset.client;
+    state.filterProject = '';            // changing client clears the nested project pick
     closeClientFilterMenu();
+    renderFilterOptions(); renderList();
+  });
+  $('projectFilterChip').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if ($('projectFilterMenu').hidden) openProjectFilterMenu($('projectFilterChip')); else closeProjectFilterMenu();
+  });
+  $('projectFilterMenu').addEventListener('click', (ev) => {
+    const item = ev.target.closest('.chip-menu-item');
+    if (!item) return;
+    state.filterProject = item.dataset.project;
+    closeProjectFilterMenu();
     renderFilterOptions(); renderList();
   });
   $('dueFilterChip').addEventListener('click', (ev) => {
