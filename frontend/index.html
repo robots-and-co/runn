@@ -2857,7 +2857,7 @@
       const wrap = document.createElement('div');
       wrap.className = 'turn ai';
       const bubble = document.createElement('div');
-      bubble.className = 'bubble collapsible';
+      bubble.className = 'bubble';
       const full = document.createElement('div');
       full.className = 'ai-full';
       group.forEach((t) => {
@@ -2869,21 +2869,29 @@
         addCopyButtons(seg);
         full.appendChild(seg);
       });
-      // Summary = the LAST line of the LAST step: the question for the user, or
-      // "done". That's the one line they read when scanning the history.
-      const lastText = [...group].reverse().find((t) => t.text && t.text.trim());
-      const summary = document.createElement('button');
-      summary.type = 'button';
-      summary.className = 'ai-summary';
-      const caret = document.createElement('span');
-      caret.className = 'ai-caret';
-      caret.textContent = '▸';
-      const sumText = document.createElement('span');
-      sumText.className = 'ai-summary-text';
-      sumText.textContent = lastLineSummary(lastText ? lastText.text : '');
-      summary.append(caret, sumText);
-      summary.addEventListener('click', () => bubble.classList.toggle('expanded'));
-      bubble.append(summary, full);
+      // If the whole response is a single line, expanding just repeats it — so
+      // skip the dropdown and show the line plainly. Otherwise collapse it, with
+      // the summary = the LAST line of the LAST step (the question, or "done").
+      const meaningfulLines = group.map((t) => t.text || '').join('\n')
+        .split('\n').map((l) => l.trim()).filter((l) => l && !/^[-*_=#>`]{3,}$/.test(l));
+      if (meaningfulLines.length <= 1) {
+        while (full.firstChild) bubble.appendChild(full.firstChild);
+      } else {
+        bubble.classList.add('collapsible');
+        const lastText = [...group].reverse().find((t) => t.text && t.text.trim());
+        const summary = document.createElement('button');
+        summary.type = 'button';
+        summary.className = 'ai-summary';
+        const caret = document.createElement('span');
+        caret.className = 'ai-caret';
+        caret.textContent = '▸';
+        const sumText = document.createElement('span');
+        sumText.className = 'ai-summary-text';
+        sumText.textContent = lastLineSummary(lastText ? lastText.text : '');
+        summary.append(caret, sumText);
+        summary.addEventListener('click', () => bubble.classList.toggle('expanded'));
+        bubble.append(summary, full);
+      }
       wrap.appendChild(bubble);
       turnsEl.appendChild(wrap);
       i = k;
