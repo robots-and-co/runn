@@ -371,7 +371,7 @@ function spawnSession({ title, notes, location, permissionToken, permissionMode,
       env: {
         ...process.env,
         // The MCP server reads these to find the worker and identify this spawn.
-        RUNN_PORT: process.env.PORT || '17777',
+        RUNN_PORT: process.env.PORT || '17778',
         RUNN_PERMISSION_TOKEN: permissionToken || '',
       },
       detached: true,
@@ -478,7 +478,7 @@ function sendMessage({ sessionId, text, location, permissionToken, permissionMod
       cwd,
       env: {
         ...process.env,
-        RUNN_PORT: process.env.PORT || '17777',
+        RUNN_PORT: process.env.PORT || '17778',
         RUNN_PERMISSION_TOKEN: permissionToken || '',
       },
       detached: true,

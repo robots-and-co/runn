@@ -33,7 +33,7 @@ const ASSETS_DIR = path.join(DATA_ROOT, 'assets');
 // Chat attachments live one dir per job at ~/runn-data/attachments/<job_id>/.
 const ATTACHMENTS_DIR = path.join(DATA_ROOT, 'attachments');
 const SETTINGS_PATH = path.join(DATA_ROOT, 'settings.json');
-const PORT = Number(process.env.PORT || 17777);
+const PORT = Number(process.env.PORT || 17778);
 const HOST = process.env.HOST || '0.0.0.0';
 const FRONTEND_DIR = path.join(__dirname, '..', 'frontend');
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
