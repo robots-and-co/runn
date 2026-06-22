@@ -479,8 +479,8 @@ memories already relevant to the rebuild:
 
 - `feedback_git_github_default.md` — push to GitHub is the backup default;
   never expose raw git terms.
-- `feedback_terse_chat_mode.md` — terse Q&A, lead with a one-line TL;DR, one
-  question at a time, fatigue avoidance.
+- `feedback_terse_chat_mode.md` — terse Q&A, lead with the answer (no TL;DR
+  label), one question at a time, fatigue avoidance.
 - `git_workflow_main.md` — commit + push, narrate for a git beginner.
 - `project_runn_mission.md` — household + client mix, "illusion of security".
 - `runn_spawn_env_node_only.md` — Runn-spawned containers are Node-only
