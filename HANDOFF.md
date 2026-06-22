@@ -5,6 +5,57 @@ build step) + small Node backend (`worker/server.js`). Runs in Docker as
 container `runn` on port 17777. `./frontend` is bind-mounted (edits go
 live); `./worker` requires `docker restart runn` to pick up.
 
+> **Note (2026-06-22):** parts of this doc predate the jobs model and the native
+> deployment — the running instance is a plain `node worker/server.js` on port
+> **17778** (not the Docker :17777 described below), and the card/parent_id model
+> has been replaced by a flat **job** model (`worker/jobs.js`, `/jobs` routes).
+> Frontend edits are still live on save; backend changes need the process
+> restarted. The section directly below is current; treat older sections as
+> historical until refreshed.
+
+## Orchestrated jobs — Client → Project → Job (2026-06-22)
+
+A Runn feature for planning multi-step work as a visible, ordered backlog —
+distinct from ad-hoc/billing jobs. Operator's framing: **repo is the database,
+Runn is the surface.** EFEM's `roadmap` is the first adopter.
+
+**Two job types.** A job carries an optional `type`:
+- `standard` (default / absent) — the existing kind: ad-hoc chat / billing
+  one-off, shown in the due-date flow.
+- `orchestrated` — part of a planned backlog. Also carries `thread` (its project
+  /group name), `order` (build position, 1..N), and `spec_path` (its spec file in
+  the repo). `jobs.patchJob` already persists arbitrary fields, so these needed
+  no schema change. *TODO:* default `type:'standard'` in `freshJob`/`createJob`
+  (needs a restart).
+
+**Backlog lives in the repo.** Specs are `docs/jobs/<thread>/<slug>.md` in the
+project's own repo — one file per job, the source of truth (Runn shows them, the
+repo holds them). The global skill `~/.claude/skills/runn-jobs/SKILL.md` defines
+the convention: one job = one home (no duplicate/stray copies), thread = folder,
+numbered order (no P0/P1), generated `README.md` index, specs editable until
+`status: done` then they lock. **Guardrail:** AI may restructure only
+orchestrated jobs (it edits `docs/jobs/` only) — never the operator's standard
+jobs, never another client's repo.
+
+**Navigation = Client → Project → Job.** A project is a sub-level of a client.
+The client filter chip (`#clientFilterChip` / `openClientFilterMenu`) lists each
+client with its projects indented under it (`.chip-menu-item.is-project`); only
+projects with ≥1 open-state job appear. Key code in `frontend/index.html`:
+- `state.filterProject` — selected project (a `thread` value); `''` = all.
+- `projectsForClient(clientId, openOnly)` — distinct `thread` names for a client
+  (open-state-only when `openOnly`, using `ACTIVE_STATUSES`).
+- `visibleJobs()` filters by both `filterClient` and `filterProject`.
+- `renderList()` — the **All** list shows every job (orchestrated included, no
+  group band) in the due-date flow; once a project is picked it narrows to that
+  project's jobs sorted by `order` ascending, plain rows. Row markup is shared
+  via `buildJobRow(j)`. Chip label reads `Client · project`.
+
+**⚠ Divergence to reconcile.** EFEM's 21 jobs were created as Runn job *records*
+(via `POST /jobs`, tagged orchestrated) rather than rendered from the repo specs,
+so that backlog currently exists in two places (repo + Runn). Intended end state:
+a repo↔Runn sync where the repo is source and Runn reflects it (incl. status
+write-back), collapsing back to one home.
+
 ## Layout & state machine
 
 ```
