@@ -610,6 +610,19 @@
   .turn.user .bubble { background: var(--user-bubble); color: var(--user-ink); border-bottom-right-radius: 5px; }
   /* AI replies read like Claude's chat: span the full column, not a narrow bubble. */
   .turn.ai .bubble { max-width: 100%; background: var(--ai-bubble); border: 1px solid var(--border); border-bottom-left-radius: 5px; }
+  /* Collapsed AI reply: show only the first line; click the row to expand. Keeps
+     the history scannable so the human reads one line per reply, not pages. */
+  .bubble.collapsible { padding: 0; }
+  .bubble.collapsible .ai-summary {
+    display: flex; gap: 8px; align-items: baseline; width: 100%; text-align: left;
+    background: none; border: 0; cursor: pointer; padding: 10px 14px; font: inherit; color: inherit;
+  }
+  .bubble.collapsible .ai-caret { flex: none; opacity: .55; transition: transform .15s; }
+  .bubble.collapsible.expanded .ai-caret { transform: rotate(90deg); }
+  .bubble.collapsible .ai-summary-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .9; }
+  .bubble.collapsible.expanded .ai-summary-text { white-space: normal; opacity: .5; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .bubble.collapsible .ai-full { display: none; padding: 0 14px 12px; }
+  .bubble.collapsible.expanded .ai-full { display: block; }
   .bubble :first-child { margin-top: 0; } .bubble :last-child { margin-bottom: 0; }
   .bubble pre { background: #f3efe7; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
   .turn.user .bubble pre { background: rgba(255,255,255,0.15); }
@@ -1048,6 +1061,21 @@
 
   marked.setOptions({ breaks: true, gfm: true });
   const mdToHtml = (s) => DOMPurify.sanitize(marked.parse(s || ''));
+  // First meaningful line of an AI reply, stripped of markdown markers, for the
+  // collapsed one-line summary shown in the chat history.
+  const firstLineSummary = (s) => {
+    const line = String(s || '')
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l && !/^[-*_=#>`]{3,}$/.test(l)) || '…';
+    const clean = line
+      .replace(/^#{1,6}\s+/, '')        // heading markers
+      .replace(/^[-*+]\s+/, '')         // bullet markers
+      .replace(/^>\s+/, '')             // blockquote
+      .replace(/[*_`]/g, '')            // bold/italic/code ticks
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1');  // links/images → their text
+    return clean.length > 140 ? clean.slice(0, 139).trimEnd() + '…' : clean;
+  };
   // Copy to clipboard, with a fallback for non-secure (plain-http LAN) contexts
   // where navigator.clipboard is unavailable.
   async function copyText(text) {
@@ -2787,9 +2815,34 @@
       }
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
-      bubble.innerHTML = mdToHtml(turn.text);
-      if (turn.role !== 'user') renderReports(bubble);   // runs before addCopyButtons so report blocks get no copy btn
-      addCopyButtons(bubble);
+      if (turn.role !== 'user') {
+        // Collapse AI replies to their first line. The directive makes that first
+        // line the answer, so the human reads one line per reply and clicks to
+        // expand the rest. The newest reply opens by default so the live answer
+        // is visible without a click.
+        bubble.classList.add('collapsible');
+        const full = document.createElement('div');
+        full.className = 'ai-full';
+        full.innerHTML = mdToHtml(turn.text);
+        renderReports(full);   // runs before addCopyButtons so report blocks get no copy btn
+        addCopyButtons(full);
+        const summary = document.createElement('button');
+        summary.type = 'button';
+        summary.className = 'ai-summary';
+        const caret = document.createElement('span');
+        caret.className = 'ai-caret';
+        caret.textContent = '▸';
+        const sumText = document.createElement('span');
+        sumText.className = 'ai-summary-text';
+        sumText.textContent = firstLineSummary(turn.text);
+        summary.append(caret, sumText);
+        summary.addEventListener('click', () => bubble.classList.toggle('expanded'));
+        bubble.append(summary, full);
+        if (idx === turns.length - 1) bubble.classList.add('expanded');
+      } else {
+        bubble.innerHTML = mdToHtml(turn.text);
+        addCopyButtons(bubble);
+      }
       wrap.appendChild(bubble);
       turnsEl.appendChild(wrap);
     });
