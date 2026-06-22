@@ -278,9 +278,10 @@ function dispatchPendingSpawnForCwd(cwd) {
 const RESPONSE_DIRECTIVE = [
   '# Response format',
   '',
-  'Keep replies really tight. Lead with the answer on the first line and stop as',
-  'soon as the question is fully answered — usually one or two lines. No preamble,',
-  'no recap of what was asked, no closing summary, no "TL;DR" line.',
+  'Start every reply with a one-line "TL;DR:" that gives the answer or outcome by',
+  'itself, so the reader can stop after that one line. Then keep the rest really',
+  'tight — usually one or two more lines. No preamble, no recap of what was asked,',
+  'no closing summary.',
   '',
   'Ask one question at a time; when you need a decision, end on that single',
   'question so it reads as the point of the message.',

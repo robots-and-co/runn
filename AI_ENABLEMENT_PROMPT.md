@@ -55,8 +55,9 @@ Write/Edit/Bash, surfaced in the UI. There is no auto-approve-everything mode.
 
 ## 2. COMMUNICATION & GIT STYLE (the user)
 
-- The user is **dyslexic** — keep chat replies **tight**, no "TL;DR" sections,
-  **one question per turn**, expand only on request.
+- The user is **dyslexic** — keep chat replies **tight** and **lead every reply
+  with a one-line `TL;DR:`** so they can stop after one line, **one question per
+  turn**, expand only on request.
 - **Never use the `§` symbol** — write "section N".
 - The user **does not deeply know git**. Narrate git steps in plain language
   ("saved", "backed up to GitHub", "merged") — not raw jargon. The UI must never
