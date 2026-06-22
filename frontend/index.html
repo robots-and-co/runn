@@ -1401,24 +1401,23 @@
       return;
     }
 
-    // Main timeline: standard (ad-hoc) jobs only. Orchestrated jobs live in
-    // their project and are reached through the client→project picker, so they
-    // don't crowd the timeline.
-    const standard = jobs.filter((j) => !(j.type === 'orchestrated' && j.thread));
-    if (!standard.length) return showEmpty();
+    // Otherwise — All, or a client with no project picked — every job flows in
+    // the normal due-date list, orchestrated jobs included (just no group band).
+    const list = jobs.slice();
+    if (!list.length) return showEmpty();
     // Order by due urgency (overdue → today → … → no due) so the labeled
     // dividers group cleanly. Within a bucket, review jobs rise to the top and
     // on-hold jobs sink below the rest; remaining ties fall back to
     // most-recently-touched.
-    standard.sort((a, b) => (dueBucket(b).rank - dueBucket(a).rank)
+    list.sort((a, b) => (dueBucket(b).rank - dueBucket(a).rank)
       || ((b.status === 'review') - (a.status === 'review'))
       || ((a.status === 'hold') - (b.status === 'hold'))
       || String(b.updated_at).localeCompare(String(a.updated_at)));
-    const buckets = standard.map(dueBucket);
+    const buckets = list.map(dueBucket);
     // Show dividers when there's more than one bucket, or a due filter is active.
     const showDividers = new Set(buckets.map((b) => b.key)).size > 1 || state.dueFilter !== 'all';
     let prevKey = null;
-    standard.forEach((j, i) => {
+    list.forEach((j, i) => {
       const b = buckets[i];
       if (showDividers && b.key !== prevKey) {
         const sep = document.createElement('div');
