@@ -619,7 +619,7 @@
   }
   .bubble.collapsible .ai-caret { flex: none; opacity: .55; transition: transform .15s; }
   .bubble.collapsible.expanded .ai-caret { transform: rotate(90deg); }
-  .bubble.collapsible .ai-summary-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .9; }
+  .bubble.collapsible .ai-summary-text { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; opacity: .9; }
   .bubble.collapsible.expanded .ai-summary-text { white-space: normal; opacity: .5; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
   .bubble.collapsible .ai-full { display: none; padding: 0 14px 12px; }
   .bubble.collapsible.expanded .ai-full { display: block; }
@@ -1077,7 +1077,7 @@
       .replace(/^>\s+/, '')             // blockquote
       .replace(/[*_`]/g, '')            // bold/italic/code ticks
       .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1');  // links/images → their text
-    return clean.length > 140 ? clean.slice(0, 139).trimEnd() + '…' : clean;
+    return clean;   // full line — the collapsed box wraps to fit it
   };
   const lastLineSummary = (s) => lineSummary(s, true);
   // Copy to clipboard, with a fallback for non-secure (plain-http LAN) contexts
