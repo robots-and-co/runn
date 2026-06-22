@@ -240,6 +240,10 @@
   .chip-menu-item:hover { background: var(--surface-2); }
   .chip-menu-item.is-current { background: var(--surface-2); font-weight: 600; }
   .chip-menu-item.danger { color: #b23b2a; }
+  /* Project rows sit indented under their client, lighter, with a tree tick. */
+  .chip-menu-item.is-project { padding-left: 30px; font-size: 13px; color: var(--muted); }
+  .chip-menu-item.is-project::before { content: '└ '; opacity: .6; }
+  .chip-menu-item.is-project.is-current { color: var(--ink); }
   .chip-menu-item .chip { pointer-events: none; }
   /* Command palette — pops above the composer the moment you type a leading ! */
   .cmd-palette {
@@ -947,8 +951,7 @@
       </div>
       <div class="list-flip" id="listFlip">
         <div class="list-sub">
-          <button class="filter-chip chip client pick" id="clientFilterChip" type="button" aria-label="Filter by client">All</button>
-          <button class="filter-chip chip pick" id="projectFilterChip" type="button" aria-label="Filter by project" hidden>All projects</button>
+          <button class="filter-chip chip client pick" id="clientFilterChip" type="button" aria-label="Filter by client or project">All</button>
           <button class="filter-chip chip pick due-filter" id="dueFilterChip" type="button" aria-label="Filter by due date">Any</button>
           <button class="filter-chip chip pick" id="statusFilterChip" type="button" aria-label="Filter by status">open</button>
         </div>
@@ -1021,7 +1024,6 @@
   <div class="chip-menu" id="composerMenu" hidden></div>
   <div class="chip-menu" id="clientMenu" hidden></div>
   <div class="chip-menu" id="clientFilterMenu" hidden></div>
-  <div class="chip-menu" id="projectFilterMenu" hidden></div>
   <div class="chip-menu" id="dueFilterMenu" hidden></div>
   <div class="chip-menu" id="statusFilterMenu" hidden></div>
 
@@ -1323,12 +1325,16 @@
     if (state.filterProject) jobs = jobs.filter((j) => j.thread === state.filterProject);
     return jobs.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
   }
-  // Distinct project (thread) names among a client's orchestrated jobs.
-  function projectsForClient(clientId) {
+  // Distinct project (thread) names among a client's orchestrated jobs. With
+  // openOnly, a project only counts if it has at least one job in an open
+  // (active) status — so finished projects drop out of the picker.
+  function projectsForClient(clientId, openOnly) {
     const names = new Set();
     for (const j of state.jobs.values()) {
       if (j.archived || j.client_id !== clientId) continue;
-      if (j.type === 'orchestrated' && j.thread) names.add(j.thread);
+      if (j.type !== 'orchestrated' || !j.thread) continue;
+      if (openOnly && !ACTIVE_STATUSES.includes(j.status)) continue;
+      names.add(j.thread);
     }
     return [...names].sort((a, b) => String(a).localeCompare(String(b)));
   }
@@ -1364,19 +1370,9 @@
   function renderFilterOptions() {
     const c = state.filterClient ? state.clients.get(state.filterClient) : null;
     if (state.filterClient && !c) state.filterClient = '';   // client vanished → fall back to All
-    $('clientFilterChip').textContent = c ? c.name : 'All';
-    // Project chip: only shown inside a client that has projects (nested picker).
-    const projChip = $('projectFilterChip');
-    const projs = state.filterClient ? projectsForClient(state.filterClient) : [];
-    if (state.filterProject && !projs.includes(state.filterProject)) state.filterProject = '';
-    if (projs.length) {
-      projChip.hidden = false;
-      projChip.textContent = state.filterProject || 'All projects';
-      projChip.classList.toggle('is-active', !!state.filterProject);
-    } else {
-      projChip.hidden = true;
-      state.filterProject = '';
-    }
+    // Drop a stale project pick if its client is gone or it no longer exists.
+    if (state.filterProject && (!c || !projectsForClient(state.filterClient, false).includes(state.filterProject))) state.filterProject = '';
+    $('clientFilterChip').textContent = c ? (state.filterProject ? c.name + ' · ' + state.filterProject : c.name) : 'All';
     const sc = $('statusFilterChip');
     const sf = state.statusFilter;
     sc.className = 'filter-chip chip pick' + (sf === 'all' ? '' : ' st-' + sf);
@@ -1736,7 +1732,7 @@
   function openClientFilterMenu(anchorEl) {
     const menu = $('clientFilterMenu');
     menu.innerHTML = '';
-    const mk = (value, label, isCurrent) => {
+    const mkClient = (value, label, isCurrent) => {
       const item = document.createElement('button');
       item.type = 'button';
       item.className = 'chip-menu-item' + (isCurrent ? ' is-current' : '');
@@ -1744,30 +1740,29 @@
       item.textContent = label;
       menu.appendChild(item);
     };
-    mk('', 'All clients', !state.filterClient);
+    // A project row: same client, plus a project name. Indented under its client.
+    const mkProject = (clientId, name, isCurrent) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'chip-menu-item is-project' + (isCurrent ? ' is-current' : '');
+      item.dataset.client = clientId;
+      item.dataset.project = name;
+      item.textContent = name;
+      menu.appendChild(item);
+    };
+    mkClient('', 'All clients', !state.filterClient && !state.filterProject);
     const clients = [...state.clients.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
-    for (const c of clients) mk(c.id, c.name, c.id === state.filterClient);
+    for (const c of clients) {
+      mkClient(c.id, c.name, c.id === state.filterClient && !state.filterProject);
+      // Only projects that still have open work show under the client.
+      for (const name of projectsForClient(c.id, true)) {
+        mkProject(c.id, name, c.id === state.filterClient && name === state.filterProject);
+      }
+    }
     menu.hidden = false;
     placeMenu(menu, anchorEl, 'left');
   }
   function closeClientFilterMenu() { $('clientFilterMenu').hidden = true; }
-  function openProjectFilterMenu(anchorEl) {
-    const menu = $('projectFilterMenu');
-    menu.innerHTML = '';
-    const mk = (value, label, isCurrent) => {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.className = 'chip-menu-item' + (isCurrent ? ' is-current' : '');
-      item.dataset.project = value;
-      item.textContent = label;
-      menu.appendChild(item);
-    };
-    mk('', 'All projects', !state.filterProject);
-    for (const name of projectsForClient(state.filterClient)) mk(name, name, name === state.filterProject);
-    menu.hidden = false;
-    placeMenu(menu, anchorEl, 'left');
-  }
-  function closeProjectFilterMenu() { $('projectFilterMenu').hidden = true; }
   function openDueFilterMenu(anchorEl) {
     const menu = $('dueFilterMenu');
     menu.innerHTML = '';
@@ -3691,8 +3686,6 @@
     if (!clm.hidden && !clm.contains(ev.target)) closeClientMenu();
     const cfm = $('clientFilterMenu');
     if (!cfm.hidden && !cfm.contains(ev.target) && ev.target !== $('clientFilterChip')) closeClientFilterMenu();
-    const pfm = $('projectFilterMenu');
-    if (!pfm.hidden && !pfm.contains(ev.target) && ev.target !== $('projectFilterChip')) closeProjectFilterMenu();
     const dfm = $('dueFilterMenu');
     if (!dfm.hidden && !dfm.contains(ev.target) && ev.target !== $('dueFilterChip')) closeDueFilterMenu();
     const sfm = $('statusFilterMenu');
@@ -3707,7 +3700,6 @@
     if (!$('composerMenu').hidden) { ev.stopPropagation(); closeComposerMenu(); }
     if (!$('clientMenu').hidden) { ev.stopPropagation(); closeClientMenu(); }
     if (!$('clientFilterMenu').hidden) { ev.stopPropagation(); closeClientFilterMenu(); }
-    if (!$('projectFilterMenu').hidden) { ev.stopPropagation(); closeProjectFilterMenu(); }
     if (!$('dueFilterMenu').hidden) { ev.stopPropagation(); closeDueFilterMenu(); }
     if (!$('statusFilterMenu').hidden) { ev.stopPropagation(); closeStatusFilterMenu(); }
   });
@@ -3720,19 +3712,8 @@
     const item = ev.target.closest('.chip-menu-item');
     if (!item) return;
     state.filterClient = item.dataset.client;
-    state.filterProject = '';            // changing client clears the nested project pick
+    state.filterProject = item.dataset.project || '';   // a project row narrows one level deeper
     closeClientFilterMenu();
-    renderFilterOptions(); renderList();
-  });
-  $('projectFilterChip').addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    if ($('projectFilterMenu').hidden) openProjectFilterMenu($('projectFilterChip')); else closeProjectFilterMenu();
-  });
-  $('projectFilterMenu').addEventListener('click', (ev) => {
-    const item = ev.target.closest('.chip-menu-item');
-    if (!item) return;
-    state.filterProject = item.dataset.project;
-    closeProjectFilterMenu();
     renderFilterOptions(); renderList();
   });
   $('dueFilterChip').addEventListener('click', (ev) => {
