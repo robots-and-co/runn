@@ -57,7 +57,8 @@ Write/Edit/Bash, surfaced in the UI. There is no auto-approve-everything mode.
 
 - The user is **dyslexic** — keep chat replies **tight**, **lead with the answer
   on the first line** (no literal "TL;DR" label) so they can stop after one line,
-  **one question per turn**, expand only on request.
+  **one question per turn**, expand only on request. If the turn has **no
+  question** for the user, reply just **"done"** (or a few words of outcome).
 - **Never use the `§` symbol** — write "section N".
 - The user **does not deeply know git**. Narrate git steps in plain language
   ("saved", "backed up to GitHub", "merged") — not raw jargon. The UI must never
