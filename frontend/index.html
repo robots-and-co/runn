@@ -623,6 +623,7 @@
   .bubble.collapsible.expanded .ai-summary-text { white-space: normal; opacity: .5; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
   .bubble.collapsible .ai-full { display: none; padding: 0 14px 12px; }
   .bubble.collapsible.expanded .ai-full { display: block; }
+  .ai-seg + .ai-seg { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
   .bubble :first-child { margin-top: 0; } .bubble :last-child { margin-bottom: 0; }
   .bubble pre { background: #f3efe7; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
   .turn.user .bubble pre { background: rgba(255,255,255,0.15); }
@@ -1061,13 +1062,15 @@
 
   marked.setOptions({ breaks: true, gfm: true });
   const mdToHtml = (s) => DOMPurify.sanitize(marked.parse(s || ''));
-  // First meaningful line of an AI reply, stripped of markdown markers, for the
-  // collapsed one-line summary shown in the chat history.
-  const firstLineSummary = (s) => {
-    const line = String(s || '')
+  // One line of an AI reply, stripped of markdown markers, for the collapsed
+  // summary shown in the chat history. `last` picks the final meaningful line
+  // (the question for the user, or "done"); otherwise the first.
+  const lineSummary = (s, last) => {
+    const lines = String(s || '')
       .split('\n')
       .map((l) => l.trim())
-      .find((l) => l && !/^[-*_=#>`]{3,}$/.test(l)) || '…';
+      .filter((l) => l && !/^[-*_=#>`]{3,}$/.test(l));
+    const line = (last ? lines[lines.length - 1] : lines[0]) || '…';
     const clean = line
       .replace(/^#{1,6}\s+/, '')        // heading markers
       .replace(/^[-*+]\s+/, '')         // bullet markers
@@ -1076,6 +1079,7 @@
       .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1');  // links/images → their text
     return clean.length > 140 ? clean.slice(0, 139).trimEnd() + '…' : clean;
   };
+  const lastLineSummary = (s) => lineSummary(s, true);
   // Copy to clipboard, with a fallback for non-secure (plain-http LAN) contexts
   // where navigator.clipboard is unavailable.
   async function copyText(text) {
@@ -2759,8 +2763,9 @@
     // and lock.
     const locked = !!j.session_id;
     let lastDay = null;
-    turns.forEach((turn, idx) => {
-      const day = turn.at ? turn.at.slice(0, 10) : null;
+    const dayOf = (turn) => (turn.at ? turn.at.slice(0, 10) : null);
+    const maybeDivider = (turn) => {
+      const day = dayOf(turn);
       if (turn.session_event || (day && day !== lastDay)) {
         const div = document.createElement('div');
         div.className = 'divider';
@@ -2768,84 +2773,123 @@
         turnsEl.appendChild(div);
       }
       lastDay = day;
+    };
+
+    // One AI response can arrive as MANY ai turns — a line of narration before
+    // each tool step. The human wants ONE box per response: collapsed by default,
+    // showing only the final line (a question for them, or "done"), and expanding
+    // to every step. So we group each unbroken run of ai turns into a single
+    // bubble. A user turn, a note, a session event, or a day change breaks the run.
+    let i = 0;
+    while (i < turns.length) {
+      const turn = turns[i];
+      maybeDivider(turn);
 
       // Private note: rendered inline but visually set apart, with promote/delete
       // actions. Notes are never markdown-rendered or sent to the AI.
       if (turn.role === 'note') {
-        turnsEl.appendChild(buildNoteTurn(idx, turn.text));
-        return;
+        turnsEl.appendChild(buildNoteTurn(i, turn.text));
+        i++;
+        continue;
+      }
+
+      if (turn.role === 'user') {
+        const idx = i;
+        const wrap = document.createElement('div');
+        wrap.className = 'turn user';
+        const editing = state.editingTurn && state.editingTurn.id === j.id && state.editingTurn.idx === idx;
+        if (editing && !locked) {
+          wrap.classList.add('editing');
+          buildTurnEditor(wrap, idx, turn.text);
+          turnsEl.appendChild(wrap);
+          i++;
+          continue;
+        }
+        if (!locked) {
+          const editBtn = document.createElement('button');
+          editBtn.type = 'button';
+          editBtn.className = 'turn-edit';
+          editBtn.setAttribute('aria-label', 'Edit message');
+          editBtn.textContent = '✎';
+          editBtn.addEventListener('click', () => beginEditTurn(idx));
+          wrap.appendChild(editBtn);
+        }
+        // Attachment chips sit above the bubble; an attachments-only message
+        // renders the chips with no bubble.
+        const attEl = buildTurnAttachments(j.id, turn);
+        const hasText = turn.text && turn.text.trim();
+        if (attEl) {
+          const col = document.createElement('div');
+          col.className = 'turn-col';
+          col.appendChild(attEl);
+          if (hasText) {
+            const b = document.createElement('div');
+            b.className = 'bubble';
+            b.innerHTML = mdToHtml(turn.text);
+            addCopyButtons(b);
+            col.appendChild(b);
+          }
+          wrap.appendChild(col);
+        } else {
+          const bubble = document.createElement('div');
+          bubble.className = 'bubble';
+          bubble.innerHTML = mdToHtml(turn.text);
+          addCopyButtons(bubble);
+          wrap.appendChild(bubble);
+        }
+        turnsEl.appendChild(wrap);
+        i++;
+        continue;
+      }
+
+      // Gather the whole run of consecutive ai turns into one group.
+      const runDay = lastDay;
+      const group = [turn];
+      let k = i + 1;
+      while (k < turns.length) {
+        const t2 = turns[k];
+        if (t2.role === 'user' || t2.role === 'note') break;
+        if (t2.session_event || (dayOf(t2) && dayOf(t2) !== runDay)) break;
+        group.push(t2);
+        k++;
       }
 
       const wrap = document.createElement('div');
-      wrap.className = 'turn ' + (turn.role === 'user' ? 'user' : 'ai');
-      const editing = state.editingTurn && state.editingTurn.id === j.id && state.editingTurn.idx === idx;
-      if (editing && turn.role === 'user' && !locked) {
-        wrap.classList.add('editing');
-        buildTurnEditor(wrap, idx, turn.text);
-        turnsEl.appendChild(wrap);
-        return;
-      }
-      if (turn.role === 'user' && !locked) {
-        const editBtn = document.createElement('button');
-        editBtn.type = 'button';
-        editBtn.className = 'turn-edit';
-        editBtn.setAttribute('aria-label', 'Edit message');
-        editBtn.textContent = '✎';
-        editBtn.addEventListener('click', () => beginEditTurn(idx));
-        wrap.appendChild(editBtn);
-      }
-      // Attachment chips (user turns only) sit above the bubble; an
-      // attachments-only message renders the chips with no bubble.
-      const attEl = turn.role === 'user' ? buildTurnAttachments(j.id, turn) : null;
-      const hasText = turn.text && turn.text.trim();
-      if (attEl) {
-        const col = document.createElement('div');
-        col.className = 'turn-col';
-        col.appendChild(attEl);
-        if (hasText) {
-          const b = document.createElement('div');
-          b.className = 'bubble';
-          b.innerHTML = mdToHtml(turn.text);
-          addCopyButtons(b);
-          col.appendChild(b);
-        }
-        wrap.appendChild(col);
-        turnsEl.appendChild(wrap);
-        return;
-      }
+      wrap.className = 'turn ai';
       const bubble = document.createElement('div');
-      bubble.className = 'bubble';
-      if (turn.role !== 'user') {
-        // Collapse AI replies to their first line. The directive makes that first
-        // line the answer, so the human reads one line per reply and clicks to
-        // expand the rest. The newest reply opens by default so the live answer
-        // is visible without a click.
-        bubble.classList.add('collapsible');
-        const full = document.createElement('div');
-        full.className = 'ai-full';
-        full.innerHTML = mdToHtml(turn.text);
-        renderReports(full);   // runs before addCopyButtons so report blocks get no copy btn
-        addCopyButtons(full);
-        const summary = document.createElement('button');
-        summary.type = 'button';
-        summary.className = 'ai-summary';
-        const caret = document.createElement('span');
-        caret.className = 'ai-caret';
-        caret.textContent = '▸';
-        const sumText = document.createElement('span');
-        sumText.className = 'ai-summary-text';
-        sumText.textContent = firstLineSummary(turn.text);
-        summary.append(caret, sumText);
-        summary.addEventListener('click', () => bubble.classList.toggle('expanded'));
-        bubble.append(summary, full);
-        if (idx === turns.length - 1) bubble.classList.add('expanded');
-      } else {
-        bubble.innerHTML = mdToHtml(turn.text);
-        addCopyButtons(bubble);
-      }
+      bubble.className = 'bubble collapsible';
+      const full = document.createElement('div');
+      full.className = 'ai-full';
+      group.forEach((t) => {
+        if (!(t.text && t.text.trim())) return;
+        const seg = document.createElement('div');
+        seg.className = 'ai-seg';
+        seg.innerHTML = mdToHtml(t.text);
+        renderReports(seg);   // runs before addCopyButtons so report blocks get no copy btn
+        addCopyButtons(seg);
+        full.appendChild(seg);
+      });
+      // Summary = the LAST line of the LAST step: the question for the user, or
+      // "done". That's the one line they read when scanning the history.
+      const lastText = [...group].reverse().find((t) => t.text && t.text.trim());
+      const summary = document.createElement('button');
+      summary.type = 'button';
+      summary.className = 'ai-summary';
+      const caret = document.createElement('span');
+      caret.className = 'ai-caret';
+      caret.textContent = '▸';
+      const sumText = document.createElement('span');
+      sumText.className = 'ai-summary-text';
+      sumText.textContent = lastLineSummary(lastText ? lastText.text : '');
+      summary.append(caret, sumText);
+      summary.addEventListener('click', () => bubble.classList.toggle('expanded'));
+      bubble.append(summary, full);
+      // The newest response opens by default so the live answer shows without a click.
+      if (k >= turns.length) bubble.classList.add('expanded');
       wrap.appendChild(bubble);
       turnsEl.appendChild(wrap);
-    });
+      i = k;
+    }
     // The thinking bubble: while the job is `doing`, Claude is working — show a
     // pulsing AI bubble so the human knows a reply is coming. Its replies stream
     // in as real ai turns (the discovery watcher folds them into job.turns), and
