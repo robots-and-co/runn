@@ -3540,7 +3540,10 @@
     const id = chipMenuJobId;
     const next = item.dataset.status;
     closeChipMenu();
-    setJobStatus(id, next).catch((e) => console.error('status change failed', e));
+    setJobStatus(id, next)
+      // Marking the open job done deselects it — pop back to the list.
+      .then(() => { if (next === 'done' && id === state.currentId) closeChat(); })
+      .catch((e) => console.error('status change failed', e));
   });
   $('chatStatus').addEventListener('click', (ev) => {
     if (!state.currentId || state.currentId === DRAFT) return;
