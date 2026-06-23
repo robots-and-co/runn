@@ -1491,12 +1491,11 @@
     meta.appendChild(sEl);
     row.appendChild(meta);
 
-    // The card toggles its own detail pane: tap an unopened card to open it
-    // (pane 2) and start the work clock; tap the already-open card again to
-    // close the detail and stop tracking.
+    // Tap a card to open its detail pane (pane 2) and start the work clock.
+    // Tapping the already-open card does nothing — use the close control to
+    // dismiss it. (Re-tapping used to close it, which was annoying.)
     row.addEventListener('click', () => {
-      if (state.currentId === j.id) closeChat();
-      else openJob(j.id);
+      if (state.currentId !== j.id) openJob(j.id);
     });
     return row;
   }
