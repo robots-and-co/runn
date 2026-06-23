@@ -1043,6 +1043,7 @@
     billingSel: null,      // null = list; {kind:'draft',clientId} | {kind:'invoice',id}
     editing: null,         // working copy of the invoice draft being composed
     editingTurn: null,     // {id, idx} of a private user turn being edited (pre-invite)
+    expandedBubbles: new Set(), // keys of AI bubbles the user opened by hand — kept open across re-renders (incl. mid-turn)
     renaming: null,        // id of the job whose title is being inline-edited (chat header)
     settings: {},          // business/bank/GST defaults for invoice snapshots
     statusFilter: 'open',  // 'open' = active group (open/doing/review/blocked/hold); a status; or 'all'
@@ -2893,6 +2894,11 @@
         while (full.firstChild) bubble.appendChild(full.firstChild);
       } else {
         bubble.classList.add('collapsible');
+        // Stable identity for this AI group so a hand-opened bubble survives the
+        // full re-render that fires on each new AI turn. The first turn anchors the
+        // group; mid-turn, new turns append to the end, so this key stays put.
+        const bubbleKey = `${j.id}:${group[0].at || group[0].id || i}`;
+        if (state.expandedBubbles.has(bubbleKey)) bubble.classList.add('expanded');
         const lastText = [...group].reverse().find((t) => t.text && t.text.trim());
         const summary = document.createElement('button');
         summary.type = 'button';
@@ -2904,7 +2910,11 @@
         sumText.className = 'ai-summary-text';
         sumText.textContent = lastLineSummary(lastText ? lastText.text : '');
         summary.append(caret, sumText);
-        summary.addEventListener('click', () => bubble.classList.toggle('expanded'));
+        summary.addEventListener('click', () => {
+          const open = bubble.classList.toggle('expanded');
+          if (open) state.expandedBubbles.add(bubbleKey);
+          else state.expandedBubbles.delete(bubbleKey);
+        });
         bubble.append(summary, full);
       }
       wrap.appendChild(bubble);
