@@ -535,6 +535,9 @@
   .chat-head .amount.manual .amount-sym::before {
     content: '✎'; font-weight: 400; margin-right: 4px; opacity: .85;
   }
+  /* A discount (negative override) reads as a credit — green, not the amber of a
+     plain manual amount. The ✎ still applies (a discount is always manual). */
+  .chat-head .amount.discount { color: #2e7d32; }
   /* Hours = the editable work figure (decimal hours). It's a wrapper so the live
      timer + green running-dot survive, with a borderless inline input inside.
      readOnly while the work clock runs (status doing); editable when stopped. */
@@ -1565,13 +1568,16 @@
   // time is preserved. An empty field clears the override (back to auto). Keeping
   // the price on the job record is what stops invoices drifting from it.
   async function setJobAmount(id, raw) {
-    const s = String(raw).replace(/[^0-9.]/g, '');   // tolerate the $ and thousands commas
+    // Tolerate the $ and thousands commas. A leading − is allowed: a negative
+    // amount is a discount line — it subtracts from the client's total and
+    // shows on the invoice as -$X. Strip any stray minus that isn't leading.
+    const s = String(raw).replace(/[^0-9.-]/g, '').replace(/(?!^)-/g, '');
     let override;
-    if (s === '') {
+    if (s === '' || s === '-') {
       override = null;
     } else {
       const v = parseFloat(s);
-      if (!isFinite(v) || v < 0) { renderTimerDisplay(); return; }
+      if (!isFinite(v)) { renderTimerDisplay(); return; }
       override = round2(v);
     }
     const j = await patchJson('/jobs/' + id, { amount_override: override });
@@ -1876,13 +1882,18 @@
     if (c && !c.non_billable && c.rate_per_hour) {
       const manual = j.amount_override != null && j.amount_override !== '';
       const amt = manual ? round2(Number(j.amount_override)) : round2(hrs * Number(c.rate_per_hour));
+      const discount = amt < 0;
       amtWrap.hidden = false;
       amtWrap.classList.toggle('manual', manual);
-      amtWrap.title = manual
-        ? 'Manual amount — overrides hours × rate. Clear the field to revert to auto.'
-        : 'Auto: hours × rate. Type an amount to set it manually.';
+      amtWrap.classList.toggle('discount', discount);
+      amtWrap.title = discount
+        ? 'Discount — a negative amount that subtracts from this client’s total. Clear the field to revert to auto.'
+        : manual
+          ? 'Manual amount — overrides hours × rate. Clear the field to revert to auto.'
+          : 'Auto: hours × rate. Type an amount to set it manually.';
       amtInput.readOnly = running;
       // Don't clobber what the user is mid-edit (only possible while stopped).
+      // Keep the − in the field so a discount stays editable (the value, sign and all).
       if (!(amtInput === document.activeElement && !running)) amtInput.value = money2(amt);
     } else {
       amtWrap.hidden = true;
