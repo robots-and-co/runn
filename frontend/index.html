@@ -95,13 +95,17 @@
      never hide silently in the list. Wins over the due/active bar on purpose:
      "this is costing money" outranks every other row state. */
   @keyframes clockpulse {
-    0%, 100% { box-shadow: inset 3px 0 0 #1f9d57; background: transparent; }
-    50%      { box-shadow: inset 3px 0 0 #1f9d57; background: #e8f6ee; }
+    0%, 100% { box-shadow: inset 4px 0 0 #0f7a3d; background: #e3f3e8; }
+    50%      { box-shadow: inset 4px 0 0 #0f7a3d; background: #cdeed8; }
   }
   .job-row.clocking { animation: clockpulse 1.6s ease-in-out infinite; }
   @media (prefers-reduced-motion: reduce) {
-    .job-row.clocking { animation: none; box-shadow: inset 3px 0 0 #1f9d57; background: #e8f6ee; }
+    .job-row.clocking { animation: none; box-shadow: inset 4px 0 0 #0f7a3d; background: #d8f0e1; }
   }
+  /* Live billing readout on a clocking card. */
+  .job-row .clock-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 2px; }
+  .job-row .clock-tag { font-size: 11px; font-weight: 600; color: #0f7a3d; letter-spacing: .02em; }
+  .job-row .clock-live { font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 700; color: #0c6e36; }
   /* Due urgency — a left bar + faint wash so today/overdue read louder than
      the rest. The open (active) row keeps its own treatment. */
   .job-row.due-today:not(.active)   { background: #fbf4ea; box-shadow: inset 3px 0 0 var(--accent); }
@@ -1395,6 +1399,10 @@
     dc.textContent = DUE_LABELS[df] || 'Any';
   }
   function renderList() {
+    renderListInner();
+    syncListTimer();   // run/stop the live-card ticker after the DOM settles
+  }
+  function renderListInner() {
     const base = visibleJobs();
     renderTotal(base);                       // $ total always sums the full set (incl. done)
     const jobs = base.filter((j) => matchesStatusFilter(j) && matchesDueFilter(j));
@@ -1507,6 +1515,22 @@
     });
     meta.appendChild(sEl);
     row.appendChild(meta);
+
+    // While its work clock is ticking, the card carries a live readout so you can
+    // watch the time climb from the list without opening the job.
+    if (jobClocking(j)) {
+      const wrap = document.createElement('div');
+      wrap.className = 'clock-line';
+      const tag = document.createElement('span');
+      tag.className = 'clock-tag';
+      tag.textContent = '⏱ billing';
+      const live = document.createElement('span');
+      live.className = 'clock-live';   // only this figure changes on tick
+      live.textContent = fmtClock(liveSeconds(j));
+      wrap.appendChild(tag);
+      wrap.appendChild(live);
+      row.appendChild(wrap);
+    }
 
     // Tap a card to open its detail pane (pane 2) and start the work clock.
     // Tapping the already-open card does nothing — use the close control to
@@ -1852,6 +1876,28 @@
     let s = jobSeconds(j);
     if (jobRunning(j)) s += Math.max(0, (Date.now() - new Date(j.doing_started_at).getTime()) / 1000);
     return s;
+  }
+  // Clock readout for a list card: H:MM:SS once past an hour, else M:SS.
+  function fmtClock(secs) {
+    const t = Math.max(0, Math.floor(secs));
+    const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+  }
+  // A single interval refreshes the live time on every pulsing card while one is
+  // running — separate from the open-job timer so a clock you left behind keeps
+  // counting on its card. Started/stopped from renderList.
+  const listTimer = { tickId: null };
+  function tickClockingCards() {
+    jobListEl.querySelectorAll('.job-row.clocking .clock-live').forEach((el) => {
+      const j = state.jobs.get(el.closest('.job-row').dataset.id);
+      if (j) el.textContent = fmtClock(liveSeconds(j));
+    });
+  }
+  function syncListTimer() {
+    const any = jobListEl.querySelector('.job-row.clocking');
+    if (any && !listTimer.tickId) listTimer.tickId = setInterval(tickClockingCards, 1000);
+    if (!any && listTimer.tickId) { clearInterval(listTimer.tickId); listTimer.tickId = null; }
   }
   function timerSync() {
     const id = (state.currentId && state.currentId !== DRAFT) ? state.currentId : null;
