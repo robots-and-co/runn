@@ -90,6 +90,18 @@
   }
   .job-row:hover { background: var(--surface-2); }
   .job-row.active { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+  /* Clocking — this job's work clock is ticking while you're off doing other
+     (unbilled) things. A green left bar that breathes, so a live biller can
+     never hide silently in the list. Wins over the due/active bar on purpose:
+     "this is costing money" outranks every other row state. */
+  @keyframes clockpulse {
+    0%, 100% { box-shadow: inset 3px 0 0 #1f9d57; background: transparent; }
+    50%      { box-shadow: inset 3px 0 0 #1f9d57; background: #e8f6ee; }
+  }
+  .job-row.clocking { animation: clockpulse 1.6s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    .job-row.clocking { animation: none; box-shadow: inset 3px 0 0 #1f9d57; background: #e8f6ee; }
+  }
   /* Due urgency — a left bar + faint wash so today/overdue read louder than
      the rest. The open (active) row keeps its own treatment. */
   .job-row.due-today:not(.active)   { background: #fbf4ea; box-shadow: inset 3px 0 0 var(--accent); }
@@ -1450,6 +1462,7 @@
     const b = dueBucket(j);
     const row = document.createElement('div');
     row.className = 'job-row' + (j.id === state.currentId ? ' active' : '')
+      + (jobClocking(j) ? ' clocking' : '')
       + (b.key === 'urgent' ? ' is-urgent' : b.key === 'overdue' ? ' due-overdue' : b.key === 'today' ? ' due-today' : '');
     row.dataset.id = j.id;
 
@@ -1831,6 +1844,10 @@
   // the AI when it's spawned (status === 'doing'). Decoupled from the thinking
   // spinner, which keys off status === 'doing'.
   function jobRunning(j) { return !!(j && j.doing_started_at); }
+  // A job whose *manual* work clock is ticking: running, billable, and not the
+  // AI's own clock (status 'doing' has its own thinking spinner). Drives the
+  // pulsing list card that reminds you it's still billing while you're elsewhere.
+  function jobClocking(j) { return !!(jobRunning(j) && j.status !== 'doing' && clockBillable(j)); }
   function liveSeconds(j) {
     let s = jobSeconds(j);
     if (jobRunning(j)) s += Math.max(0, (Date.now() - new Date(j.doing_started_at).getTime()) / 1000);
@@ -1933,14 +1950,18 @@
       postJson(`/jobs/${id}/clock/start`, {}).then(applyClockJob).catch(() => {});
     }
   }
-  // Reconcile on every navigation: pause the clocked job when it's no longer the
-  // open, billable foreground job. Never starts anything.
+  // Reconcile on every navigation. The clock keeps running even when you leave
+  // the job — the card pulses in the list to remind you it's billing, so you can
+  // do other (unbilled) work without losing the time. The only automatic stop is
+  // when the job goes terminal (done/invoiced/paid/note): then it can't bill any
+  // more, so drop the clock.
   function clockSync() {
-    const cur = (state.currentId && state.currentId !== DRAFT) ? state.currentId : null;
-    const keep = (cur && clockBillable(state.jobs.get(cur))) ? cur : null;
-    if (clockedJobId && clockedJobId !== keep) {
-      const prev = clockedJobId; clockedJobId = null;
-      postJson(`/jobs/${prev}/clock/stop`, {}).then(applyClockJob).catch(() => {});
+    if (clockedJobId) {
+      const j = state.jobs.get(clockedJobId);
+      if (!clockBillable(j)) {
+        const prev = clockedJobId; clockedJobId = null;
+        postJson(`/jobs/${prev}/clock/stop`, {}).then(applyClockJob).catch(() => {});
+      }
     }
   }
   // On tab close a normal fetch may be cancelled — beacon the stop so a clock the
