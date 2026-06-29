@@ -105,6 +105,8 @@
   /* Live billing readout on a clocking card. */
   .job-row .clock-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 2px; }
   .job-row .clock-tag { font-size: 11px; font-weight: 600; color: #0f7a3d; letter-spacing: .02em; }
+  .job-row .clock-figs { display: flex; align-items: baseline; gap: 10px; }
+  .job-row .clock-amt { font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 700; color: #0c6e36; }
   .job-row .clock-live { font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 700; color: #0c6e36; }
   /* Due urgency — a left bar + faint wash so today/overdue read louder than
      the rest. The open (active) row keeps its own treatment. */
@@ -1524,11 +1526,21 @@
       const tag = document.createElement('span');
       tag.className = 'clock-tag';
       tag.textContent = '⏱ billing';
+      const figs = document.createElement('span');
+      figs.className = 'clock-figs';   // right-side group: $ then time
+      const amtStr = liveAmount(j);
+      if (amtStr != null) {
+        const amt = document.createElement('span');
+        amt.className = 'clock-amt';   // updates on tick
+        amt.textContent = amtStr;
+        figs.appendChild(amt);
+      }
       const live = document.createElement('span');
-      live.className = 'clock-live';   // only this figure changes on tick
+      live.className = 'clock-live';   // updates on tick
       live.textContent = fmtClock(liveSeconds(j));
+      figs.appendChild(live);
       wrap.appendChild(tag);
-      wrap.appendChild(live);
+      wrap.appendChild(figs);
       row.appendChild(wrap);
     }
 
@@ -1884,14 +1896,27 @@
     const pad = (n) => String(n).padStart(2, '0');
     return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
   }
+  // Live $ for a clocking card — hours×rate, or a hand-entered override. Null when
+  // the client isn't billable or has no rate (then there's nothing to bill).
+  function liveAmount(j) {
+    const c = clientOf(j.client_id);
+    if (!c || c.non_billable || !c.rate_per_hour) return null;
+    const manual = j.amount_override != null && j.amount_override !== '';
+    const amt = manual ? round2(Number(j.amount_override)) : round2((liveSeconds(j) / 3600) * Number(c.rate_per_hour));
+    return '$' + money2(amt);
+  }
   // A single interval refreshes the live time on every pulsing card while one is
   // running — separate from the open-job timer so a clock you left behind keeps
   // counting on its card. Started/stopped from renderList.
   const listTimer = { tickId: null };
   function tickClockingCards() {
-    jobListEl.querySelectorAll('.job-row.clocking .clock-live').forEach((el) => {
-      const j = state.jobs.get(el.closest('.job-row').dataset.id);
-      if (j) el.textContent = fmtClock(liveSeconds(j));
+    jobListEl.querySelectorAll('.job-row.clocking').forEach((row) => {
+      const j = state.jobs.get(row.dataset.id);
+      if (!j) return;
+      const t = row.querySelector('.clock-live');
+      if (t) t.textContent = fmtClock(liveSeconds(j));
+      const a = row.querySelector('.clock-amt');
+      if (a) a.textContent = liveAmount(j) || '';
     });
   }
   function syncListTimer() {
