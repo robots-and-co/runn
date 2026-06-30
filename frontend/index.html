@@ -2683,6 +2683,7 @@
     state.currentId = id;
     state.editingTurn = null;
     state.picking = false;
+    forceChatScroll = true;      // jump to the latest message when opening a job
     clearPendingAttachments();   // staged files belong to the job you were in
     resetNewJobPicker();
     enterChatView();
@@ -2802,7 +2803,14 @@
     return row;
   }
 
+  // Auto-scroll the transcript to the newest message ONLY when the human is
+  // already reading the bottom (so a fresh AI turn doesn't yank them away from
+  // text they're mid-read on). forceChatScroll forces one scroll-to-bottom when
+  // the chat is first opened, regardless of the old transcript's position.
+  let forceChatScroll = false;
   function renderChat() {
+    // Was the human parked at the bottom before we rebuilt the transcript?
+    const wasNearBottom = turnsEl.scrollHeight - turnsEl.scrollTop - turnsEl.clientHeight < 80;
     $('jobMenuBtn').hidden = true;
     $('chatDoneBtn').classList.remove('show');   // re-shown below only for an active, saved job
     $('chatDue').hidden = true;  // shown only for a real, saved job
@@ -3043,7 +3051,8 @@
       turnsEl.appendChild(t);
     }
     renderPermissions();
-    turnsEl.scrollTop = turnsEl.scrollHeight;
+    if (forceChatScroll || wasNearBottom) turnsEl.scrollTop = turnsEl.scrollHeight;
+    forceChatScroll = false;
   }
 
   // ── Data load ───────────────────────────────────
@@ -3114,8 +3123,9 @@
         maybeRenderBilling();
       } else if (m.type === 'permission.requested') {
         pendingPerms.set(m.request_id, { request_id: m.request_id, job_id: m.job_id, tool_name: m.tool_name, input: m.input });
+        const nearBottom = turnsEl.scrollHeight - turnsEl.scrollTop - turnsEl.clientHeight < 80;
         renderPermissions();
-        turnsEl.scrollTop = turnsEl.scrollHeight;
+        if (nearBottom) turnsEl.scrollTop = turnsEl.scrollHeight;
       } else if (m.type === 'permission.resolved') {
         pendingPerms.delete(m.request_id);
         renderPermissions();
