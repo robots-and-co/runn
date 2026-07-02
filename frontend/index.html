@@ -1438,6 +1438,7 @@
     list.sort((a, b) => (dueBucket(b).rank - dueBucket(a).rank)
       || ((b.status === 'review') - (a.status === 'review'))
       || ((a.status === 'hold') - (b.status === 'hold'))
+      || String(a.due_at || '9999').localeCompare(String(b.due_at || '9999'))
       || String(b.updated_at).localeCompare(String(a.updated_at)));
     const buckets = list.map(dueBucket);
     // Show dividers when there's more than one bucket, or a due filter is active.
