@@ -3130,6 +3130,8 @@
       } else if (m.type === 'permission.resolved') {
         pendingPerms.delete(m.request_id);
         renderPermissions();
+      } else if (m.type === 'ai.error') {
+        toast(m.error || 'AI spawn failed', 'err');
       }
     };
     ws.onclose = () => setTimeout(connectWS, 1500);

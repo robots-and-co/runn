@@ -394,6 +394,7 @@ function spawnSession({ title, notes, location, permissionToken, permissionMode,
 
     let resolved = false;
     const rl = readline.createInterface({ input: child.stdout });
+    let stderrBuf = '';
 
     rl.on('line', (line) => {
       if (resolved) return;
@@ -426,8 +427,22 @@ function spawnSession({ title, notes, location, permissionToken, permissionMode,
       reject(err);
     });
 
-    child.stderr.on('data', (chunk) => {
-      if (!resolved) console.error('[bridge stderr]', chunk.toString().slice(0, 500));
+    child.stderr.on('data', (chunk) => { stderrBuf += chunk.toString(); });
+
+    // If the child exits before producing the init event (e.g. auth failure,
+    // missing binary, bad config), reject immediately with the stderr output
+    // instead of waiting for the 30s timeout. The first 'exit' handler above
+    // handles cleanup (releaseCwd, onExit); this second one catches the
+    // "died before init" case — same pattern as sendMessage.
+    child.on('exit', (code) => {
+      if (resolved) return;
+      resolved = true;
+      const stderr = stderrBuf.slice(0, 500);
+      const isAuth = /auth|sign.in|log.in|oauth|credential|token.*expir|not authenticated/i.test(stderr);
+      const detail = isAuth
+        ? `Claude CLI authentication failed — run "claude" on the NUC to re-authenticate. stderr: ${stderr}`
+        : `claude exited ${code} before init: ${stderr}`;
+      reject(new Error(detail));
     });
 
     setTimeout(() => {
@@ -526,7 +541,12 @@ function sendMessage({ sessionId, text, location, permissionToken, permissionMod
     child.on('exit', (code) => {
       if (resolved) return;
       resolved = true;
-      reject(new Error(`claude exited ${code} before init: ${stderrBuf.slice(0, 500)}`));
+      const stderr = stderrBuf.slice(0, 500);
+      const isAuth = /auth|sign.in|log.in|oauth|credential|token.*expir|not authenticated/i.test(stderr);
+      const detail = isAuth
+        ? `Claude CLI authentication failed — run "claude" on the NUC to re-authenticate. stderr: ${stderr}`
+        : `claude exited ${code} before init: ${stderr}`;
+      reject(new Error(detail));
     });
 
     setTimeout(() => {

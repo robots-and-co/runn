@@ -346,6 +346,7 @@ async function inviteAi(res, job) {
         },
         onSpawnError: (err) => {
           console.error('[invite] queued spawn failed', err);
+          broadcast({ type: 'ai.error', job_id: id, error: String(err.message || err) });
           runJobOp(id, () => jobs.patchJob(id, { ai_pending: false })).catch(() => {});
         },
       });
