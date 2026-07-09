@@ -438,9 +438,9 @@ function spawnSession({ title, notes, location, permissionToken, permissionMode,
       if (resolved) return;
       resolved = true;
       const stderr = stderrBuf.slice(0, 500);
-      const isAuth = /auth|sign.in|log.in|oauth|credential|token.*expir|not authenticated/i.test(stderr);
+      const isAuth = /auth|sign.in|log.in|oauth|credential|token.*expir|not authenticated|401|unauthorized/i.test(stderr);
       const detail = isAuth
-        ? `Claude CLI authentication failed — run "claude" on the NUC to re-authenticate. stderr: ${stderr}`
+        ? `Claude CLI authentication failed (401) — run "claude" on the NUC to re-authenticate. stderr: ${stderr}`
         : `claude exited ${code} before init: ${stderr}`;
       reject(new Error(detail));
     });
@@ -542,9 +542,9 @@ function sendMessage({ sessionId, text, location, permissionToken, permissionMod
       if (resolved) return;
       resolved = true;
       const stderr = stderrBuf.slice(0, 500);
-      const isAuth = /auth|sign.in|log.in|oauth|credential|token.*expir|not authenticated/i.test(stderr);
+      const isAuth = /auth|sign.in|log.in|oauth|credential|token.*expir|not authenticated|401|unauthorized/i.test(stderr);
       const detail = isAuth
-        ? `Claude CLI authentication failed — run "claude" on the NUC to re-authenticate. stderr: ${stderr}`
+        ? `Claude CLI authentication failed (401) — run "claude" on the NUC to re-authenticate. stderr: ${stderr}`
         : `claude exited ${code} before init: ${stderr}`;
       reject(new Error(detail));
     });
