@@ -159,6 +159,7 @@
   .chip.st-urgent   { background:#ffdcd8; color:#c1302a; }
   .chip.st-open     { background:#e8e4db; color:#6b6357; }
   .chip.st-doing    { background:#dcebff; color:#1f5fb0; }
+  .chip.st-waiting  { background:#e6e9ef; color:#5c6b82; }
   .chip.st-review   { background:#fff0d6; color:#a9711a; }
   .chip.st-done     { background:#dff2e3; color:#2f7a45; }
   .chip.st-invoiced { background:#e7e2f5; color:#5b48a8; }
@@ -1507,7 +1508,7 @@
     const di = dueInfo(j);
     if (di.set) { dEl.classList.add('due'); if (di.overdue) dEl.classList.add('overdue'); dEl.textContent = di.label; }
     meta.appendChild(dEl);
-    const sEl = statusChip(j.status);   // static — no jobId, so not the picker
+    const sEl = statusChip(displayStatus(j));   // static — no jobId, so not the picker
     sEl.classList.add('meta-status', 'tap');
     sEl.title = 'Filter by ' + j.status;
     sEl.addEventListener('click', (ev) => {     // quick filter: toggle this status
@@ -1552,6 +1553,13 @@
       if (state.currentId !== j.id) openJob(j.id);
     });
     return row;
+  }
+
+  // What the status chip should SAY. A job buffered behind another chat in the
+  // same working tree (ai_pending) is about to run but hasn't yet — surface that
+  // as "waiting" without touching the real stored status underneath.
+  function displayStatus(j) {
+    return j.ai_pending ? 'waiting' : (j.status || 'open');
   }
 
   function statusChip(status, jobId) {
@@ -2869,8 +2877,9 @@
     clEl.className = 'chip client pick';
     clEl.hidden = false;
     const stEl = $('chatStatus');
-    stEl.textContent = j.status || 'open';
-    stEl.className = 'chip pick st-' + (j.status || 'open');
+    const dispSt = displayStatus(j);
+    stEl.textContent = dispSt;
+    stEl.className = 'chip pick st-' + dispSt;
     stEl.hidden = false;
     renderDueChip(j);
     $('jobMenuBtn').hidden = false;     // #chatHours is the live timer, owned by renderTimerDisplay

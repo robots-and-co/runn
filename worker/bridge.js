@@ -197,11 +197,14 @@ function dispatchPendingForCwd(cwd) {
     queue.shift();
     if (queue.length === 0) pendingMessages.delete(sessionId);
     const onStart = next.onStart;
-    // Strip onStart from params before forwarding to sendMessage (which doesn't
-    // know about it). sendMessage resolves on init, so chaining .then here is
-    // the right hook to mark the card as actually-running.
+    const onError = next.onError;
+    // Strip our own hooks from params before forwarding to sendMessage (which
+    // doesn't know about them). sendMessage resolves on init, so chaining .then
+    // here is the right hook to mark the card as actually-running; the .catch
+    // lets the caller undo any "waiting" flag if the buffered turn never starts.
     const params = { ...next };
     delete params.onStart;
+    delete params.onError;
     sendMessage({ sessionId, ...params })
       .then(() => {
         if (typeof onStart === 'function') {
@@ -210,6 +213,9 @@ function dispatchPendingForCwd(cwd) {
       })
       .catch(err => {
         console.error(`[bridge] queued message dispatch failed for ${sessionId.slice(0,8)}`, err);
+        if (typeof onError === 'function') {
+          try { onError(err); } catch (e) { console.error('[bridge] queued onError threw', e); }
+        }
       });
     return true; // one dispatch per cwd-free event
   }

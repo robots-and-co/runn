@@ -374,10 +374,15 @@ async function resumeJob(res, job, text) {
     await bridge.sendMessage({ sessionId: job.session_id, ...params });
   } catch (e) {
     if (e.code === 'CWD_BUSY') {
+      // The tree's busy with another chat. Buffer this turn and flag the card as
+      // waiting (mirrors the new-invite path) so its status chip reads "waiting"
+      // until the turn actually starts.
       bridge.enqueueMessage(job.session_id, {
         ...params,
-        onStart: () => { runJobOp(id, () => jobs.patchJob(id, { status: 'doing' })).catch(() => {}); },
+        onStart: () => { runJobOp(id, () => jobs.patchJob(id, { status: 'doing', ai_pending: false })).catch(() => {}); },
+        onError: () => { runJobOp(id, () => jobs.patchJob(id, { ai_pending: false })).catch(() => {}); },
       });
+      await runJobOp(id, () => jobs.patchJob(id, { ai_pending: true }));
       return sendJson(res, 202, { queued: true });
     }
     throw e;
@@ -1020,6 +1025,10 @@ sessionsWatcher.on('change', onSessionEvent);
         await ingestSession(j.id, null);
         if (wasDoing) await jobs.patchJob(j.id, { status: 'review' });
         else if (staleClock) await jobs.stopClock(j.id);
+        // A buffered follow-up turn (ai_pending on a job that already has a
+        // session) can't survive a restart — the in-memory message queue is
+        // gone — so clear the flag or the card stays stuck showing "waiting".
+        if (j.ai_pending) await jobs.patchJob(j.id, { ai_pending: false });
       });
     } else if (wasDoing) {
       enqueueJobOp(j.id, () => jobs.patchJob(j.id, { status: 'review' }));
