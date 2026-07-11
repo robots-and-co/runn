@@ -282,7 +282,7 @@ async function inviteAi(res, job) {
   if (job.session_id) return sendJson(res, 409, { error: 'AI already invited' });
   // A queued invite (waiting on a busy tree) hasn't got a session_id yet — guard
   // on ai_pending too so a second invite can't enqueue/spawn the job twice.
-  if (job.ai_pending) return sendJson(res, 202, { queued: true, busy: true });
+  if (job.ai_pending) return sendJson(res, 202, job);
   const location = await resolveLocation(job);
   const token = tokenForJob(id, location.cwd);
   // Build the spawn params from the job's CURRENT turns/notes. Re-run fresh at
@@ -349,8 +349,10 @@ async function inviteAi(res, job) {
           runJobOp(id, () => jobs.patchJob(id, { ai_pending: false })).catch(() => {});
         },
       });
-      await runJobOp(id, () => jobs.patchJob(id, { ai_pending: true }));
-      return sendJson(res, 202, { queued: true, busy: true, holder: e.holder });
+      const queued = await runJobOp(id, () => jobs.patchJob(id, { ai_pending: true }));
+      // Return the patched job so the UI flips to "waiting" right away rather than
+      // sitting on the pre-invite status until a broadcast catches up.
+      return sendJson(res, 202, queued);
     }
     throw e;
   }
@@ -382,8 +384,12 @@ async function resumeJob(res, job, text) {
         onStart: () => { runJobOp(id, () => jobs.patchJob(id, { status: 'doing', ai_pending: false })).catch(() => {}); },
         onError: () => { runJobOp(id, () => jobs.patchJob(id, { ai_pending: false })).catch(() => {}); },
       });
-      await runJobOp(id, () => jobs.patchJob(id, { ai_pending: true }));
-      return sendJson(res, 202, { queued: true });
+      const queued = await runJobOp(id, () => jobs.patchJob(id, { ai_pending: true }));
+      // Hand back the patched job (not a bare {queued:true}) so the browser flips
+      // to the "waiting" chip immediately. Otherwise it keeps its stale copy — the
+      // job still reads "review" — until a later broadcast, which can race and
+      // never land, leaving the answered job stuck showing "review".
+      return sendJson(res, 202, queued);
     }
     throw e;
   }
