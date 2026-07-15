@@ -98,6 +98,7 @@
     flex: 1; min-width: 0; border: 0; background: none; padding: 2px 0;
     font: inherit; font-size: 13.5px; font-style: italic; line-height: 1.4;
     color: var(--ink); text-align: center;
+    resize: none; overflow: hidden; display: block;   /* textarea: wrap + auto-grow via JS */
   }
   .focus-input::placeholder { color: var(--muted); font-style: italic; }
   .focus-input:focus { outline: none; }
@@ -989,8 +990,8 @@
         </button>
       </div>
       <div class="focus-bar focus-bar-mobile">
-        <input id="focusInputMobile" class="focus-input" type="text" autocomplete="off"
-               placeholder="Focus or a quote…" aria-label="Focus or quote">
+        <textarea id="focusInputMobile" class="focus-input" rows="1" autocomplete="off"
+               placeholder="Focus or a quote…" aria-label="Focus or quote"></textarea>
       </div>
       <div class="list-flip" id="listFlip">
         <div class="list-sub">
@@ -1009,8 +1010,8 @@
 
     <main class="chat-pane">
       <div class="focus-bar focus-bar-desktop">
-        <input id="focusInputDesktop" class="focus-input" type="text" autocomplete="off"
-               placeholder="Focus or a quote…" aria-label="Focus or quote">
+        <textarea id="focusInputDesktop" class="focus-input" rows="1" autocomplete="off"
+               placeholder="Focus or a quote…" aria-label="Focus or quote"></textarea>
       </div>
       <div class="chat-head">
         <button class="back" id="backBtn" aria-label="Back">‹</button>
@@ -3656,15 +3657,23 @@
   // persists across reloads and syncs to other devices on next load. The mobile
   // and desktop inputs mirror the same value.
   const focusInputs = [$('focusInputMobile'), $('focusInputDesktop')].filter(Boolean);
+  // Auto-grow the textarea to fit its (wrapped) content. Skip hidden bars —
+  // their scrollHeight is 0, which would collapse them; they re-grow on resize
+  // once the breakpoint reveals them.
+  function growFocus(el) {
+    if (!el.offsetParent && el !== document.activeElement) return;
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+  }
   function renderFocusBar() {
     const v = (state.settings && state.settings.focus_note) || '';
-    for (const el of focusInputs) if (el !== document.activeElement) el.value = v;
+    for (const el of focusInputs) if (el !== document.activeElement) { el.value = v; growFocus(el); }
   }
   async function saveFocusNote(v) {
     v = (v || '').trim();
     if (v === ((state.settings && state.settings.focus_note) || '')) return;  // no change
     state.settings.focus_note = v;
-    for (const el of focusInputs) if (el !== document.activeElement) el.value = v;  // mirror
+    for (const el of focusInputs) if (el !== document.activeElement) { el.value = v; growFocus(el); }  // mirror
     try {
       await fetch('/settings', {
         method: 'PUT',
@@ -3674,9 +3683,12 @@
     } catch (e) { console.error('focus save failed', e); }
   }
   for (const el of focusInputs) {
-    el.addEventListener('change', () => saveFocusNote(el.value));   // fires on blur / Enter
+    el.addEventListener('input', () => growFocus(el));             // grow as you type
+    el.addEventListener('change', () => saveFocusNote(el.value));  // save on blur / Enter
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.blur(); } });
   }
+  // A breakpoint change swaps which bar is visible; re-fit the newly shown one.
+  window.addEventListener('resize', () => { for (const el of focusInputs) growFocus(el); });
 
   // ── Wiring ──────────────────────────────────────
   $('backBtn').addEventListener('click', () => closeChat());
