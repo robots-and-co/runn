@@ -146,6 +146,16 @@
   .job-row .meta .meta-client { justify-self: start; min-width: 0; }
   .job-row .meta .meta-due    { justify-self: center; }
   .job-row .meta .meta-status { justify-self: end; }
+  /* Last-turn preview — the most recent thing said in the job, so a card reads
+     as "where's it at" without opening it. Italic + muted so it sits quietly
+     under the title/meta; clamped to two lines so a long turn can't stretch the
+     row. The "You:/AI:" tag is upright so you can see at a glance who's up. */
+  .job-row .last-turn {
+    font-size: 12px; line-height: 1.35; color: var(--muted); font-style: italic;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; margin-top: 1px;
+  }
+  .job-row .last-turn .who { font-style: normal; font-weight: 600; opacity: .75; }
   /* Experiment: in-card client/status chips read as plain-ish text (no pill,
      lighter weight) so they sit quieter than the job title above them. The
      meaningful text colour is kept; only the loud background is dropped. */
@@ -1354,6 +1364,26 @@
     const t = (j.turns || []).find((x) => x.role === 'user' && x.text);
     return t ? t.text.replace(/\s+/g, ' ').slice(0, 80) : null;
   }
+  // The latest thing said in a job — powers the "where's it at" line on the
+  // card so the list can be read without opening each thread. Walk the turns
+  // for the last user/ai message with text; private notes and bare session
+  // events don't count. Returns {role, text} or null. Text is whitespace-
+  // collapsed and hard-capped so one long turn can't blow out the row (the CSS
+  // also clamps it to two lines).
+  function lastTurnPreview(j) {
+    const turns = j.turns || [];
+    let last = null, textTurns = 0;
+    for (const t of turns) {
+      if ((t.role === 'user' || t.role === 'ai') && t.text && t.text.trim()) {
+        last = t; textTurns++;
+      }
+    }
+    if (!last) return null;
+    // Skip the echo: an untitled job takes its title from the first user line,
+    // so if that lone message is all there is, the preview would just repeat it.
+    if (textTurns === 1 && last.role === 'user' && !j.title) return null;
+    return { role: last.role, text: last.text.replace(/\s+/g, ' ').trim().slice(0, 160) };
+  }
   // A job's due date for display. overdue = past and the job isn't wrapped up.
   function dueInfo(j) {
     const d = j && j.due_at;
@@ -1610,6 +1640,21 @@
       wrap.appendChild(tag);
       wrap.appendChild(figs);
       row.appendChild(wrap);
+    }
+
+    // Last-turn preview: the most recent message in the thread, so you can tell
+    // where a job is at (who's waiting on whom, "done", a pending question)
+    // straight from the list. Rebuilt with every renderList, so it tracks live.
+    const lt = lastTurnPreview(j);
+    if (lt) {
+      const pv = document.createElement('div');
+      pv.className = 'last-turn';
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = (lt.role === 'ai' ? 'AI: ' : 'You: ');
+      pv.appendChild(who);
+      pv.appendChild(document.createTextNode(lt.text));
+      row.appendChild(pv);
     }
 
     // Tap a card to open its detail pane (pane 2) and start the work clock.
