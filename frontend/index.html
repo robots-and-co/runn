@@ -83,26 +83,25 @@
   .list-head h1 { font-size: 17px; margin: 0; letter-spacing: -0.2px; }
   .job-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 
-  /* Pinned note — a hand-typed focus line or quote, shown as a card pinned to
-     the very top of the job list (above the scrolling cards, so it stays put).
-     Styled deliberately UNLIKE a job card — dashed amber border, warm
-     note-paper fill and a 📌 — so it never reads as a real job. One value,
-     saved to global settings. Hidden while the pane is flipped to invoices. */
+  /* Pinned note — a hand-typed focus line or quote, pinned to the very top of
+     the job list (above the scrolling cards, so it stays put). Deliberately
+     quiet — no border or fill, just a dim 📌 and muted italic text — so it
+     reads as a note, not a job card. One value, saved to global settings.
+     Hidden while the pane is flipped to invoices. */
   .focus-bar {
     display: flex; align-items: flex-start; gap: 8px; flex: 0 0 auto;
-    margin: 10px 12px 4px; padding: 8px 12px 8px 10px;
-    background: #fdf8e8; border: 1px dashed #d8b94a; border-radius: 10px;
+    margin: 8px 12px 2px; padding: 4px 12px 4px 10px;
   }
   .focus-bar::before {
-    content: '📌'; flex: 0 0 auto; font-size: 13px; line-height: 1.5; opacity: .85;
+    content: '📌'; flex: 0 0 auto; font-size: 13px; line-height: 1.5; opacity: .7;
   }
   .focus-input {
     flex: 1; min-width: 0; border: 0; background: none; padding: 1px 0;
     font: inherit; font-size: 13.5px; font-style: italic; line-height: 1.5;
-    color: #6b5a16; text-align: left;
+    color: var(--muted); text-align: left;
     resize: none; overflow: hidden; display: block;   /* textarea: wrap + auto-grow via JS */
   }
-  .focus-input::placeholder { color: #b09a54; font-style: italic; }
+  .focus-input::placeholder { color: var(--muted); font-style: italic; }
   .focus-input:focus { outline: none; }
 
   .job-row {
