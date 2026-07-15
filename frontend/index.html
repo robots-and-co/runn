@@ -314,6 +314,17 @@
   .list-sub #clientFilterChip { justify-self: start; min-width: 0; }
   .list-sub #dueFilterChip    { justify-self: center; }
   .list-sub #statusFilterChip { justify-self: end; }
+  /* Search bar — sits directly under the filter chips, narrows the list live. */
+  .list-search {
+    padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .job-search-input {
+    width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 10px; -webkit-appearance: none; appearance: none;
+  }
+  .job-search-input::placeholder { color: var(--muted); }
+  .job-search-input:focus { outline: none; border-color: var(--brand); }
   .client-filter {
     flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--ink);
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
@@ -349,6 +360,7 @@
   .billing-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px; display: none; }
   body.show-invoices #jobList,
   body.show-invoices .list-sub,
+  body.show-invoices .list-search,
   body.show-invoices .list-foot { display: none; }
   body.show-invoices .billing-list { display: block; }
   .bill-entry.active { border-color: var(--brand); box-shadow: inset 3px 0 0 var(--brand); }
@@ -999,6 +1011,9 @@
           <button class="filter-chip chip pick due-filter" id="dueFilterChip" type="button" aria-label="Filter by due date">Any</button>
           <button class="filter-chip chip pick" id="statusFilterChip" type="button" aria-label="Filter by status">open</button>
         </div>
+        <div class="list-search">
+          <input type="search" id="jobSearch" class="job-search-input" placeholder="Search jobs…" autocomplete="off" aria-label="Search jobs">
+        </div>
         <div class="job-list" id="jobList"></div>
         <div class="billing-list" id="billingList"></div>
       </div>
@@ -1100,6 +1115,7 @@
     settings: {},          // business/bank/GST defaults for invoice snapshots
     statusFilter: 'open',  // 'open' = active group (open/doing/review/blocked/hold); a status; or 'all'
     dueFilter: 'all',      // 'all' | 'overdue' | 'today' | 'thisweek' | 'none'
+    searchTerm: '',        // free-text filter over title / client / project / notes
   };
 
   const $ = (id) => document.getElementById(id);
@@ -1406,6 +1422,15 @@
   // 'tomorrow' isn't in the picker — it's only reachable by clicking the
   // "tomorrow" list divider — but it still needs a chip label.
   const DUE_LABELS = { all: 'Any', urgent: 'Urgent', overdue: 'Overdue', today: 'Today', tomorrow: 'Tomorrow', thisweek: 'This week', later: 'Later', none: 'No due' };
+  // Free-text search over a job's title, client name, project (thread) and
+  // notes. Empty term matches everything. Case-insensitive substring.
+  function matchesSearch(j) {
+    const q = state.searchTerm.trim().toLowerCase();
+    if (!q) return true;
+    const hay = [titleOf(j), clientName(j.client_id), j.thread, j.notes_md]
+      .filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  }
   function matchesDueFilter(j) {
     const df = state.dueFilter;
     if (df === 'all') return true;
@@ -1438,13 +1463,14 @@
   function renderListInner() {
     const base = visibleJobs();
     renderTotal(base);                       // $ total always sums the full set (incl. done)
-    const jobs = base.filter((j) => matchesStatusFilter(j) && matchesDueFilter(j));
+    const jobs = base.filter((j) => matchesStatusFilter(j) && matchesDueFilter(j) && matchesSearch(j));
     jobListEl.innerHTML = '';
     const showEmpty = () => {
       const e = document.createElement('div');
       e.className = 'empty';
       e.style.padding = '40px 24px';
-      e.textContent = base.length ? 'No jobs match this filter.'
+      e.textContent = state.searchTerm.trim() ? 'No jobs match your search.'
+                    : base.length ? 'No jobs match this filter.'
                     : state.filterClient ? 'No jobs for this client yet.' : 'No jobs yet — hit + Job to start.';
       jobListEl.appendChild(e);
     };
@@ -3920,6 +3946,10 @@
     state.statusFilter = item.dataset.statusFilter;
     closeStatusFilterMenu();
     renderFilterOptions(); renderList();
+  });
+  $('jobSearch').addEventListener('input', (ev) => {
+    state.searchTerm = ev.target.value;
+    renderList();
   });
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
   inviteAiBtn.addEventListener('click', inviteAi);
