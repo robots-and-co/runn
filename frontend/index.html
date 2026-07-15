@@ -1369,6 +1369,10 @@
     // 'urgent' jumps every due bucket — its own rank above overdue keeps it
     // pinned to the top of the list (and gives it its own section divider).
     if (j && j.status === 'urgent') return { rank: 6, key: 'urgent', label: 'urgent' };
+    // A finished job's due date is moot — collapse done/invoiced/paid into the
+    // no-due tail (not just the past-due ones) so the done list reads as one
+    // reverse-chronological run instead of scattering across today/overdue/later.
+    if (j && ['done', 'invoiced', 'paid'].includes(j.status)) return { rank: 0, key: 'none', label: 'no due' };
     const d = j && j.due_at;
     if (!d) return { rank: 0, key: 'none', label: 'no due' };
     const wrapped = ['done', 'invoiced', 'paid', 'note'].includes(j.status);
@@ -1492,11 +1496,17 @@
     // dividers group cleanly. Within a bucket, review jobs rise to the top and
     // on-hold jobs sink below the rest; remaining ties fall back to
     // most-recently-touched.
+    const finished = (j) => ['done', 'invoiced', 'paid'].includes(j.status);
     list.sort((a, b) => (dueBucket(b).rank - dueBucket(a).rank)
       || ((b.status === 'review') - (a.status === 'review'))
       || ((a.status === 'hold') - (b.status === 'hold'))
-      || String(a.due_at || '9999').localeCompare(String(b.due_at || '9999'))
-      || String(b.updated_at).localeCompare(String(a.updated_at)));
+      // Finished jobs order by completion date, newest first (their due date is
+      // moot, so an edit that bumps updated_at can't reshuffle them). Everything
+      // else: soonest due, then most-recently-touched.
+      || (finished(a) && finished(b)
+            ? String(b.done_at || '').localeCompare(String(a.done_at || ''))
+            : String(a.due_at || '9999').localeCompare(String(b.due_at || '9999'))
+              || String(b.updated_at).localeCompare(String(a.updated_at))));
     const buckets = list.map(dueBucket);
     // Show dividers when there's more than one bucket, or a due filter is active.
     const showDividers = new Set(buckets.map((b) => b.key)).size > 1 || state.dueFilter !== 'all';
