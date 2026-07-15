@@ -41,6 +41,11 @@ function newId() {
 }
 
 const nowIso = () => new Date().toISOString();
+// Today's Melbourne calendar day (YYYY-MM-DD). toISOString() is always UTC, so
+// before ~10am local it would stamp yesterday. Pin the zone, matching invoices.js.
+const todayLocal = () => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date());
 
 async function init() {
   await ensureDir(JOBS_DIR);
@@ -55,7 +60,7 @@ function freshJob({ client_id = null, title = null } = {}) {
     status: 'open',
     created_at: now,
     updated_at: now,
-    due_at: null,          // when the work is due (YYYY-MM-DD); user-set, optional
+    due_at: todayLocal(),  // defaults to today so a new job lands in the 'today' bucket; user clears/edits it
     done_at: null,
     doing_started_at: null, // v1 work-clock: stamped while status === 'doing'
     work_seconds: 0,       // accrued by the active-work timer; hours derives from it
