@@ -85,15 +85,12 @@
 
   /* Pinned note — a hand-typed focus line or quote, pinned to the very top of
      the job list (above the scrolling cards, so it stays put). Deliberately
-     quiet — no border or fill, just a dim 📌 and muted italic text — so it
-     reads as a note, not a job card. One value, saved to global settings.
-     Hidden while the pane is flipped to invoices. */
+     quiet — no border, fill or icon, just muted italic text — so it reads as a
+     note, not a job card. One value, saved to global settings. Hidden while
+     the pane is flipped to invoices. */
   .focus-bar {
     display: flex; align-items: flex-start; gap: 8px; flex: 0 0 auto;
-    margin: 8px 12px 2px; padding: 4px 12px 4px 10px;
-  }
-  .focus-bar::before {
-    content: '📌'; flex: 0 0 auto; font-size: 13px; line-height: 1.5; opacity: .7;
+    margin: 8px 12px 2px; padding: 4px 12px 4px 12px;
   }
   .focus-input {
     flex: 1; min-width: 0; border: 0; background: none; padding: 1px 0;
