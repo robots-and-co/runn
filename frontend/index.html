@@ -83,24 +83,26 @@
   .list-head h1 { font-size: 17px; margin: 0; letter-spacing: -0.2px; }
   .job-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 
-  /* Focus / quote bar — a slim strip for a hand-typed focus line or quote.
-     Desktop (>720px): pinned to the very top of the chat pane. Mobile: under
-     the list header instead (the chat pane is an off-screen overlay there, so a
-     bar inside it would be unreachable from the home/list view). One value,
-     saved to global settings; both inputs mirror it. Hidden by default — each
-     breakpoint switches on the one bar it uses. */
+  /* Pinned note — a hand-typed focus line or quote, shown as a card pinned to
+     the very top of the job list (above the scrolling cards, so it stays put).
+     Styled deliberately UNLIKE a job card — dashed amber border, warm
+     note-paper fill and a 📌 — so it never reads as a real job. One value,
+     saved to global settings. Hidden while the pane is flipped to invoices. */
   .focus-bar {
-    display: none; align-items: center; gap: 8px; flex: 0 0 auto;
-    padding: 7px 16px; border-bottom: 1px solid var(--border);
-    background: var(--surface-2);
+    display: flex; align-items: flex-start; gap: 8px; flex: 0 0 auto;
+    margin: 10px 12px 4px; padding: 8px 12px 8px 10px;
+    background: #fdf8e8; border: 1px dashed #d8b94a; border-radius: 10px;
+  }
+  .focus-bar::before {
+    content: '📌'; flex: 0 0 auto; font-size: 13px; line-height: 1.5; opacity: .85;
   }
   .focus-input {
-    flex: 1; min-width: 0; border: 0; background: none; padding: 2px 0;
-    font: inherit; font-size: 13.5px; font-style: italic; line-height: 1.4;
-    color: var(--ink); text-align: center;
+    flex: 1; min-width: 0; border: 0; background: none; padding: 1px 0;
+    font: inherit; font-size: 13.5px; font-style: italic; line-height: 1.5;
+    color: #6b5a16; text-align: left;
     resize: none; overflow: hidden; display: block;   /* textarea: wrap + auto-grow via JS */
   }
-  .focus-input::placeholder { color: var(--muted); font-style: italic; }
+  .focus-input::placeholder { color: #b09a54; font-style: italic; }
   .focus-input:focus { outline: none; }
 
   .job-row {
@@ -372,6 +374,7 @@
   /* Left pane flips between jobs and invoices (toggled by the $ total) */
   .billing-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px; display: none; }
   body.show-invoices #jobList,
+  body.show-invoices .focus-bar,
   body.show-invoices .list-sub,
   body.show-invoices .list-search,
   body.show-invoices .list-foot { display: none; }
@@ -660,7 +663,6 @@
   @media (min-width: 721px) {
     .chat-head .ttl { flex: 0 1 auto; max-width: calc(50% - 96px); }
     .chat-head .ttl-input { max-width: calc(50% - 96px); }
-    .focus-bar-desktop { display: flex; }   /* top of the chat pane on desktop */
   }
 
   .turns { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 18px 16px; }
@@ -920,7 +922,6 @@
   @media (max-width: 720px) {
     :root { --list-w: 100%; }
     .list-pane { width: 100%; min-width: 0; border-right: 0; }
-    .focus-bar-mobile { display: flex; }   /* under the list header on mobile */
     .chat-pane { position: fixed; inset: 0; background: var(--bg);
       transform: translateX(100%); transition: transform 0.22s ease; z-index: 5; }
     body.show-chat .chat-pane { transform: translateX(0); }
@@ -1014,10 +1015,6 @@
           <span class="amt" id="valueTotal">0.00</span>
         </button>
       </div>
-      <div class="focus-bar focus-bar-mobile">
-        <textarea id="focusInputMobile" class="focus-input" rows="1" autocomplete="off"
-               placeholder="Focus or a quote…" aria-label="Focus or quote"></textarea>
-      </div>
       <div class="list-flip" id="listFlip">
         <div class="list-sub">
           <button class="filter-chip chip client pick" id="clientFilterChip" type="button" aria-label="Filter by client or project">All</button>
@@ -1026,6 +1023,10 @@
         </div>
         <div class="list-search">
           <input type="search" id="jobSearch" class="job-search-input" placeholder="Search jobs…" autocomplete="off" aria-label="Search jobs">
+        </div>
+        <div class="focus-bar">
+          <textarea id="focusInput" class="focus-input" rows="1" autocomplete="off"
+                 placeholder="Focus or a quote…" aria-label="Focus or quote"></textarea>
         </div>
         <div class="job-list" id="jobList"></div>
         <div class="billing-list" id="billingList"></div>
@@ -1037,10 +1038,6 @@
     </aside>
 
     <main class="chat-pane">
-      <div class="focus-bar focus-bar-desktop">
-        <textarea id="focusInputDesktop" class="focus-input" rows="1" autocomplete="off"
-               placeholder="Focus or a quote…" aria-label="Focus or quote"></textarea>
-      </div>
       <div class="chat-head">
         <button class="back" id="backBtn" aria-label="Back">‹</button>
         <span class="ttl" id="chatTitle" tabindex="0"></span>
@@ -3741,7 +3738,7 @@
   // One hand-typed line (focus or a quote), stored in global settings so it
   // persists across reloads and syncs to other devices on next load. The mobile
   // and desktop inputs mirror the same value.
-  const focusInputs = [$('focusInputMobile'), $('focusInputDesktop')].filter(Boolean);
+  const focusInputs = [$('focusInput')].filter(Boolean);
   // Auto-grow the textarea to fit its (wrapped) content. Skip hidden bars —
   // their scrollHeight is 0, which would collapse them; they re-grow on resize
   // once the breakpoint reveals them.
