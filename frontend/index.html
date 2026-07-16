@@ -145,18 +145,17 @@
   .job-row .meta .meta-due    { justify-self: center; }
   .job-row .meta .meta-status { justify-self: end; }
   /* Last-turn preview — the most recent thing said in the job, so a card reads
-     as "where's it at" without opening it. Italic + muted so it sits quietly
-     under the title/meta; clamped to two lines so a long turn can't stretch the
-     row. The "You:/AI:" tag is upright so you can see at a glance who's up. */
+     as "where's it at" without opening it. Italic + clamped to two lines so a
+     long turn can't stretch the row. No "You:/AI:" tag — instead the whole
+     snippet is colour-coded so you can tell who spoke last at a glance: my
+     turns and notes in a subtle blue, AI turns in a subtle orange. */
   .job-row .last-turn {
     font-size: 12px; line-height: 1.35; color: var(--muted); font-style: italic;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden; margin-top: 1px;
   }
-  .job-row .last-turn .who { font-style: normal; font-weight: 600; opacity: .75; }
-  /* A note left as the latest turn ("waiting on X") is a status flag — tint its
-     tag amber to match the note palette so it stands out from You:/AI:. */
-  .job-row .last-turn .who.is-note { color: #b8941f; opacity: 1; }
+  .job-row .last-turn.is-mine { color: #4f74a8; }   /* my turns + notes — subtle blue */
+  .job-row .last-turn.is-ai   { color: #b06b28; }   /* AI turns — subtle orange */
   /* Experiment: in-card client/status chips read as plain-ish text (no pill,
      lighter weight) so they sit quieter than the job title above them. The
      meaningful text colour is kept; only the loud background is dropped. */
@@ -1645,12 +1644,8 @@
     const lt = lastTurnPreview(j);
     if (lt) {
       const pv = document.createElement('div');
-      pv.className = 'last-turn';
-      const who = document.createElement('span');
-      who.className = 'who' + (lt.role === 'note' ? ' is-note' : '');
-      who.textContent = (lt.role === 'ai' ? 'AI: ' : lt.role === 'note' ? 'Note: ' : 'You: ');
-      pv.appendChild(who);
-      pv.appendChild(document.createTextNode(lt.text));
+      pv.className = 'last-turn ' + (lt.role === 'ai' ? 'is-ai' : 'is-mine');
+      pv.textContent = lt.text;
       row.appendChild(pv);
     }
 
