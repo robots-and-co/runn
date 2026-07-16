@@ -148,14 +148,15 @@
      as "where's it at" without opening it. Italic + clamped to two lines so a
      long turn can't stretch the row. No "You:/AI:" tag — instead the whole
      snippet is colour-coded so you can tell who spoke last at a glance: my
-     turns and notes in a subtle blue, AI turns in a subtle orange. */
+     turns and notes stay a quiet grey, while an AI turn is a strong blue so a
+     card the AI just finished stands out (the ball's in your court). */
   .job-row .last-turn {
     font-size: 12px; line-height: 1.35; color: var(--muted); font-style: italic;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden; margin-top: 1px;
   }
-  .job-row .last-turn.is-mine { color: #4f74a8; }   /* my turns + notes — subtle blue */
-  .job-row .last-turn.is-ai   { color: #b06b28; }   /* AI turns — subtle orange */
+  .job-row .last-turn.is-mine { color: #4d4d4d; }   /* my turns + notes — quiet grey */
+  .job-row .last-turn.is-ai   { color: #004280; }   /* AI turns — strong blue, highlighted */
   /* Experiment: in-card client/status chips read as plain-ish text (no pill,
      lighter weight) so they sit quieter than the job title above them. The
      meaningful text colour is kept; only the loud background is dropped. */
