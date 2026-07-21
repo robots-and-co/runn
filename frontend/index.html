@@ -848,6 +848,11 @@
     padding: 0 12px; font-size: 22px; line-height: 1;
   }
   .composer button.composer-more:hover:not(:disabled) { color: var(--ink); background: var(--border); }
+  /* Stop / stop-and-send — shown only while a turn is live. Red so it reads as an
+     interrupt; clicking with text in the box also hands that text over. */
+  .composer button.composer-stop { background: #d9534f; color: #fff; padding: 0 14px; white-space: nowrap; }
+  .composer button.composer-stop:hover:not(:disabled) { background: #c9302c; }
+  .composer button.composer-stop[hidden] { display: none; }
   .composer-attachments {
     display: flex; flex-wrap: wrap; gap: 6px;
     padding: 8px 12px 0; background: var(--surface);
@@ -1075,6 +1080,7 @@
         <!-- Phone-only: 📝 + 📎 collapse into this overflow so the input isn't squashed. -->
         <button type="button" id="composerMoreBtn" class="composer-more" title="More" aria-label="More actions">⋯</button>
         <textarea id="msgInput" rows="1" placeholder="Select a job, or start a new one." disabled></textarea>
+        <button type="button" id="stopBtn" class="composer-stop" hidden title="Stop the AI — sends your typed message too, if you've written one">⏹ Stop</button>
         <button type="submit" id="sendBtn" disabled>Send</button>
       </form>
     </main>
@@ -1129,6 +1135,7 @@
   const turnsEl = $('turns');
   const msgInput = $('msgInput');
   const sendBtn = $('sendBtn');
+  const stopBtn = $('stopBtn');
   const inviteAiBtn = $('inviteAiBtn');
   const noteToggle = $('noteToggle');
   const attachBtn = $('attachBtn');
@@ -2866,6 +2873,7 @@
   function setComposer(enabled, placeholder) {
     msgInput.disabled = !enabled;
     sendBtn.disabled = !enabled || state.sending;
+    if (!enabled) stopBtn.hidden = true;   // no open job → nothing to stop
     // Attachments ride only on real messages, never private notes — disable the
     // picker in note mode (and whenever the composer itself is disabled).
     attachBtn.disabled = !enabled || state.noteMode;
@@ -2995,6 +3003,8 @@
     // The invite gate: offer "+ AI" once the human has written something but
     // before they've handed the job over (no session yet). Hidden after invite.
     inviteAiBtn.hidden = !!j.session_id || !!j.ai_pending || turns.length === 0;
+    // ⏹ Stop is offered only while a turn is actually running (interruptible).
+    stopBtn.hidden = !(j.session_id && j.status === 'doing');
     if (!turns.length) {
       turnsEl.innerHTML = '<div class="empty">No messages yet.</div>';
       return;
@@ -3309,11 +3319,12 @@
   // job's id and any text after the command word. Add entries to grow the set.
   const COMMANDS = {
     stop: {
-      desc: 'Interrupt the AI mid-turn',
-      run: async (id) => {
+      desc: 'Stop the AI (type after it to stop & send)',
+      run: async (id, arg) => {
         if (!id || id === DRAFT) return toast('No job open', 'err');
-        const r = await postJson(`/jobs/${id}/interrupt`, {});
-        if (r.ok) toast('Stopped the AI');
+        const body = arg && arg.trim() ? { text: arg.trim() } : {};
+        const r = await postJson(`/jobs/${id}/interrupt`, body);
+        if (r.ok) toast(body.text ? 'Stopped — sending your message' : 'Stopped the AI');
         else toast(r.reason === 'not_running' ? 'Nothing is running' : 'Could not stop', 'err');
       },
     },
@@ -4002,6 +4013,32 @@
   $('composer').addEventListener('submit', (e) => { e.preventDefault(); sendCurrent(); });
   inviteAiBtn.addEventListener('click', inviteAi);
   noteToggle.addEventListener('click', () => { setNoteMode(!state.noteMode); if (!isMobile()) msgInput.focus(); });
+  // ⏹ Stop — interrupt the live turn. If the composer holds a message (text
+  // and/or files), hand it over in the same move (stop-and-send); otherwise it's
+  // a bare stop. Note mode never sends — a stop-and-send is always a real message.
+  stopBtn.addEventListener('click', async () => {
+    const id = state.currentId;
+    if (!id || id === DRAFT) return;
+    const text = msgInput.value.trim();
+    const attachments = state.noteMode ? [] : state.pendingAttachments.map(({ name, mime, data }) => ({ name, mime, data }));
+    const body = {};
+    if (text) body.text = text;
+    if (attachments.length) body.attachments = attachments;
+    const hadMsg = !!(text || attachments.length);
+    stopBtn.disabled = true;
+    try {
+      const r = await postJson(`/jobs/${id}/interrupt`, body);
+      if (r.ok) {
+        toast(hadMsg ? 'Stopped — sending your message' : 'Stopped the AI');
+        // Only clear the composer once the send is safely accepted, so nothing is
+        // lost if the stop didn't land.
+        if (hadMsg) { msgInput.value = ''; autoGrow(); if (attachments.length) clearPendingAttachments(); }
+      } else {
+        toast(r.reason === 'not_running' ? 'Nothing is running' : 'Could not stop', 'err');
+      }
+    } catch (e) { console.error('stop failed', e); toast('Could not stop', 'err'); }
+    finally { stopBtn.disabled = false; }
+  });
   msgInput.addEventListener('input', () => { autoGrow(); syncPalette(); });
   msgInput.addEventListener('keydown', (e) => {
     // Command palette steals the navigation keys while it's open.

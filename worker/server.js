@@ -235,6 +235,16 @@ function handleJobExit(jobId, code) {
   enqueueJobOp(jobId, async () => {
     try { await ingestSession(jobId, null); }
     catch (err) { console.error('[runn] handleJobExit ingest', jobId, err); }
+    // A follow-up turn — one the user queued while this turn ran, or handed over
+    // via stop-and-send (!stop / the ⏹ button with a message) — may have already
+    // re-claimed this session and started running during the dying child's
+    // releaseCwd. Don't bounce the job through `review` in that gap; the new turn
+    // owns the status now and settles it on its own exit.
+    const job = await jobs.readJobOr(jobId);
+    if (job && job.session_id && bridge.isSessionLive(job.session_id)) {
+      interruptedJobs.delete(jobId);
+      return;
+    }
     const interrupted = interruptedJobs.delete(jobId);
     await jobs.patchJob(jobId, { status: (interrupted || code === 0) ? 'review' : 'blocked' });
   });
@@ -750,21 +760,63 @@ const server = http.createServer(async (req, res) => {
       const job = await runJobOp(id, () => (action === 'start' ? jobs.startClock(id) : jobs.stopClock(id)));
       return sendJson(res, 200, job);
     }
-    // !stop — interrupt the live AI turn for a job. Mark it interrupted (so the
-    // killed child's exit reads as `review`, not a crash), drop any buffered
-    // follow-ups, then signal the running claude child's process group.
+    // !stop / ⏹ — interrupt the live AI turn. The body MAY carry a follow-up
+    // ({ text, attachments }) for "stop and send": we record it as a user turn
+    // and queue it to fire the instant the killed turn's working tree frees, so
+    // cutting off a tangent and handing over new info is one move that can't drop
+    // the message. Any turns already buffered behind this one are kept (they're
+    // the user's messages too) and run in order. Mark the job interrupted so the
+    // killed child's non-zero (signal) exit reads as `review`, not a crash.
     if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/interrupt$/))) {
       const id = mm[1];
+      const body = await readBody(req).catch(() => ({}));
       const job = await jobs.readJobOr(id);
       if (!job) return notFound(res);
       if (!job.session_id || !bridge.isSessionLive(job.session_id)) {
         return sendJson(res, 200, { ok: false, reason: 'not_running' });
       }
+      const hasAttachments = Array.isArray(body.attachments) && body.attachments.length > 0;
+      const followText = typeof body.text === 'string' ? body.text : '';
+      const hasFollowup = !!followText.trim() || hasAttachments;
+      let followParams = null;
+      if (hasFollowup) {
+        let saved = [];
+        if (hasAttachments) {
+          try { saved = await saveAttachments(id, body.attachments); }
+          catch (e) { return badReq(res, e.message); }
+        }
+        const meta = saved.map(({ absPath, ...rest }) => rest);
+        // Record now so it's visible + persisted even though the send is deferred
+        // until the killed turn releases the working tree.
+        try { await runJobOp(id, () => jobs.appendTurn(id, { role: 'user', text: followText, attachments: meta })); }
+        catch (e) { return badReq(res, e.message); }
+        const location = await resolveLocation(job);
+        const token = tokenForJob(id, location.cwd);
+        followParams = {
+          text: buildPromptWithAttachments(followText, saved),
+          location, permissionToken: token, permissionMode: 'default',
+          onExit: (code) => handleJobExit(id, code), holder: 'job:' + id,
+          onStart: () => { runJobOp(id, () => jobs.patchJob(id, { status: 'doing', ai_pending: false })).catch(() => {}); },
+          onError: () => { runJobOp(id, () => jobs.patchJob(id, { ai_pending: false })).catch(() => {}); },
+        };
+      }
       interruptedJobs.add(id);
-      const dropped = bridge.clearPending(job.session_id);
+      // Deliberately DON'T clear the pending buffer — those are the user's own
+      // queued turns. Our follow-up (if any) enqueues behind them; on the killed
+      // turn's cwd-release, dispatchPendingForCwd fires them in order.
+      if (followParams) {
+        bridge.enqueueMessage(job.session_id, followParams);
+        await runJobOp(id, () => jobs.patchJob(id, { ai_pending: true }));   // "waiting", not "review"
+      }
       const result = bridge.killSession(job.session_id);
-      if (!result.ok) interruptedJobs.delete(id);   // nothing signalled; don't mask a real exit
-      return sendJson(res, 200, { ...result, dropped });
+      if (!result.ok) {
+        // Nothing was signalled — the turn is still running. Don't mask its real
+        // exit; any enqueued follow-up simply degrades into a normal
+        // type-while-running turn that fires when this turn ends on its own.
+        interruptedJobs.delete(id);
+        if (followParams) await runJobOp(id, () => jobs.patchJob(id, { ai_pending: false })).catch(() => {});
+      }
+      return sendJson(res, 200, { ...result, followup: hasFollowup });
     }
     if (m === 'POST' && (mm = url.pathname.match(/^\/jobs\/([^/]+)\/invite-ai$/))) {
       const id = mm[1];
