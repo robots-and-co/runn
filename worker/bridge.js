@@ -349,18 +349,25 @@ function nextClock(h, m) {
   return d.getTime();
 }
 
+// The wordings Claude Code actually emits when the allowance runs out. The
+// current CLI (v2.1.x) prints, as an assistant line:
+//   "You've hit your session limit · resets 10:40pm (Australia/Melbourne)"
+// Older/other builds have said "usage limit reached" / "rate limit reached".
+const LIMIT_PHRASE = /hit your (?:session|usage|account|weekly) limit|session limit|usage limit|rate limit|limit reached|Claude AI usage limit/i;
+
 function parseUsageLimit(text) {
   const s = String(text || '');
-  if (!s) return null;
-  // 1) Machine form: "…usage limit reached|<epoch>" (seconds or ms).
-  let m = /usage limit reached\s*\|\s*(\d{9,13})/i.exec(s);
+  if (!s || !LIMIT_PHRASE.test(s)) return null;
+  // 1) Machine form some builds emit: "…limit reached|<epoch>" (seconds or ms).
+  let m = /limit(?:\s+reached)?\s*\|\s*(\d{9,13})/i.exec(s);
   if (m) {
     const n = Number(m[1]);
     return { resetAt: n < 1e11 ? n * 1000 : n };
   }
-  // 2) Human phrasing: "…will reset at 3pm" / "resets 3:30pm" / "reset at 15:00".
+  // 2) A clock time in the notice: "resets 10:40pm" / "will reset at 3pm" /
+  //    "resets at 15:00". Times are read as the server's local zone (Melbourne).
   m = /(?:will\s+reset|resets?)\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(s);
-  if (m && /usage limit|rate limit|limit reached/i.test(s)) {
+  if (m) {
     let h = Number(m[1]);
     const min = m[2] ? Number(m[2]) : 0;
     const ap = m[3] && m[3].toLowerCase();
@@ -368,11 +375,8 @@ function parseUsageLimit(text) {
     if (ap === 'am' && h === 12) h = 0;
     if (h <= 23 && min <= 59) return { resetAt: nextClock(h, min) };
   }
-  // 3) Limit clearly hit, but no time we can read.
-  if (/usage limit reached|rate limit reached|Claude AI usage limit/i.test(s)) {
-    return { resetAt: null };
-  }
-  return null;
+  // Limit hit, but no time we can read → the caller polls until it clears.
+  return { resetAt: null };
 }
 
 // A bounded rolling buffer over a child's stdout/stderr so we keep only the

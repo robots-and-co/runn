@@ -24,10 +24,18 @@ function parserChecks() {
   r = parseUsageLimit(`usage limit reached | ${epochMs}`);
   assert.ok(r && r.resetAt === epochMs, 'ms-epoch passes through');
 
+  // The EXACT wording the installed CLI emits when the session allowance runs out.
+  r = parseUsageLimit("You've hit your session limit · resets 10:40pm (Australia/Melbourne)");
+  assert.ok(r && typeof r.resetAt === 'number', 'real "session limit · resets 10:40pm" gives a time');
+  let d = new Date(r.resetAt);
+  assert.strictEqual(d.getHours(), 22, '10:40pm → 22:xx local');
+  assert.strictEqual(d.getMinutes(), 40, '…:40');
+  assert.ok(r.resetAt > Date.now(), 'reset time is in the future');
+
   // Human phrasing → a clock time on today/tomorrow.
   r = parseUsageLimit('Claude usage limit reached. Your limit will reset at 3pm (Australia/Melbourne).');
   assert.ok(r && typeof r.resetAt === 'number', '"reset at 3pm" gives a time');
-  const d = new Date(r.resetAt);
+  d = new Date(r.resetAt);
   assert.strictEqual(d.getHours(), 15, '3pm → 15:00 local');
   assert.strictEqual(d.getMinutes(), 0);
   assert.ok(r.resetAt > Date.now(), 'reset time is in the future');
@@ -44,9 +52,11 @@ function parserChecks() {
   r = parseUsageLimit('Claude AI usage limit reached — check plan');
   assert.ok(r && r.resetAt === null, 'real CLI "usage limit reached — check plan" is detected');
 
-  // A normal reply that merely mentions the words is NOT a limit (no "reached").
-  assert.strictEqual(parseUsageLimit('I checked your usage limit settings for you.'), null,
-    'incidental mention is not a limit');
+  // parseUsageLimit is intentionally permissive on WORDING — an incidental
+  // mention still matches the phrase. limitFromExit (gateChecks below) is what
+  // decides a REAL limit, by requiring the turn to have actually failed.
+  assert.ok(parseUsageLimit('I checked your usage limit for you.'),
+    'phrase match is permissive by design (the gate filters it)');
 
   // Empty / junk.
   assert.strictEqual(parseUsageLimit(''), null);
