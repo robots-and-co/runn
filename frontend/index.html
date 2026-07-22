@@ -3236,25 +3236,27 @@
   }
 
   // ── Claude usage strip ──────────────────────────
-  // A live, self-calibrating estimate of how much of the rolling 5-hour Claude
-  // allowance is spent (maths in worker/usage-meter.js). Fed by GET /usage on
-  // load and usage.updated over the WebSocket. Hidden when nothing's been spent
-  // in the current window, or before we have a ceiling to divide by.
+  // The real 5-hour Claude usage, straight from Anthropic (the same numbers the
+  // `/usage` command shows in the terminal — served by GET /usage, refreshed over
+  // the WebSocket). Hidden on a fresh/empty window, or when the reading isn't
+  // available (no token / offline). The weekly figure rides along in the tooltip.
   function applyUsage(u) {
     const strip = $('usageStrip');
     if (!strip) return;
-    if (!u || !u.active || !(u.ceilingCost > 0)) { strip.hidden = true; return; }
+    if (!u || !u.ok || !u.active) { strip.hidden = true; return; }
     const pct = Math.max(0, Math.min(100, Number(u.pct) || 0));
     $('usageStripFill').style.width = pct + '%';
     strip.classList.toggle('mid', pct >= 60 && pct < 85);
     strip.classList.toggle('high', pct >= 85);
-    const reset = u.resetAt ? new Date(u.resetAt) : null;
-    const resetTxt = reset ? reset.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+    const clock = (iso) => { const d = iso ? new Date(iso) : null; return d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; };
+    const day = (iso) => { const d = iso ? new Date(iso) : null; return d ? d.toLocaleDateString([], { weekday: 'short' }) : ''; };
+    const resetTxt = clock(u.resetAt);
     $('usageStripLabel').textContent = `Claude ${pct}%` + (resetTxt ? ` · resets ${resetTxt}` : '');
-    strip.title = 'Estimated share of your 5-hour Claude allowance used'
-      + `\n≈ $${u.usedCost} of $${u.ceilingCost} `
-      + (u.calibrated ? '(calibrated to a real limit)' : '(vs your busiest-ever 5h window)')
-      + (resetTxt ? `\nResets around ${resetTxt}` : '');
+    const wk = Number(u.weeklyPct);
+    const wkReset = u.weeklyResetAt ? `${day(u.weeklyResetAt)} ${clock(u.weeklyResetAt)}`.trim() : '';
+    strip.title = 'Your real Claude usage, from Anthropic'
+      + `\n5-hour session: ${pct}%` + (resetTxt ? ` (resets ${resetTxt})` : '')
+      + (Number.isFinite(wk) ? `\nThis week: ${wk}%` + (wkReset ? ` (resets ${wkReset})` : '') : '');
     strip.hidden = false;
   }
 

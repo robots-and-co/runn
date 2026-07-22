@@ -27,7 +27,7 @@ const jobs = require('./jobs');
 const invoices = require('./invoices');
 const bridge = require('./bridge');
 const scheduler = require('./scheduler');
-const usageMeter = require('./usage-meter');
+const usage = require('./usage');
 
 // ── Config ───────────────────────────────────────────────────
 const CLIENTS_DIR = path.join(DATA_ROOT, 'clients');
@@ -60,11 +60,6 @@ const DEFAULT_SETTINGS = {
   bank: { bank: '', name: '', bsb: '', acc: '' },
   // Default workspace slug for jobs with no client (personal work).
   personal_workspace: 'waz',
-  // Self-calibrated ceiling (weighted-cost estimate) for the Claude usage gauge:
-  // the block cost measured the last time a real usage limit was hit. null until
-  // we've seen one — the gauge falls back to the busiest-ever window. See
-  // usage-meter.js + parkForUsageLimit.
-  usage_ceiling_cost: null,
 };
 
 // ── AI engine (RUNN_PLAN: spawn/resume Claude per job turn) ───
@@ -296,20 +291,6 @@ async function parkForUsageLimit(job, limit) {
     await appendSystemNote(job.id, known
       ? `⏸ Claude’s usage limit was reached, so this job is paused. It will start again on its own around ${friendlyTime(resetAt)}.`
       : '⏸ Claude’s usage limit was reached, so this job is paused. I’ll keep checking and start it again automatically as soon as your allowance is back.');
-    // Self-calibrate the usage gauge: hitting the limit means THIS window's
-    // measured cost ≈ the true ceiling. Keep the largest we've seen so the gauge
-    // divides by reality instead of the busiest-ever guess. Best-effort only.
-    try {
-      const measured = await usageMeter.currentBlockCost(SESSIONS_ROOT);
-      if (measured > 0) {
-        const s = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
-        const next = Math.max(Number(s.usage_ceiling_cost) || 0, measured);
-        if (next !== Number(s.usage_ceiling_cost)) {
-          await atomicWriteJson(SETTINGS_PATH, { ...s, usage_ceiling_cost: next });
-          console.log(`[runn] usage gauge calibrated to $${next.toFixed(2)} (limit hit)`);
-        }
-      }
-    } catch (err) { console.error('[runn] usage calibration failed', err); }
   }
   const patched = await jobs.patchJob(job.id, {
     status: 'blocked', resume_at: new Date(resetAt).toISOString(), resume_attempts: attempts,
@@ -1194,22 +1175,11 @@ sessionsWatcher.on('add', onSessionEvent);
 sessionsWatcher.on('change', onSessionEvent);
 
 // ── Claude usage gauge ───────────────────────────────────────
-// A near-live estimate of how much of the account's rolling 5-hour Claude
-// allowance is spent. usage-meter.js does the maths over the transcripts; here
-// we cache the uncalibrated ceiling (busiest-ever window — a slow full scan),
-// serve GET /usage, and push usage.updated whenever any transcript changes. The
-// TRUE ceiling is learned when a real limit is hit (see parkForUsageLimit).
-let usageHistoricalCeiling = 0;
-async function refreshUsageCeiling() {
-  try { usageHistoricalCeiling = await usageMeter.historicalMaxBlockCost(SESSIONS_ROOT); }
-  catch (err) { console.error('[runn] usage ceiling scan failed', err); }
-}
-async function usageSnapshot() {
-  const s = await readJsonOr(SETTINGS_PATH, DEFAULT_SETTINGS);
-  const calibrated = Number(s.usage_ceiling_cost) > 0;
-  const ceiling = calibrated ? Number(s.usage_ceiling_cost) : usageHistoricalCeiling;
-  return usageMeter.snapshot(SESSIONS_ROOT, { ceiling, calibrated });
-}
+// The real 5-hour and weekly usage, pulled straight from Anthropic's usage
+// endpoint (the same numbers the `/usage` command shows in the terminal). See
+// worker/usage.js. We serve GET /usage, push usage.updated whenever a transcript
+// changes (so a finished turn nudges the gauge), and poll on a slow timer at boot.
+const usageSnapshot = () => usage.snapshot();
 // Coalesce a burst of transcript writes into at most one broadcast per ~2s so a
 // chatty turn doesn't spam every browser.
 let usageBroadcastTimer = null;
@@ -1265,11 +1235,13 @@ function scheduleUsageBroadcast() {
   // Re-arm auto-resume timers for any job parked on a usage limit. A reset time
   // that already passed while the worker was down fires ~immediately.
   await scheduler.start(schedulerDeps);
-  // Warm the usage-gauge ceiling (busiest-ever 5h window — a full transcript
-  // scan) and refresh it hourly so a new record raises the uncalibrated bar.
-  await refreshUsageCeiling();
-  const usageCeilingTimer = setInterval(refreshUsageCeiling, 60 * 60 * 1000);
-  if (usageCeilingTimer.unref) usageCeilingTimer.unref();
+  // Poll the real Claude usage endpoint on a slow timer so the gauge keeps moving
+  // even when nothing's writing transcripts, and push each refresh to the browsers.
+  const usagePoll = setInterval(async () => {
+    try { broadcast({ type: 'usage.updated', usage: await usage.snapshot({ force: true }) }); }
+    catch (err) { console.error('[runn] usage poll failed', err); }
+  }, 60 * 1000);
+  if (usagePoll.unref) usagePoll.unref();
   server.listen(PORT, HOST, () => {
     const urls = [`http://localhost:${PORT}`];
     for (const ifaces of Object.values(os.networkInterfaces())) {
