@@ -325,6 +325,27 @@
   .list-sub #clientFilterChip { justify-self: start; min-width: 0; }
   .list-sub #dueFilterChip    { justify-self: center; }
   .list-sub #statusFilterChip { justify-self: end; }
+  /* Claude usage strip — a thin live gauge of the 5-hour allowance, sitting just
+     above the filter row. Colour shifts green→amber→red as it fills. */
+  .usage-strip {
+    display: flex; align-items: center; gap: 8px; cursor: default;
+    padding: 5px 16px 4px; background: var(--surface);
+  }
+  .usage-strip[hidden] { display: none; }
+  .usage-strip .bar {
+    flex: 1; height: 4px; border-radius: 3px; background: var(--surface-2); overflow: hidden;
+  }
+  .usage-strip .fill {
+    height: 100%; width: 0; border-radius: 3px; background: #6f9a5e;
+    transition: width .4s ease, background-color .4s ease;
+  }
+  .usage-strip.mid  .fill { background: var(--accent); }
+  .usage-strip.high .fill { background: #b23b2e; }
+  .usage-strip .lbl {
+    font-size: 10px; color: var(--muted); white-space: nowrap;
+    font-variant-numeric: tabular-nums; letter-spacing: .02em;
+  }
+  .usage-strip.high .lbl { color: #b23b2e; }
   /* Search bar — sits directly under the filter chips, narrows the list live. */
   .list-search {
     padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--surface);
@@ -1017,6 +1038,10 @@
         </button>
       </div>
       <div class="list-flip" id="listFlip">
+        <div class="usage-strip" id="usageStrip" hidden title="">
+          <span class="bar"><span class="fill" id="usageStripFill"></span></span>
+          <span class="lbl" id="usageStripLabel"></span>
+        </div>
         <div class="list-sub">
           <button class="filter-chip chip client pick" id="clientFilterChip" type="button" aria-label="Filter by client or project">All</button>
           <button class="filter-chip chip pick due-filter" id="dueFilterChip" type="button" aria-label="Filter by due date">Any</button>
@@ -3192,12 +3217,13 @@
   // ── Data load ───────────────────────────────────
   async function load() {
     try {
-      const [jobs, clients, invoices, settings, perms] = await Promise.all([
+      const [jobs, clients, invoices, settings, perms, usage] = await Promise.all([
         fetch('/jobs').then((r) => r.json()),
         fetch('/clients').then((r) => r.json()),
         fetch('/invoices').then((r) => r.json()),
         fetch('/settings').then((r) => r.json()),
         fetch('/permissions/pending').then((r) => r.json()).catch(() => []),
+        fetch('/usage').then((r) => r.json()).catch(() => null),
       ]);
       for (const c of clients) state.clients.set(c.id, c);
       for (const j of jobs) state.jobs.set(j.id, j);
@@ -3213,9 +3239,33 @@
       renderList();
       renderChat();
       renderPermissions();
+      applyUsage(usage);
     } catch (e) {
       console.error('load failed', e);
     }
+  }
+
+  // ── Claude usage strip ──────────────────────────
+  // A live, self-calibrating estimate of how much of the rolling 5-hour Claude
+  // allowance is spent (maths in worker/usage-meter.js). Fed by GET /usage on
+  // load and usage.updated over the WebSocket. Hidden when nothing's been spent
+  // in the current window, or before we have a ceiling to divide by.
+  function applyUsage(u) {
+    const strip = $('usageStrip');
+    if (!strip) return;
+    if (!u || !u.active || !(u.ceilingCost > 0)) { strip.hidden = true; return; }
+    const pct = Math.max(0, Math.min(100, Number(u.pct) || 0));
+    $('usageStripFill').style.width = pct + '%';
+    strip.classList.toggle('mid', pct >= 60 && pct < 85);
+    strip.classList.toggle('high', pct >= 85);
+    const reset = u.resetAt ? new Date(u.resetAt) : null;
+    const resetTxt = reset ? reset.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+    $('usageStripLabel').textContent = `Claude ${pct}%` + (resetTxt ? ` · resets ${resetTxt}` : '');
+    strip.title = 'Estimated share of your 5-hour Claude allowance used'
+      + `\n≈ $${u.usedCost} of $${u.ceilingCost} `
+      + (u.calibrated ? '(calibrated to a real limit)' : '(vs your busiest-ever 5h window)')
+      + (resetTxt ? `\nResets around ${resetTxt}` : '');
+    strip.hidden = false;
   }
 
   // ── WebSocket live updates ──────────────────────
@@ -3256,6 +3306,8 @@
         state.invoices.delete(m.invoice.id);
         if (state.billingSel && state.billingSel.kind === 'invoice' && state.billingSel.id === m.invoice.id) state.billingSel = null;
         maybeRenderBilling();
+      } else if (m.type === 'usage.updated') {
+        applyUsage(m.usage);
       } else if (m.type === 'permission.requested') {
         pendingPerms.set(m.request_id, { request_id: m.request_id, job_id: m.job_id, tool_name: m.tool_name, input: m.input });
         const nearBottom = turnsEl.scrollHeight - turnsEl.scrollTop - turnsEl.clientHeight < 80;
