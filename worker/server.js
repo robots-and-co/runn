@@ -268,8 +268,10 @@ function handleJobExit(jobId, code, info) {
 // it), we poll gently until the allowance returns. Either way it resumes on its
 // own. A generous safety cap stops a persistently-failing job retrying forever.
 // Runs inside the job's serial op.
-const MAX_AUTO_RESUMES = 12;
-const BLIND_RETRY_MS = 30 * 60_000;   // no reset time given → re-check every 30 min
+// Blind poll every 5 min; the cap keeps that up for ~6h (a full reset window)
+// before giving up and asking the human.
+const BLIND_RETRY_MS = 5 * 60_000;
+const MAX_AUTO_RESUMES = 72;
 async function parkForUsageLimit(job, limit) {
   const attempts = (job.resume_attempts || 0) + 1;
   if (attempts > MAX_AUTO_RESUMES) {
@@ -282,9 +284,13 @@ async function parkForUsageLimit(job, limit) {
   // Wait a minute PAST the stated reset so we don't re-hit the limit at the edge;
   // otherwise poll on a fixed interval.
   const resetAt = known ? limit.resetAt + 60_000 : Date.now() + BLIND_RETRY_MS;
-  await appendSystemNote(job.id, known
-    ? `⏸ Claude’s usage limit was reached, so this job is paused. It will start again on its own around ${friendlyTime(resetAt)}.`
-    : '⏸ Claude’s usage limit was reached, so this job is paused. I’ll keep checking and start it again automatically as soon as your allowance is back.');
+  // Announce the pause ONCE, on the first park. Later re-checks just re-arm the
+  // timer silently, so a short poll interval doesn't fill the thread with notes.
+  if (attempts === 1) {
+    await appendSystemNote(job.id, known
+      ? `⏸ Claude’s usage limit was reached, so this job is paused. It will start again on its own around ${friendlyTime(resetAt)}.`
+      : '⏸ Claude’s usage limit was reached, so this job is paused. I’ll keep checking and start it again automatically as soon as your allowance is back.');
+  }
   const patched = await jobs.patchJob(job.id, {
     status: 'blocked', resume_at: new Date(resetAt).toISOString(), resume_attempts: attempts,
   });
@@ -303,7 +309,9 @@ async function resumeAfterLimit(jobId) {
     const userTurns = (job.turns || []).filter((t) => t.role === 'user');
     const text = userTurns.length ? userTurns[userTurns.length - 1].text : 'Please continue.';
     await jobs.patchJob(jobId, { resume_at: null });     // clear so a fresh hit can re-park
-    await appendSystemNote(jobId, '▶ Your allowance should be back now — starting this job again.');
+    // No note here — each re-check is silent so a 5-min poll can't clutter the
+    // thread. If the allowance is back, Claude's real reply is the signal it
+    // resumed; if not, parkForUsageLimit re-arms without adding anything.
     return { job: await jobs.readJob(jobId), text };
   });
   if (!prep) return;
