@@ -332,6 +332,71 @@ function attachmentsMarker(attachments) {
   return `<RUNN-ATTACHMENTS>\n${lines}\n</RUNN-ATTACHMENTS>`;
 }
 
+// ── Usage-limit detection ───────────────────────────────────
+// When the account's Claude allowance runs out mid-turn, the CLI exits and
+// prints a "usage limit reached" notice. In headless mode it often carries a
+// machine-readable reset time; sometimes only a human "resets at 3pm". We sniff
+// the child's output tail (see makeTail) on exit so the worker can PARK the job
+// and resume it automatically at reset, rather than marking it a plain crash.
+//
+// Returns { resetAt } where resetAt is epoch-ms (or null if a limit was hit but
+// no reset time could be read), or null when the output is not a usage limit.
+function nextClock(h, m) {
+  const d = new Date();
+  d.setSeconds(0, 0);
+  d.setHours(h, m, 0, 0);
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1); // already past today → tomorrow
+  return d.getTime();
+}
+
+function parseUsageLimit(text) {
+  const s = String(text || '');
+  if (!s) return null;
+  // 1) Machine form: "…usage limit reached|<epoch>" (seconds or ms).
+  let m = /usage limit reached\s*\|\s*(\d{9,13})/i.exec(s);
+  if (m) {
+    const n = Number(m[1]);
+    return { resetAt: n < 1e11 ? n * 1000 : n };
+  }
+  // 2) Human phrasing: "…will reset at 3pm" / "resets 3:30pm" / "reset at 15:00".
+  m = /(?:will\s+reset|resets?)\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(s);
+  if (m && /usage limit|rate limit|limit reached/i.test(s)) {
+    let h = Number(m[1]);
+    const min = m[2] ? Number(m[2]) : 0;
+    const ap = m[3] && m[3].toLowerCase();
+    if (ap === 'pm' && h < 12) h += 12;
+    if (ap === 'am' && h === 12) h = 0;
+    if (h <= 23 && min <= 59) return { resetAt: nextClock(h, min) };
+  }
+  // 3) Limit clearly hit, but no time we can read.
+  if (/usage limit reached|rate limit reached|Claude AI usage limit/i.test(s)) {
+    return { resetAt: null };
+  }
+  return null;
+}
+
+// A bounded rolling buffer over a child's stdout/stderr so we keep only the
+// tail (where the final result / limit notice lands) without growing unbounded.
+function makeTail(limit = 16384) {
+  let buf = '';
+  return {
+    push(s) { buf += s; if (buf.length > limit) buf = buf.slice(buf.length - limit); },
+    get() { return buf; },
+  };
+}
+
+// Given an exit code + captured output, decide if this was a usage-limit exit.
+// A real limit FAILS the turn — the process exits non-zero, or the stream-json
+// carries an error result (`"is_error":true`). On a clean, non-error exit a
+// limit-looking phrase is just content in Claude's reply, so we ignore it (a job
+// that merely discusses usage limits must not be parked).
+function limitFromExit(code, tailText) {
+  const limit = parseUsageLimit(tailText);
+  if (!limit) return null;
+  const errored = code !== 0 || /"is_error"\s*:\s*true/.test(String(tailText || ''));
+  return errored ? limit : null;
+}
+
 function spawnSession({ title, notes, location, permissionToken, permissionMode, systemPromptAppend, onExit, holder, attachments }) {
   location = location || DEFAULT_LOCATION;
   if (location.type === 'ssh') {
@@ -395,6 +460,9 @@ function spawnSession({ title, notes, location, permissionToken, permissionMode,
     // session_id isn't known until the init event; capture it here so both the
     // registry (for interrupts) and the exit cleanup can key off it.
     let mySessionId = null;
+    // Keep the tail of stdout/stderr so the exit handler can spot a usage-limit
+    // notice (parseUsageLimit) and hand the reset time to the caller.
+    const tail = makeTail();
 
     // Attach exit listener BEFORE unref so it still fires while the worker is alive.
     // Release the cwd lock on exit so the next sibling / project / message can spawn.
@@ -402,23 +470,25 @@ function spawnSession({ title, notes, location, permissionToken, permissionMode,
       unregisterChild(mySessionId, child);
       releaseCwd(cwd);
       if (typeof onExit === 'function') {
-        try { onExit(code); } catch (err) { console.error('[bridge] onExit threw', err); }
+        try { onExit(code, { limit: limitFromExit(code, tail.get()), output: tail.get() }); }
+        catch (err) { console.error('[bridge] onExit threw', err); }
       }
     });
 
     let resolved = false;
     const rl = readline.createInterface({ input: child.stdout });
 
+    // One persistent line reader: it detects the init event, then keeps draining
+    // every line into the tail buffer. Draining via readline (rather than dropping
+    // the listener and adding a raw 'data' handler) means a usage-limit notice at
+    // the very end is always captured, no matter how the OS chunked the stream.
     rl.on('line', (line) => {
+      tail.push(line + '\n');
       if (resolved) return;
       try {
         const ev = JSON.parse(line);
         if (ev.type === 'system' && ev.subtype === 'init' && ev.session_id) {
           resolved = true;
-          rl.removeAllListeners('line');
-          // Drain stdout/stderr so the child doesn't block on full pipe buffers.
-          child.stdout.on('data', () => {});
-          child.stderr.on('data', () => {});
           child.unref();
           const resolvedCwd = ev.cwd || cwd;
           // Hold the handle so an interrupt can reach this child by session_id.
@@ -441,7 +511,9 @@ function spawnSession({ title, notes, location, permissionToken, permissionMode,
     });
 
     child.stderr.on('data', (chunk) => {
-      if (!resolved) console.error('[bridge stderr]', chunk.toString().slice(0, 500));
+      const s = chunk.toString();
+      tail.push(s);
+      if (!resolved) console.error('[bridge stderr]', s.slice(0, 500));
     });
 
     setTimeout(() => {
@@ -501,12 +573,16 @@ function sendMessage({ sessionId, text, location, permissionToken, permissionMod
     // Hold the handle so an interrupt can reach this child by session_id.
     registerChild(sessionId, child, holder || `sendMessage:${sessionId.slice(0,8)}`, cwd);
 
+    // Keep the tail so a usage-limit notice on this resume turn is caught too.
+    const tail = makeTail();
+
     // Release the cwd lock + fire caller's onExit when the --resume claude exits.
     child.on('exit', (code) => {
       unregisterChild(sessionId, child);
       releaseCwd(cwd);
       if (typeof onExit === 'function') {
-        try { onExit(code); } catch (err) { console.error('[bridge] sendMessage onExit threw', err); }
+        try { onExit(code, { limit: limitFromExit(code, tail.get()), output: tail.get() }); }
+        catch (err) { console.error('[bridge] sendMessage onExit threw', err); }
       }
     });
 
@@ -514,22 +590,22 @@ function sendMessage({ sessionId, text, location, permissionToken, permissionMod
     const rl = readline.createInterface({ input: child.stdout });
     let stderrBuf = '';
 
+    // Persistent line reader — see spawnSession: keeps tailing after init so a
+    // usage-limit notice on this resume turn is captured whatever the chunking.
     rl.on('line', (line) => {
+      tail.push(line + '\n');
       if (resolved) return;
       try {
         const ev = JSON.parse(line);
         if (ev.type === 'system' && ev.subtype === 'init') {
           resolved = true;
-          rl.removeAllListeners('line');
-          child.stdout.on('data', () => {});
-          child.stderr.on('data', () => {});
           child.unref();
           resolve({ ok: true });
         }
       } catch { /* skip */ }
     });
 
-    child.stderr.on('data', (chunk) => { stderrBuf += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { const s = chunk.toString(); stderrBuf += s; tail.push(s); });
     child.on('error', (err) => {
       if (resolved) return;
       resolved = true;
@@ -571,4 +647,6 @@ module.exports = {
   clientForCwd,
   ensureMcpConfig,
   mcpConfigPathFor,
+  parseUsageLimit,
+  limitFromExit,
 };

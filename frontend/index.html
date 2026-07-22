@@ -1667,10 +1667,11 @@
   }
 
   // What the status chip should SAY. A job buffered behind another chat in the
-  // same working tree (ai_pending) is about to run but hasn't yet — surface that
-  // as "waiting" without touching the real stored status underneath.
+  // same working tree (ai_pending), or parked on a Claude usage limit that will
+  // auto-resume (resume_at), is waiting rather than stuck — surface that as
+  // "waiting" without touching the real stored status underneath.
   function displayStatus(j) {
-    return j.ai_pending ? 'waiting' : (j.status || 'open');
+    return (j.ai_pending || j.resume_at) ? 'waiting' : (j.status || 'open');
   }
 
   function statusChip(status, jobId) {
@@ -3172,6 +3173,15 @@
       const t = document.createElement('div');
       t.className = 'turn ai thinking';
       t.innerHTML = '<div class="bubble waiting">Waiting for the running chat to finish…</div>';
+      turnsEl.appendChild(t);
+    } else if (j.resume_at) {
+      // Parked on a Claude usage limit — the worker will restart it by itself once
+      // the allowance is back. Surface a labelled bubble so the pause reads as
+      // deliberate. (The exact reset time, when known, is in the thread note.)
+      const t = document.createElement('div');
+      t.className = 'turn ai thinking';
+      t.innerHTML = '<div class="bubble waiting">⏸ Paused — Claude’s usage limit was reached. '
+        + 'It’ll start again on its own once your allowance is back…</div>';
       turnsEl.appendChild(t);
     }
     renderPermissions();

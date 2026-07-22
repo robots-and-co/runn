@@ -26,6 +26,7 @@ const {
 const jobs = require('./jobs');
 const invoices = require('./invoices');
 const bridge = require('./bridge');
+const scheduler = require('./scheduler');
 
 // ── Config ───────────────────────────────────────────────────
 const CLIENTS_DIR = path.join(DATA_ROOT, 'clients');
@@ -231,7 +232,7 @@ async function ingestSession(jobId, jsonlPath) {
 // child non-zero (a signal), but that's deliberate, not a crash — so the exit
 // handler lands the job in `review`, not `blocked`. The entry is consumed here.
 const interruptedJobs = new Set();
-function handleJobExit(jobId, code) {
+function handleJobExit(jobId, code, info) {
   enqueueJobOp(jobId, async () => {
     try { await ingestSession(jobId, null); }
     catch (err) { console.error('[runn] handleJobExit ingest', jobId, err); }
@@ -246,9 +247,95 @@ function handleJobExit(jobId, code) {
       return;
     }
     const interrupted = interruptedJobs.delete(jobId);
-    await jobs.patchJob(jobId, { status: (interrupted || code === 0) ? 'review' : 'blocked' });
+    // The turn died because the account's Claude allowance ran out — not a crash.
+    // Park the job and schedule an automatic resume at the reset time. A user
+    // interrupt (!stop) takes precedence: they stopped it on purpose.
+    if (!interrupted && info && info.limit && job) {
+      return parkForUsageLimit(job, info.limit);
+    }
+    // Clean turn → review (human's turn). Clear any stale resume bookkeeping so a
+    // later, unrelated limit-hit starts its retry count fresh.
+    const status = (interrupted || code === 0) ? 'review' : 'blocked';
+    const extra = (status === 'review' && job && (job.resume_at || job.resume_attempts))
+      ? { resume_at: null, resume_attempts: 0 } : {};
+    await jobs.patchJob(jobId, { status, ...extra });
   });
 }
+
+// A job dies on a usage limit → park it as `blocked` with a `resume_at`, drop a
+// plain-English note in the thread, and arm the scheduler. If the CLI told us the
+// reset time we wait for exactly that; if it didn't (headless mode often omits
+// it), we poll gently until the allowance returns. Either way it resumes on its
+// own. A generous safety cap stops a persistently-failing job retrying forever.
+// Runs inside the job's serial op.
+const MAX_AUTO_RESUMES = 12;
+const BLIND_RETRY_MS = 30 * 60_000;   // no reset time given → re-check every 30 min
+async function parkForUsageLimit(job, limit) {
+  const attempts = (job.resume_attempts || 0) + 1;
+  if (attempts > MAX_AUTO_RESUMES) {
+    await appendSystemNote(job.id,
+      'Claude’s usage limit kept stopping this job after many automatic tries — please start it again by hand once your allowance is back.');
+    await jobs.patchJob(job.id, { status: 'blocked', resume_at: null, resume_attempts: attempts });
+    return;
+  }
+  const known = !!(limit && limit.resetAt);
+  // Wait a minute PAST the stated reset so we don't re-hit the limit at the edge;
+  // otherwise poll on a fixed interval.
+  const resetAt = known ? limit.resetAt + 60_000 : Date.now() + BLIND_RETRY_MS;
+  await appendSystemNote(job.id, known
+    ? `⏸ Claude’s usage limit was reached, so this job is paused. It will start again on its own around ${friendlyTime(resetAt)}.`
+    : '⏸ Claude’s usage limit was reached, so this job is paused. I’ll keep checking and start it again automatically as soon as your allowance is back.');
+  const patched = await jobs.patchJob(job.id, {
+    status: 'blocked', resume_at: new Date(resetAt).toISOString(), resume_attempts: attempts,
+  });
+  scheduler.scheduleJob(patched, schedulerDeps);
+  console.log(`[runn] ${job.id} parked for usage limit — auto-resume at ${patched.resume_at} (try ${attempts}${known ? '' : ', blind'})`);
+}
+
+// The scheduler calls this at the reset time. Re-ask the last user turn (the AI
+// never got to answer it) on the same session. Wrapped in the serial op so it
+// can't interleave with a watcher ingest.
+async function resumeAfterLimit(jobId) {
+  const prep = await runJobOp(jobId, async () => {
+    const job = await jobs.readJobOr(jobId);
+    if (!job || !job.resume_at) return null;             // cleared/handled already
+    if (!job.session_id) { await jobs.patchJob(jobId, { resume_at: null }); return null; }
+    const userTurns = (job.turns || []).filter((t) => t.role === 'user');
+    const text = userTurns.length ? userTurns[userTurns.length - 1].text : 'Please continue.';
+    await jobs.patchJob(jobId, { resume_at: null });     // clear so a fresh hit can re-park
+    await appendSystemNote(jobId, '▶ Your allowance should be back now — starting this job again.');
+    return { job: await jobs.readJob(jobId), text };
+  });
+  if (!prep) return;
+  try {
+    await dispatchResume(prep.job, prep.text);
+  } catch (err) {
+    console.error('[runn] auto-resume dispatch failed', jobId, err);
+    await runJobOp(jobId, () => jobs.patchJob(jobId, { status: 'blocked' })).catch(() => {});
+  }
+}
+
+// Append a system annotation to a job's thread as a private `note` turn — visible
+// in the chat, but never handed to the AI (the invite/turn paths filter on
+// role === 'user'). Caller must already hold the job's serial op.
+async function appendSystemNote(jobId, text) {
+  try { await jobs.appendTurn(jobId, { role: 'note', text }); }
+  catch (err) { console.error('[runn] appendSystemNote failed', jobId, err); }
+}
+
+// "3:00 pm" in the user's timezone, for the parked-job note.
+function friendlyTime(ms) {
+  return new Intl.DateTimeFormat('en-AU', {
+    timeZone: 'Australia/Melbourne', hour: 'numeric', minute: '2-digit', hour12: true,
+  }).format(new Date(ms));
+}
+
+// What the scheduler needs from us: how to list jobs (to rebuild timers on boot)
+// and how to resume one when its reset time arrives.
+const schedulerDeps = {
+  listJobs: () => jobs.listJobs({ includeArchived: true }),
+  resume: resumeAfterLimit,
+};
 
 // ── Permission bridge (the gated model) ──────────────────────
 // mcp-permission.js POSTs /permissions/request whenever Claude wants a tool; we
@@ -332,7 +419,7 @@ async function inviteAi(res, job) {
       // prepends the <RUNN-ATTACHMENTS> marker so the spawn prompt points Claude
       // at all of them.
       attachments: jobAttachmentSpawnList(j),
-      onExit: (code) => handleJobExit(id, code),
+      onExit: (code, info) => handleJobExit(id, code, info),
       holder: 'job:' + id,
     };
   };
@@ -371,22 +458,24 @@ async function inviteAi(res, job) {
   return sendJson(res, 201, await jobs.readJob(id));
 }
 
-// Resume an already-invited job with a follow-up user turn, flipping it back to
-// `doing`. On cwd contention the turn buffers and bridge auto-dispatches it when
-// the cwd frees (202).
-async function resumeJob(res, job, text) {
+// Core of resuming an already-invited session with a turn, flipping the job back
+// to `doing`. Shared by the live HTTP path (resumeJob) and the automatic
+// usage-limit resume (resumeAfterLimit). On cwd contention the turn buffers and
+// bridge auto-dispatches it when the cwd frees. Returns { queued } and never
+// touches an HTTP response. Rethrows non-CWD_BUSY errors.
+async function dispatchResume(job, text) {
   const id = job.id;
   const location = await resolveLocation(job);
   const token = tokenForJob(id, location.cwd);
   const params = {
     text, location, permissionToken: token, permissionMode: 'default',
-    onExit: (code) => handleJobExit(id, code), holder: 'job:' + id,
+    onExit: (code, info) => handleJobExit(id, code, info), holder: 'job:' + id,
   };
   try {
     await bridge.sendMessage({ sessionId: job.session_id, ...params });
   } catch (e) {
     if (e.code === 'CWD_BUSY') {
-      // The tree's busy with another chat. Buffer this turn and flag the card as
+      // The tree's busy with another chat. Buffer this turn and flag the job as
       // waiting (mirrors the new-invite path) so its status chip reads "waiting"
       // until the turn actually starts.
       bridge.enqueueMessage(job.session_id, {
@@ -394,17 +483,20 @@ async function resumeJob(res, job, text) {
         onStart: () => { runJobOp(id, () => jobs.patchJob(id, { status: 'doing', ai_pending: false })).catch(() => {}); },
         onError: () => { runJobOp(id, () => jobs.patchJob(id, { ai_pending: false })).catch(() => {}); },
       });
-      const queued = await runJobOp(id, () => jobs.patchJob(id, { ai_pending: true }));
-      // Hand back the patched job (not a bare {queued:true}) so the browser flips
-      // to the "waiting" chip immediately. Otherwise it keeps its stale copy — the
-      // job still reads "review" — until a later broadcast, which can race and
-      // never land, leaving the answered job stuck showing "review".
-      return sendJson(res, 202, queued);
+      await runJobOp(id, () => jobs.patchJob(id, { ai_pending: true }));
+      return { queued: true };
     }
     throw e;
   }
   await runJobOp(id, () => jobs.patchJob(id, { status: 'doing' }));
-  return sendJson(res, 201, await jobs.readJob(id));
+  return { queued: false };
+}
+
+// HTTP wrapper: resume on a user turn and answer the request. 202 when the turn
+// had to buffer behind a busy tree, 201 when it started.
+async function resumeJob(res, job, text) {
+  const r = await dispatchResume(job, text);
+  return sendJson(res, r.queued ? 202 : 201, await jobs.readJob(job.id));
 }
 
 // ── HTTP helpers ─────────────────────────────────────────────
@@ -795,7 +887,7 @@ const server = http.createServer(async (req, res) => {
         followParams = {
           text: buildPromptWithAttachments(followText, saved),
           location, permissionToken: token, permissionMode: 'default',
-          onExit: (code) => handleJobExit(id, code), holder: 'job:' + id,
+          onExit: (code, info) => handleJobExit(id, code, info), holder: 'job:' + id,
           onStart: () => { runJobOp(id, () => jobs.patchJob(id, { status: 'doing', ai_pending: false })).catch(() => {}); },
           onError: () => { runJobOp(id, () => jobs.patchJob(id, { ai_pending: false })).catch(() => {}); },
         };
@@ -989,9 +1081,14 @@ function jobEvent(type) {
   return async (p) => {
     if (!p.endsWith('.json') || p.endsWith('.tmp')) return;
     const id = path.basename(p, '.json');
-    if (type === 'job.removed') return broadcast({ type, job: { id } });
+    if (type === 'job.removed') { scheduler.onJobRemoved(id); return broadcast({ type, job: { id } }); }
     const job = await jobs.readJobOr(id);
-    if (job) broadcast({ type, job });
+    if (job) {
+      // Keep the auto-resume timer in step with the job on disk: a fresh
+      // resume_at arms it, a cleared one (user resumed/edited the job) cancels it.
+      scheduler.onJobChanged(job, schedulerDeps);
+      broadcast({ type, job });
+    }
   };
 }
 jobsWatcher.on('add',    jobEvent('job.added'));
@@ -1099,6 +1196,9 @@ sessionsWatcher.on('change', onSessionEvent);
       enqueueJobOp(j.id, () => jobs.patchJob(j.id, { ai_pending: false }));
     }
   }
+  // Re-arm auto-resume timers for any job parked on a usage limit. A reset time
+  // that already passed while the worker was down fires ~immediately.
+  await scheduler.start(schedulerDeps);
   server.listen(PORT, HOST, () => {
     const urls = [`http://localhost:${PORT}`];
     for (const ifaces of Object.values(os.networkInterfaces())) {
