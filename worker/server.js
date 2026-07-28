@@ -25,6 +25,7 @@ const {
 } = require('./store');
 const jobs = require('./jobs');
 const invoices = require('./invoices');
+const transactions = require('./transactions');
 const bridge = require('./bridge');
 const scheduler = require('./scheduler');
 const usage = require('./usage');
@@ -964,6 +965,17 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
+    // ── Transactions (finance ledger; local-only, no cloud/AI) ────
+    if (m === 'GET' && url.pathname === '/transactions') {
+      return sendJson(res, 200, await transactions.listTransactions());
+    }
+    if (m === 'POST' && url.pathname === '/transactions/import') {
+      const body = await readBody(req);
+      try {
+        return sendJson(res, 200, await transactions.importCsv(body));
+      } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+    }
+
     // ── Clients (read-only here; CRUD ported with billing later) ──
     if (m === 'GET' && url.pathname === '/clients') {
       const files = await fsp.readdir(CLIENTS_DIR).catch(() => []);
@@ -1147,6 +1159,18 @@ invoicesWatcher.on('add',    invoiceEvent('invoice.added'));
 invoicesWatcher.on('change', invoiceEvent('invoice.changed'));
 invoicesWatcher.on('unlink', invoiceEvent('invoice.removed'));
 
+// Finance ledger: one file, so any add/change means "the transaction list moved".
+// Broadcast a bare nudge; the frontend re-fetches GET /transactions.
+const transactionsWatcher = chokidar.watch(transactions.LEDGER_PATH, {
+  ignored: (p) => p.endsWith('.tmp'),
+  ignoreInitial: true,
+  awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 25 },
+  depth: 0,
+});
+const nudgeTransactions = () => broadcast({ type: 'transactions.changed' });
+transactionsWatcher.on('add', nudgeTransactions);
+transactionsWatcher.on('change', nudgeTransactions);
+
 // ── Discovery watcher: session jsonl → AI turns ──────────────
 // Claude Code lays sessions at ~/.claude/projects/<cwd-slug>/<sessionId>.jsonl
 // (depth 2). On any change to a jsonl whose sessionId belongs to a Runn job, we
@@ -1196,6 +1220,7 @@ function scheduleUsageBroadcast() {
 (async () => {
   await jobs.init();
   await invoices.init();
+  await transactions.init();
   await ensureDir(CLIENTS_DIR);
   await ensureDir(ATTACHMENTS_DIR);
   // Rebuild the session index from existing jobs and catch up any AI turns the
