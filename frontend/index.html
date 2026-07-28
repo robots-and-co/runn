@@ -431,6 +431,79 @@
   .badge.st-sent { background: #fdeede; color: #a85513; }
   .badge.st-paid { background: #e2f3e6; color: #2f7a45; }
 
+  /* ── Finances ───────────────────────────────────── */
+  .finance-btn {
+    margin-left: auto; flex-shrink: 0; height: 32px; width: 34px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--surface); border: 1px solid #dbe3ec; border-radius: 8px;
+    font-size: 15px; cursor: pointer; padding: 0;
+  }
+  .finance-btn:hover { border-color: var(--brand); }
+  .finance-btn.is-active { background: var(--brand); border-color: var(--brand); }
+  /* total sits right after the finance button (its own margin-left:auto is a no-op
+     once .finance-btn has claimed the free space). */
+  .total { margin-left: 8px; }
+
+  .finance-pane { flex: 1; display: none; flex-direction: column; min-width: 0; }
+  body.show-finance .finance-pane { display: flex; }
+  body.show-finance .chat-pane { display: none; }
+  .finance-head .fin-local {
+    margin-left: auto; font-size: 12px; color: var(--muted);
+    white-space: nowrap; padding-right: 4px;
+  }
+  .finance-tabs {
+    display: flex; gap: 6px; padding: 10px 16px 0; flex-wrap: wrap;
+    border-bottom: 1px solid var(--border);
+  }
+  .finance-tab {
+    border: 1px solid var(--border); background: var(--surface); border-radius: 8px 8px 0 0;
+    padding: 8px 12px; font: inherit; font-size: 13px; cursor: pointer; color: var(--muted);
+    border-bottom: 0; margin-bottom: -1px;
+  }
+  .finance-tab.active { color: var(--ink); font-weight: 600; border-color: var(--border); background: var(--bg); }
+  .finance-tab:disabled { cursor: default; opacity: .55; }
+  .finance-body { flex: 1; overflow: auto; padding: 18px; }
+  .fin-screen { max-width: 860px; }
+  .fin-lead { color: var(--muted); font-size: 14px; margin: 0 0 16px; line-height: 1.5; }
+  .fin-soon { color: var(--muted); font-size: 15px; padding: 24px 4px; }
+
+  /* Import screen */
+  .fin-drop {
+    border: 2px dashed #cdd8e3; border-radius: 12px; background: var(--surface);
+    padding: 28px 20px; text-align: center; cursor: pointer; transition: border-color .12s, background .12s;
+  }
+  .fin-drop:hover, .fin-drop.dragover { border-color: var(--brand); background: #f4f8fd; }
+  .fin-drop .big { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .fin-drop .small { font-size: 13px; color: var(--muted); }
+  .fin-paste { width: 100%; box-sizing: border-box; margin-top: 10px; min-height: 72px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px; resize: vertical; }
+  .fin-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+  .fin-summary { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+    background: var(--surface); margin: 16px 0; }
+  .fin-summary .row { display: flex; gap: 8px; font-size: 14px; margin: 3px 0; }
+  .fin-summary .row .k { color: var(--muted); min-width: 130px; }
+  .fin-check-ok { color: #2f7a45; }
+  .fin-check-bad { color: #b23b2a; }
+  .fin-actions { display: flex; gap: 10px; margin: 14px 0 4px; flex-wrap: wrap; }
+  .fin-btn { border: 1px solid var(--brand); background: var(--brand); color: #fff;
+    border-radius: 8px; padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  .fin-btn.secondary { background: var(--surface); color: var(--ink); border-color: var(--border); }
+  .fin-btn:disabled { opacity: .5; cursor: default; }
+
+  .fin-ledger-head { display: flex; align-items: baseline; gap: 10px; margin: 22px 0 8px; }
+  .fin-ledger-head h3 { margin: 0; font-size: 15px; }
+  .fin-ledger-head .sub { color: var(--muted); font-size: 13px; }
+  table.fin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.fin-table th, table.fin-table td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  table.fin-table th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  table.fin-table td.narr { white-space: normal; min-width: 180px; }
+  table.fin-table td.amt { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+  table.fin-table td.amt.in { color: #2f7a45; }
+  table.fin-table td.amt.out { color: #b23b2a; }
+  table.fin-table td.bal { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; color: var(--muted); }
+
   /* Invoice document — mirrors the real Robots & Co. A4 tax invoice.
      Draft = editable (number + due + line removal); issued = read-only. */
   .inv-doc { max-width: 760px; margin: 0 auto; }
@@ -972,6 +1045,15 @@
       transform: translateX(100%); transition: transform 0.22s ease; z-index: 6; }
     body.show-billing .billing-pane { transform: translateX(0); }
     body.show-billing .chat-pane { display: flex; }   /* don't fight the overlay on mobile */
+
+    .finance-pane { display: flex; position: fixed; inset: 0; background: var(--bg);
+      transform: translateX(100%); transition: transform 0.22s ease; z-index: 6; }
+    body.show-finance .finance-pane { transform: translateX(0); }
+    body.show-finance .chat-pane { display: flex; }
+    body.show-finance .list-foot { display: none; }
+    .finance-body { padding: 14px; }
+    table.fin-table { font-size: 12px; }
+    table.fin-table th, table.fin-table td { padding: 6px 6px; }
     .inv-paper { padding: 22px 20px; min-height: 0; }
     .inv-head { flex-direction: column; gap: 16px; }
     .inv-from { max-width: none; }
@@ -1028,6 +1110,7 @@
       <div class="list-head">
         <button class="logo" id="logoReset" type="button" title="Reload — clears cached copies for a clean test">R</button>
         <h1>Runn</h1>
+        <button class="finance-btn" id="financeBtn" type="button" title="Finances — money in &amp; out, all kept on this machine" aria-label="Finances">📊</button>
         <button class="total clickable" id="billingBtn" type="button" title="Invoices — tap to flip this list to billing">
           <span class="amt" id="valueTotal">0.00</span>
         </button>
@@ -1112,6 +1195,16 @@
       </div>
       <div class="billing-body" id="billingBody"></div>
     </section>
+
+    <section class="finance-pane" id="financePane">
+      <div class="chat-head finance-head">
+        <button class="back" id="financeBack" type="button" aria-label="Back">‹</button>
+        <span class="ttl">Finances</span>
+        <span class="fin-local" title="Nothing here leaves this machine — no cloud, no AI">🔒 local only</span>
+      </div>
+      <div class="finance-tabs" id="financeTabs"></div>
+      <div class="finance-body" id="financeBody"></div>
+    </section>
   </div>
   <div class="chip-menu" id="chipMenu" hidden></div>
   <div class="chip-menu" id="jobMenu" hidden></div>
@@ -1147,6 +1240,10 @@
     statusFilter: 'open',  // 'open' = active group (open/doing/review/blocked/hold); a status; or 'all'
     dueFilter: 'all',      // 'all' | 'overdue' | 'today' | 'thisweek' | 'none'
     searchTerm: '',        // free-text filter over title / client / project / notes
+    financePane: false,    // Finances area open (top-bar Finances button)
+    financeScreen: 'import', // which finance screen: 'import' now; overview/forecast/reconcile land in later jobs
+    transactions: [],      // the money-in/out ledger (GET /transactions)
+    importPreview: null,   // last dry-run result awaiting confirm: { summary, csv, account }
   };
 
   const $ = (id) => document.getElementById(id);
@@ -2271,6 +2368,224 @@
     if (state.billingSel && state.billingSel.kind === 'draft') return;
     renderBilling();
   }
+  // ── Finances ────────────────────────────────────
+  // A local-only money-in/out area, opened from the top-bar Finances button.
+  // Same slide-over mechanics as the invoice document pane. Job 1 ships the
+  // Import screen; the other tabs are placeholders until their jobs land.
+  // Everything here hits only this app's own backend — no cloud, no AI.
+  const FINANCE_SCREENS = [
+    { key: 'import',   label: 'Import',         ready: true },
+    { key: 'ledger',   label: 'Money in & out', ready: false, job: 2 },
+    { key: 'overview', label: 'Overview',       ready: false, job: 3 },
+    { key: 'forecast', label: 'Forecast',       ready: false, job: 4 },
+  ];
+  function toggleFinance() { if (state.financePane) exitFinance(); else enterFinance(); }
+  function enterFinance() {
+    state.financePane = true;
+    state.currentId = null;
+    state.importPreview = null;
+    state.financeScreen = 'import';
+    document.body.classList.remove('show-invoices', 'show-billing');
+    state.invoicesPane = false;
+    document.body.classList.add('show-finance');
+    $('financeBtn').classList.add('is-active');
+    $('billingBtn').classList.remove('is-active');
+    if (isMobile() && !(history.state && history.state.runnFinance)) history.pushState({ runnFinance: true }, '');
+    refreshTransactions();   // fire-and-forget; re-renders when it lands
+    renderFinance();
+  }
+  function exitFinance(opts) {
+    const fromPop = opts === true || (opts && opts.fromPop === true);
+    state.financePane = false;
+    state.importPreview = null;
+    document.body.classList.remove('show-finance');
+    $('financeBtn').classList.remove('is-active');
+    renderList();
+    renderChat();
+    if (!fromPop && history.state && history.state.runnFinance) history.back();
+  }
+  function openFinanceScreen(key) {
+    const s = FINANCE_SCREENS.find((x) => x.key === key);
+    if (!s || !s.ready) return;
+    state.financeScreen = key;
+    state.importPreview = null;
+    renderFinance();
+  }
+  async function refreshTransactions() {
+    try {
+      const rows = await fetch('/transactions').then((r) => r.json());
+      state.transactions = Array.isArray(rows) ? rows : [];
+    } catch (e) { console.error('load transactions failed', e); }
+    if (state.financePane) renderFinance();
+  }
+  function renderFinance() {
+    if (!state.financePane) return;
+    renderFinanceTabs();
+    const body = $('financeBody');
+    body.innerHTML = '';
+    if (state.financeScreen === 'import') return renderFinanceImport(body);
+    const s = FINANCE_SCREENS.find((x) => x.key === state.financeScreen);
+    const d = document.createElement('div');
+    d.className = 'fin-soon';
+    d.textContent = `“${s ? s.label : 'This screen'}” arrives in job ${s && s.job ? s.job : ''} of the finance build.`;
+    body.appendChild(d);
+  }
+  function renderFinanceTabs() {
+    const bar = $('financeTabs');
+    bar.innerHTML = '';
+    for (const s of FINANCE_SCREENS) {
+      const b = document.createElement('button');
+      b.className = 'finance-tab' + (s.key === state.financeScreen ? ' active' : '');
+      b.textContent = s.label;
+      b.disabled = !s.ready;
+      if (!s.ready) b.title = `Coming in job ${s.job}`;
+      b.addEventListener('click', () => openFinanceScreen(s.key));
+      bar.appendChild(b);
+    }
+  }
+  function renderFinanceImport(body) {
+    const wrap = document.createElement('div');
+    wrap.className = 'fin-screen';
+    wrap.innerHTML = `
+      <p class="fin-lead">Bring in a bank CSV. Rows you've already imported are skipped automatically (matched on the bank's Serial), and the running balance is checked for gaps. Nothing here leaves this machine.</p>
+      <div class="fin-drop" id="finDrop">
+        <div class="big">Choose a CSV file</div>
+        <div class="small">or drag it here — or paste the rows below</div>
+      </div>
+      <input type="file" id="finFile" accept=".csv,text/csv,text/plain" hidden>
+      <textarea class="fin-paste" id="finPaste" placeholder="…or paste CSV rows here (include the header row)"></textarea>
+      <div class="fin-note">Expected columns: Bank Account, Date, Narrative, Debit Amount, Credit Amount, Balance, Categories, Serial. Bank Account, Categories and Serial are stored but hidden.</div>
+      <div id="finPreview"></div>`;
+    body.appendChild(wrap);
+
+    const drop = wrap.querySelector('#finDrop');
+    const file = wrap.querySelector('#finFile');
+    const paste = wrap.querySelector('#finPaste');
+    drop.addEventListener('click', () => file.click());
+    file.addEventListener('change', () => {
+      const f = file.files && file.files[0];
+      if (f) f.text().then((t) => previewImport(t));
+    });
+    ['dragover', 'dragenter'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('dragover'); }));
+    ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('dragover'); }));
+    drop.addEventListener('drop', (e) => {
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) f.text().then((t) => previewImport(t));
+    });
+    let pasteTimer = null;
+    paste.addEventListener('input', () => {
+      clearTimeout(pasteTimer);
+      const t = paste.value;
+      pasteTimer = setTimeout(() => { if (t.trim()) previewImport(t); }, 400);
+    });
+
+    if (state.importPreview) renderImportPreview(wrap.querySelector('#finPreview'));
+    renderLedger(wrap);
+  }
+  async function previewImport(csv) {
+    const host = $('finPreview');
+    if (!csv || !csv.trim()) { if (host) host.innerHTML = ''; state.importPreview = null; return; }
+    if (host) host.innerHTML = '<div class="fin-summary">Checking…</div>';
+    try {
+      const summary = await postJson('/transactions/import', { csv, dryRun: true });
+      state.importPreview = { summary, csv };
+      renderImportPreview($('finPreview'));
+    } catch (e) {
+      state.importPreview = null;
+      if ($('finPreview')) $('finPreview').innerHTML = `<div class="fin-summary"><span class="fin-check-bad">Couldn't read that file: ${esc(e.message)}</span></div>`;
+    }
+  }
+  function renderImportPreview(host) {
+    if (!host) return;
+    const p = state.importPreview;
+    if (!p) { host.innerHTML = ''; return; }
+    const s = p.summary, chk = s.balanceCheck || {};
+    const rows = (s.preview || []).map((t) => `
+      <tr><td>${esc(fmtDate(t.date))}</td><td class="narr">${esc(t.narrative)}</td>
+      <td class="amt ${Number(t.amount) < 0 ? 'out' : 'in'}">${moneySigned('$', t.amount)}</td>
+      <td class="bal">${t.balance == null ? '' : money(t.balance)}</td></tr>`).join('');
+    host.innerHTML = `
+      <div class="fin-summary">
+        <div class="row"><span class="k">Rows read</span><span>${s.parsed}</span></div>
+        <div class="row"><span class="k">New to add</span><span>${s.added}</span></div>
+        <div class="row"><span class="k">Already imported</span><span>${s.skipped}</span></div>
+        <div class="row"><span class="k">Balance check</span>
+          <span class="${chk.ok ? 'fin-check-ok' : 'fin-check-bad'}">${chk.ok ? '✓ ' : '⚠ '}${esc(chk.message || '')}</span></div>
+      </div>
+      ${rows ? `<table class="fin-table"><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="fin-note">Preview of the first rows to be added.</div>` : ''}
+      <div class="fin-actions">
+        <button class="fin-btn" id="finConfirm" ${s.added ? '' : 'disabled'}>${s.added ? `Import ${s.added} transaction${s.added === 1 ? '' : 's'}` : 'Nothing new to import'}</button>
+        <button class="fin-btn secondary" id="finCancel">Cancel</button>
+      </div>`;
+    const c = host.querySelector('#finConfirm');
+    if (c) c.addEventListener('click', confirmImport);
+    const x = host.querySelector('#finCancel');
+    if (x) x.addEventListener('click', () => {
+      state.importPreview = null;
+      const f = $('finPaste'); if (f) f.value = '';
+      const ff = $('finFile'); if (ff) ff.value = '';
+      renderImportPreview($('finPreview'));
+    });
+  }
+  async function confirmImport() {
+    const p = state.importPreview;
+    if (!p) return;
+    const btn = $('finConfirm');
+    if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+    try {
+      const res = await postJson('/transactions/import', { csv: p.csv });
+      state.importPreview = null;
+      await refreshTransactions();   // re-renders the screen fresh (ledger updates)
+      const host = $('finPreview');
+      if (host) host.innerHTML = `<div class="fin-summary"><span class="fin-check-ok">✓ Added ${res.added}, skipped ${res.skipped} already-imported.</span>${res.balanceCheck && !res.balanceCheck.ok ? `<div class="row"><span class="fin-check-bad">⚠ ${esc(res.balanceCheck.message)}</span></div>` : ''}</div>`;
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Import'; }
+      const host = $('finPreview');
+      if (host) host.innerHTML = `<div class="fin-summary"><span class="fin-check-bad">Import failed: ${esc(e.message)}</span></div>`;
+    }
+  }
+  function latestBalance() {
+    let best = null;
+    for (const t of state.transactions) {
+      if (t.balance == null) continue;
+      if (!best || String(t.date) > String(best.date)) best = t;
+    }
+    return best ? best.balance : null;
+  }
+  function renderLedger(wrap) {
+    const rows = [...state.transactions].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const head = document.createElement('div');
+    head.className = 'fin-ledger-head';
+    const bal = latestBalance();
+    head.innerHTML = `<h3>Imported transactions</h3><span class="sub">${rows.length} row${rows.length === 1 ? '' : 's'}${bal != null ? ' · latest balance ' + money(bal) : ''}</span>`;
+    wrap.appendChild(head);
+    if (!rows.length) {
+      const e = document.createElement('div'); e.className = 'fin-soon';
+      e.textContent = 'No transactions yet — import a CSV above.';
+      wrap.appendChild(e);
+      return;
+    }
+    const table = document.createElement('table');
+    table.className = 'fin-table';
+    table.innerHTML = '<thead><tr><th>Date</th><th>Description</th><th>Money in / out</th><th>Balance</th></tr></thead>';
+    const tb = document.createElement('tbody');
+    for (const t of rows.slice(0, 500)) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${esc(fmtDate(t.date))}</td><td class="narr">${esc(t.narrative)}</td>`
+        + `<td class="amt ${Number(t.amount) < 0 ? 'out' : 'in'}">${moneySigned('$', t.amount)}</td>`
+        + `<td class="bal">${t.balance == null ? '' : money(t.balance)}</td>`;
+      tb.appendChild(tr);
+    }
+    table.appendChild(tb);
+    wrap.appendChild(table);
+    if (rows.length > 500) {
+      const m = document.createElement('div'); m.className = 'fin-note';
+      m.textContent = `Showing the latest 500 of ${rows.length}.`;
+      wrap.appendChild(m);
+    }
+  }
+
   function billingGroups() {
     const groups = new Map();   // clientId -> { client, rows:[], total }
     for (const j of state.jobs.values()) {
@@ -2819,6 +3134,12 @@
       document.body.classList.remove('show-invoices', 'show-billing');
       $('billingBtn').classList.remove('is-active');
     }
+    if (state.financePane) {
+      state.financePane = false;
+      state.importPreview = null;
+      document.body.classList.remove('show-finance');
+      $('financeBtn').classList.remove('is-active');
+    }
     state.currentId = id;
     state.editingTurn = null;
     state.picking = false;
@@ -3298,6 +3619,8 @@
         state.invoices.delete(m.invoice.id);
         if (state.billingSel && state.billingSel.kind === 'invoice' && state.billingSel.id === m.invoice.id) state.billingSel = null;
         maybeRenderBilling();
+      } else if (m.type === 'transactions.changed') {
+        if (state.financePane) refreshTransactions();
       } else if (m.type === 'usage.updated') {
         applyUsage(m.usage);
       } else if (m.type === 'permission.requested') {
@@ -3832,14 +4155,17 @@
   // ── Wiring ──────────────────────────────────────
   $('backBtn').addEventListener('click', () => closeChat());
   $('billingBtn').addEventListener('click', toggleInvoices);
+  $('financeBtn').addEventListener('click', toggleFinance);
   // The doc-pane chevron (mobile only) returns to the invoice list.
   $('billingBack').addEventListener('click', closeBillingDoc);
+  $('financeBack').addEventListener('click', () => exitFinance());
   // Device/browser back button: pop back toward the jobs list instead of leaving.
   window.addEventListener('popstate', () => {
     if (suppressPop) { suppressPop = false; return; }
     const preview = $('invPreview');
     if (preview && preview.classList.contains('open')) { closePreview({ fromPop: true }); return; }
     if (document.body.classList.contains('show-chat')) closeChat({ fromPop: true });
+    else if (state.financePane) exitFinance({ fromPop: true });
     else if (state.invoicesPane && state.billingSel) closeBillingDoc({ fromPop: true });
     else if (state.invoicesPane) exitInvoices({ fromPop: true });
   });

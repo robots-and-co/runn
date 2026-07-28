@@ -1,6 +1,6 @@
 ---
 order: 1
-status: todo
+status: doing
 title: Import — bank CSV in, duplicate-proof
 ---
 
@@ -69,3 +69,16 @@ A row is money-in or money-out depending on which of Debit/Credit is populated.
 ## Out of scope (later jobs)
 - Matching credits to invoices and categorizing → job 2.
 - Any overview or forecast → jobs 3 and 4.
+
+## Decisions
+2026-07-28 — Built and live. Backend `worker/transactions.js` (CSV parse,
+Serial de-dup, running-balance integrity check) + routes `GET /transactions`,
+`POST /transactions/import` (with `dryRun` preview). Ledger stored as a single
+`~/runn-data/finance/transactions.json` (a personal ledger is naturally one
+ordered list; reconciliation/forecast scan it whole). Frontend: a top-bar
+Finances button (📊) opens a slide-over pane with a four-tab bar (Import live;
+Money in & out / Overview / Forecast are placeholders for jobs 2–4). Import
+screen = choose/drag/paste CSV → dry-run preview (rows read, new, already-
+imported, balance check) → confirm → ledger table (account/categories/serial
+hidden). Verified: module unit test + HTTP round-trip on a throwaway instance.
+Awaiting the operator's real-CSV click-through and the `done` call.
