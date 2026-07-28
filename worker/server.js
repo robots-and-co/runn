@@ -969,6 +969,9 @@ const server = http.createServer(async (req, res) => {
     if (m === 'GET' && url.pathname === '/transactions') {
       return sendJson(res, 200, await transactions.listTransactions());
     }
+    if (m === 'GET' && url.pathname === '/transactions/meta') {
+      return sendJson(res, 200, await transactions.getMeta());
+    }
     if (m === 'POST' && url.pathname === '/transactions/import') {
       const body = await readBody(req);
       try {

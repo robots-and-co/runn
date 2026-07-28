@@ -486,6 +486,12 @@
   .fin-summary .row .k { color: var(--muted); min-width: 130px; }
   .fin-check-ok { color: #2f7a45; }
   .fin-check-bad { color: #b23b2a; }
+  .fin-money-pre { color: var(--muted); margin-right: 2px; }
+  .fin-opening-input {
+    width: 120px; font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    text-align: right; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px;
+  }
+  .fin-opening-input:focus { border-color: var(--brand); outline: none; }
   .fin-actions { display: flex; gap: 10px; margin: 14px 0 4px; flex-wrap: wrap; }
   .fin-btn { border: 1px solid var(--brand); background: var(--brand); color: #fff;
     border-radius: 8px; padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer; }
@@ -1243,6 +1249,7 @@
     financePane: false,    // Finances area open (top-bar Finances button)
     financeScreen: 'import', // which finance screen: 'import' now; overview/forecast/reconcile land in later jobs
     transactions: [],      // the money-in/out ledger (GET /transactions)
+    financeMeta: null,     // { count, opening_balance, opening_date } from GET /transactions/meta
     importPreview: null,   // last dry-run result awaiting confirm: { summary, csv, account }
   };
 
@@ -2413,8 +2420,12 @@
   }
   async function refreshTransactions() {
     try {
-      const rows = await fetch('/transactions').then((r) => r.json());
+      const [rows, meta] = await Promise.all([
+        fetch('/transactions').then((r) => r.json()),
+        fetch('/transactions/meta').then((r) => r.json()).catch(() => null),
+      ]);
       state.transactions = Array.isArray(rows) ? rows : [];
+      state.financeMeta = meta || { count: state.transactions.length, opening_balance: null, opening_date: null };
     } catch (e) { console.error('load transactions failed', e); }
     if (state.financePane) renderFinance();
   }
@@ -2482,12 +2493,14 @@
     if (state.importPreview) renderImportPreview(wrap.querySelector('#finPreview'));
     renderLedger(wrap);
   }
-  async function previewImport(csv) {
+  async function previewImport(csv, opening) {
     const host = $('finPreview');
     if (!csv || !csv.trim()) { if (host) host.innerHTML = ''; state.importPreview = null; return; }
     if (host) host.innerHTML = '<div class="fin-summary">Checking…</div>';
     try {
-      const summary = await postJson('/transactions/import', { csv, dryRun: true });
+      const body = { csv, dryRun: true };
+      if (opening != null && opening !== '') body.opening_balance = opening;
+      const summary = await postJson('/transactions/import', body);
       state.importPreview = { summary, csv };
       renderImportPreview($('finPreview'));
     } catch (e) {
@@ -2504,7 +2517,16 @@
       <tr><td>${esc(fmtDate(t.date))}</td><td class="narr">${esc(t.narrative)}</td>
       <td class="amt ${Number(t.amount) < 0 ? 'out' : 'in'}">${moneySigned('$', t.amount)}</td>
       <td class="bal">${t.balance == null ? '' : money(t.balance)}</td></tr>`).join('');
+    // Opening balance: a one-off, shown only on the very first import (empty
+    // ledger). Pre-filled from the first row; the operator can correct it.
+    const openBlock = s.is_initial ? `
+      <div class="fin-summary">
+        <div class="row"><span class="k">Opening balance</span>
+          <span><span class="fin-money-pre">$</span><input id="finOpening" class="fin-opening-input" inputmode="decimal" value="${s.opening_applied != null ? s.opening_applied : ''}"></span></div>
+        <div class="fin-note" style="margin:6px 0 0">The balance just before the first row${s.opening_date ? ' (' + esc(fmtDate(s.opening_date)) + ')' : ''}. Set once — later imports carry on from here.</div>
+      </div>` : '';
     host.innerHTML = `
+      ${openBlock}
       <div class="fin-summary">
         <div class="row"><span class="k">Rows read</span><span>${s.parsed}</span></div>
         <div class="row"><span class="k">New to add</span><span>${s.added}</span></div>
@@ -2518,6 +2540,9 @@
         <button class="fin-btn" id="finConfirm" ${s.added ? '' : 'disabled'}>${s.added ? `Import ${s.added} transaction${s.added === 1 ? '' : 's'}` : 'Nothing new to import'}</button>
         <button class="fin-btn secondary" id="finCancel">Cancel</button>
       </div>`;
+    // Re-check against a corrected opening balance (on blur / Enter).
+    const openEl = host.querySelector('#finOpening');
+    if (openEl) openEl.addEventListener('change', () => previewImport(p.csv, openEl.value));
     const c = host.querySelector('#finConfirm');
     if (c) c.addEventListener('click', confirmImport);
     const x = host.querySelector('#finCancel');
@@ -2534,7 +2559,10 @@
     const btn = $('finConfirm');
     if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
     try {
-      const res = await postJson('/transactions/import', { csv: p.csv });
+      const openEl = $('finOpening');
+      const body = { csv: p.csv };
+      if (openEl && openEl.value !== '') body.opening_balance = openEl.value;
+      const res = await postJson('/transactions/import', body);
       state.importPreview = null;
       await refreshTransactions();   // re-renders the screen fresh (ledger updates)
       const host = $('finPreview');
@@ -2558,7 +2586,9 @@
     const head = document.createElement('div');
     head.className = 'fin-ledger-head';
     const bal = latestBalance();
-    head.innerHTML = `<h3>Imported transactions</h3><span class="sub">${rows.length} row${rows.length === 1 ? '' : 's'}${bal != null ? ' · latest balance ' + money(bal) : ''}</span>`;
+    const meta = state.financeMeta || {};
+    const openTxt = meta.opening_balance != null ? ' · opening ' + money(meta.opening_balance) : '';
+    head.innerHTML = `<h3>Imported transactions</h3><span class="sub">${rows.length} row${rows.length === 1 ? '' : 's'}${openTxt}${bal != null ? ' · latest balance ' + money(bal) : ''}</span>`;
     wrap.appendChild(head);
     if (!rows.length) {
       const e = document.createElement('div'); e.className = 'fin-soon';

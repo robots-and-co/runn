@@ -33,8 +33,21 @@ async function init() { await ensureDir(FINANCE_DIR); }
 
 async function readLedger() {
   const l = await readJsonOr(LEDGER_PATH, null);
-  if (l && Array.isArray(l.transactions)) return l;
-  return { version: 1, transactions: [] };
+  if (l && Array.isArray(l.transactions)) {
+    if (l.opening_balance === undefined) l.opening_balance = null; // set once, on the first import
+    if (l.opening_date === undefined) l.opening_date = null;
+    return l;
+  }
+  return { version: 1, transactions: [], opening_balance: null, opening_date: null };
+}
+
+async function getMeta() {
+  const l = await readLedger();
+  return {
+    count: l.transactions.length,
+    opening_balance: l.opening_balance ?? null,
+    opening_date: l.opening_date ?? null,
+  };
 }
 async function writeLedger(l) { await atomicWriteJson(LEDGER_PATH, l); }
 
@@ -153,10 +166,27 @@ function parseTransactions(csv, accountOverride) {
 // previous row's Balance +credit -debit. If it breaks, a row is likely missing —
 // surface it rather than silently accepting a gap. Rows are checked in file order
 // (the order the bank exported them), which is the order the running balance moves.
-function balanceCheck(rows) {
+function balanceCheck(rows, opening) {
   const withBal = rows.filter((r) => r.balance != null);
+  // When an opening balance is given (the first import), also anchor the very
+  // first row to it: opening + first row's movement should equal its Balance.
+  if (opening != null && withBal.length) {
+    const first = withBal[0];
+    const expected = round2(Number(opening) + first.amount);
+    if (Math.abs(expected - first.balance) > 0.005) {
+      return {
+        ok: false,
+        checked: 1,
+        message: `the opening balance ${round2(opening)} doesn't line up with the first row "${first.narrative}" (${first.date}): expected ${expected}, file says ${first.balance}.`,
+      };
+    }
+  }
   if (withBal.length < 2) {
-    return { ok: true, checked: withBal.length, message: 'no running balance to verify' };
+    return {
+      ok: true,
+      checked: withBal.length,
+      message: (opening != null && withBal.length) ? 'opening balance lines up with the first row' : 'no running balance to verify',
+    };
   }
   for (let i = 1; i < withBal.length; i++) {
     const prev = withBal[i - 1], cur = withBal[i];
@@ -169,20 +199,40 @@ function balanceCheck(rows) {
       };
     }
   }
-  return { ok: true, checked: withBal.length, message: `running balance matches across all ${withBal.length} rows` };
+  return {
+    ok: true,
+    checked: withBal.length,
+    message: `running balance matches across all ${withBal.length} rows` + (opening != null ? ' (and the opening balance)' : ''),
+  };
 }
 
 // Import (or preview) a CSV. body: { csv, account?, dryRun? }.
 // Returns a summary; when dryRun is falsy and there are new rows, appends + saves.
-async function importCsv({ csv, account, dryRun } = {}) {
+async function importCsv({ csv, account, dryRun, opening_balance, opening_date } = {}) {
   if (typeof csv !== 'string' || !csv.trim()) { const e = new Error('no CSV text provided'); e.status = 400; throw e; }
   const parsed = parseTransactions(csv, account);
   if (parsed.error) { const e = new Error(parsed.error); e.status = 400; throw e; }
 
   const incoming = parsed.rows;
-  const check = balanceCheck(incoming);
-
   const ledger = await readLedger();
+  const isInitial = ledger.transactions.length === 0;
+
+  // Opening balance is a one-off: set on the very first import only. Prefer an
+  // explicit value; otherwise suggest it from the first row (its Balance minus
+  // that row's own movement = the balance that existed before it).
+  const firstWithBal = incoming.find((r) => r.balance != null);
+  const openingSuggested = firstWithBal ? round2(firstWithBal.balance - firstWithBal.amount) : null;
+  const explicitOpening = (opening_balance != null && opening_balance !== '' && Number.isFinite(Number(opening_balance)))
+    ? round2(Number(opening_balance)) : null;
+  const opening = isInitial ? (explicitOpening != null ? explicitOpening : openingSuggested)
+                            : (ledger.opening_balance ?? null);
+  const openingDate = isInitial ? (opening_date || (firstWithBal ? firstWithBal.date : null))
+                                : (ledger.opening_date ?? null);
+
+  // Only anchor the batch to the opening balance on the first import; on later
+  // imports the anchor is far in the past, so we just check the batch internally.
+  const check = balanceCheck(incoming, isInitial ? opening : null);
+
   const seen = new Set(ledger.transactions.map((t) => t._key || dedupKey(t)));
 
   const fresh = [];
@@ -212,6 +262,7 @@ async function importCsv({ csv, account, dryRun } = {}) {
 
   const saved = !dryRun && fresh.length > 0;
   if (saved) {
+    if (isInitial && opening != null) { ledger.opening_balance = opening; ledger.opening_date = openingDate; }
     ledger.transactions.push(...fresh);
     await writeLedger(ledger);
   }
@@ -224,6 +275,10 @@ async function importCsv({ csv, account, dryRun } = {}) {
     balanceCheck: check,
     dryRun: !!dryRun,
     saved,
+    is_initial: isInitial,
+    opening_suggested: openingSuggested,
+    opening_applied: opening,
+    opening_date: openingDate,
     preview: fresh.slice(0, 10).map((t) => ({
       date: t.date, narrative: t.narrative, amount: t.amount, balance: t.balance,
     })),
@@ -236,6 +291,7 @@ module.exports = {
   CANONICAL_HEADER,
   init,
   listTransactions,
+  getMeta,
   parseTransactions,
   balanceCheck,
   importCsv,

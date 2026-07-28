@@ -65,6 +65,12 @@ A row is money-in or money-out depending on which of Debit/Credit is populated.
 - **Import screen UX.** Choose file → preview first few mapped rows → confirm →
   result summary (added / skipped / balance check ok or warning). Mirror the
   calm, single-purpose feel of the invoice screens.
+- **Opening balance (one-off).** On the very first import (empty ledger) show an
+  Opening balance field, pre-filled from the first row (its Balance minus that
+  row's own movement) and editable. Stored once on the ledger
+  (`opening_balance` + `opening_date`); later imports carry on from it and never
+  ask again. It also anchors the integrity check — the opening figure must line
+  up with the first row's Balance, or the import warns.
 
 ## Out of scope (later jobs)
 - Matching credits to invoices and categorizing → job 2.
