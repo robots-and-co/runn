@@ -77,6 +77,13 @@ A row is money-in or money-out depending on which of Debit/Credit is populated.
 - Any overview or forecast → jobs 3 and 4.
 
 ## Decisions
+2026-07-28 (fix) — Real bank export lists rows **newest-first**; the balance
+check and opening-balance derivation assumed oldest-first, producing a false
+"a row may be missing" warning and a wrong opening (the latest balance, not the
+opening one). Added `orderChronological()` — detects direction from the first
+differing-date pair and reverses a newest-first file to oldest-first before any
+balance work and before storing. Verified both orderings pass.
+
 2026-07-28 — Built and live. Backend `worker/transactions.js` (CSV parse,
 Serial de-dup, running-balance integrity check) + routes `GET /transactions`,
 `POST /transactions/import` (with `dryRun` preview). Ledger stored as a single

@@ -178,10 +178,23 @@ function parseTransactions(csv, accountOverride) {
   return { rows: out };
 }
 
-// Integrity check: within the imported batch, each row's Balance must equal the
-// previous row's Balance +credit -debit. If it breaks, a row is likely missing —
-// surface it rather than silently accepting a gap. Rows are checked in file order
-// (the order the bank exported them), which is the order the running balance moves.
+// Bank exports vary: some list oldest-first, some newest-first. The running
+// balance only walks cleanly oldest-first, so put the batch in chronological
+// order before any balance work. Direction is decided by the first pair of rows
+// with differing dates; a strictly newest-first file is simply reversed (which
+// also restores correct within-day order). Mixed/again-sorted files fall back to
+// as-given and the balance check will flag any true inconsistency.
+function orderChronological(rows) {
+  for (let i = 1; i < rows.length; i++) {
+    const a = rows[i - 1].date, b = rows[i].date;
+    if (a !== b) return a > b ? rows.slice().reverse() : rows;
+  }
+  return rows;
+}
+
+// Integrity check: with rows in chronological order, each row's Balance must
+// equal the previous row's Balance +credit -debit. If it breaks, a row is likely
+// missing — surface it rather than silently accepting a gap.
 function balanceCheck(rows, opening) {
   const withBal = rows.filter((r) => r.balance != null);
   // When an opening balance is given (the first import), also anchor the very
@@ -229,7 +242,7 @@ async function importCsv({ csv, account, dryRun, opening_balance, opening_date }
   const parsed = parseTransactions(csv, account);
   if (parsed.error) { const e = new Error(parsed.error); e.status = 400; throw e; }
 
-  const incoming = parsed.rows;
+  const incoming = orderChronological(parsed.rows); // oldest-first, whatever the bank's export order
   const ledger = await readLedger();
   const isInitial = ledger.transactions.length === 0;
 
