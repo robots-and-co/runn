@@ -188,20 +188,6 @@ function parseTransactions(csv, accountOverride) {
   return { rows: out };
 }
 
-// Bank exports vary: some list oldest-first, some newest-first. The running
-// balance only walks cleanly oldest-first, so put the batch in chronological
-// order before any balance work. Direction is decided by the first pair of rows
-// with differing dates; a strictly newest-first file is simply reversed (which
-// also restores correct within-day order). Mixed/again-sorted files fall back to
-// as-given and the balance check will flag any true inconsistency.
-function orderChronological(rows) {
-  for (let i = 1; i < rows.length; i++) {
-    const a = rows[i - 1].date, b = rows[i].date;
-    if (a !== b) return a > b ? rows.slice().reverse() : rows;
-  }
-  return rows;
-}
-
 // Which way the file is sorted, from the first pair of rows with differing dates.
 function fileDirection(rows) {
   for (let i = 1; i < rows.length; i++) {
@@ -247,7 +233,7 @@ async function importCsv({ csv, account, dryRun, opening_balance, opening_date }
   const parsed = parseTransactions(csv, account);
   if (parsed.error) { const e = new Error(parsed.error); e.status = 400; throw e; }
 
-  const incoming = orderChronological(parsed.rows); // oldest-first, whatever the bank's export order
+  const incoming = parsed.rows; // keep the bank's own row order so the ledger reads like the bank's page
   const ledger = await readLedger();
   const isInitial = ledger.transactions.length === 0;
 
@@ -263,7 +249,8 @@ async function importCsv({ csv, account, dryRun, opening_balance, opening_date }
   const openingSuggested = end ? round2(end.balance - batchSum) : null;
   const opening = isInitial ? (explicitOpening != null ? explicitOpening : openingSuggested)
                             : (ledger.opening_balance ?? null);
-  const openingDate = isInitial ? (opening_date || incoming[0]?.date || null)
+  const earliestDate = incoming.reduce((m, r) => (r.date && (!m || r.date < m)) ? r.date : m, null);
+  const openingDate = isInitial ? (opening_date || earliestDate)
                                 : (ledger.opening_date ?? null);
 
   const seen = new Set(ledger.transactions.map((t) => t._key || dedupKey(t)));

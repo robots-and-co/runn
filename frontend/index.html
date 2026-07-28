@@ -2574,33 +2574,24 @@
       if (host) host.innerHTML = `<div class="fin-summary"><span class="fin-check-bad">Import failed: ${esc(e.message)}</span></div>`;
     }
   }
-  // Running balance is CALCULATED, not read from the bank's Balance column:
-  // opening balance + each movement, accumulated in date order. (Same-day order
-  // is the bank's own business and doesn't affect the running total.)
-  function computeRunningBalances() {
-    const meta = state.financeMeta || {};
-    const asc = [...state.transactions].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    let running = (meta.opening_balance != null) ? Number(meta.opening_balance) : 0;
-    const byId = new Map();
-    for (const t of asc) { running = Math.round((running + (Number(t.amount) || 0)) * 100) / 100; byId.set(t.id, running); }
-    return byId;
-  }
   function renderLedger(wrap) {
-    const rows = [...state.transactions].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    // Show rows in the bank's own order (as exported) and the bank's own Balance
+    // figure — so this reads exactly like the bank's page. We don't re-sort:
+    // the bank's export isn't strictly date-ordered, and any re-sort would make
+    // it stop matching. The calculated total (header) is the completeness check.
+    const rows = state.transactions;
     const meta = state.financeMeta || {};
-    const calc = computeRunningBalances();
     const head = document.createElement('div');
     head.className = 'fin-ledger-head';
-    const openTxt = meta.opening_balance != null ? ' · opening ' + money(meta.opening_balance) : '';
-    const balTxt = meta.calculated_balance != null ? ' · balance ' + money(meta.calculated_balance) : '';
-    let bankTxt = '';
+    const curTxt = meta.bank_current_balance != null ? ' · current ' + money(meta.bank_current_balance) : '';
+    let checkTxt = '';
     if (meta.calculated_balance != null && meta.bank_current_balance != null) {
       const match = Math.abs(meta.calculated_balance - meta.bank_current_balance) <= 0.005;
-      bankTxt = match
-        ? ' <span class="fin-check-ok">✓ matches bank</span>'
-        : ` <span class="fin-check-bad">⚠ bank says ${esc(money(meta.bank_current_balance))}</span>`;
+      checkTxt = match
+        ? ' <span class="fin-check-ok">✓ adds up</span>'
+        : ` <span class="fin-check-bad">⚠ calculated ${esc(money(meta.calculated_balance))} — some may be missing</span>`;
     }
-    head.innerHTML = `<h3>Imported transactions</h3><span class="sub">${rows.length} row${rows.length === 1 ? '' : 's'}${openTxt}${balTxt}${bankTxt}</span>`;
+    head.innerHTML = `<h3>Imported transactions</h3><span class="sub">${rows.length} row${rows.length === 1 ? '' : 's'}${curTxt}${checkTxt}</span>`;
     wrap.appendChild(head);
     if (!rows.length) {
       const e = document.createElement('div'); e.className = 'fin-soon';
@@ -2613,11 +2604,10 @@
     table.innerHTML = '<thead><tr><th>Date</th><th>Description</th><th>Money in / out</th><th>Balance</th></tr></thead>';
     const tb = document.createElement('tbody');
     for (const t of rows.slice(0, 500)) {
-      const b = calc.get(t.id);
       const tr = document.createElement('tr');
       tr.innerHTML = `<td>${esc(fmtDate(t.date))}</td><td class="narr">${esc(t.narrative)}</td>`
         + `<td class="amt ${Number(t.amount) < 0 ? 'out' : 'in'}">${moneySigned('$', t.amount)}</td>`
-        + `<td class="bal">${b == null ? '' : money(b)}</td>`;
+        + `<td class="bal">${t.balance == null ? '' : money(t.balance)}</td>`;
       tb.appendChild(tr);
     }
     table.appendChild(tb);

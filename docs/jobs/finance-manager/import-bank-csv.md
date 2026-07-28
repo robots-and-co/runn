@@ -77,6 +77,15 @@ A row is money-in or money-out depending on which of Debit/Credit is populated.
 - Any overview or forecast → jobs 3 and 4.
 
 ## Decisions
+2026-07-28 (display) — The ledger must **eyeball-match the bank's own page**, so
+we store + show rows in the bank's exact export order (no re-sort — the export
+isn't strictly date-ordered) and show the bank's own Balance figure per row. The
+calculated total stays as the behind-the-scenes completeness check only (shown in
+the header as "current $X ✓ adds up" / "⚠ some may be missing"); it is NOT used
+as the per-row display balance (a date re-sort scrambled same-day rows and made
+the page look nothing like the bank's). "Current balance" = the Balance on the
+bank's most-recent row (native-order endpoint).
+
 2026-07-28 (reshape) — Bank dates carry **no time**, so same-day rows are ordered
 by the bank's own version of events and its per-row Balance can't be reproduced
 from a date alone. So the running balance is now **calculated** (opening balance
