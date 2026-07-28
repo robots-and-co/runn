@@ -2575,21 +2575,26 @@
     }
   }
   function renderLedger(wrap) {
-    // Show rows in the bank's own order (as exported) and the bank's own Balance
-    // figure — so this reads exactly like the bank's page. We don't re-sort:
-    // the bank's export isn't strictly date-ordered, and any re-sort would make
-    // it stop matching. The calculated total (header) is the completeness check.
-    const rows = state.transactions;
     const meta = state.financeMeta || {};
+    // Calculate the running balance from the OLDEST up: start at the opening
+    // balance, add each movement in date order. Then show the list latest-first
+    // (newest at the top, like the bank's website) — so the balance climbs as you
+    // read downward toward the opening, and the top row is the current balance.
+    const chrono = [...state.transactions].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    let running = (meta.opening_balance != null) ? Number(meta.opening_balance) : 0;
+    const calcById = new Map();
+    for (const t of chrono) { running = round2(running + (Number(t.amount) || 0)); calcById.set(t.id, running); }
+    const rows = [...chrono].reverse(); // latest at the top
+
     const head = document.createElement('div');
     head.className = 'fin-ledger-head';
-    const curTxt = meta.bank_current_balance != null ? ' · current ' + money(meta.bank_current_balance) : '';
+    const curTxt = meta.calculated_balance != null ? ' · current ' + money(meta.calculated_balance) : '';
     let checkTxt = '';
     if (meta.calculated_balance != null && meta.bank_current_balance != null) {
       const match = Math.abs(meta.calculated_balance - meta.bank_current_balance) <= 0.005;
       checkTxt = match
         ? ' <span class="fin-check-ok">✓ adds up</span>'
-        : ` <span class="fin-check-bad">⚠ calculated ${esc(money(meta.calculated_balance))} — some may be missing</span>`;
+        : ` <span class="fin-check-bad">⚠ bank says ${esc(money(meta.bank_current_balance))} — some may be missing</span>`;
     }
     head.innerHTML = `<h3>Imported transactions</h3><span class="sub">${rows.length} row${rows.length === 1 ? '' : 's'}${curTxt}${checkTxt}</span>`;
     wrap.appendChild(head);
@@ -2604,10 +2609,11 @@
     table.innerHTML = '<thead><tr><th>Date</th><th>Description</th><th>Money in / out</th><th>Balance</th></tr></thead>';
     const tb = document.createElement('tbody');
     for (const t of rows.slice(0, 500)) {
+      const b = calcById.get(t.id);
       const tr = document.createElement('tr');
       tr.innerHTML = `<td>${esc(fmtDate(t.date))}</td><td class="narr">${esc(t.narrative)}</td>`
         + `<td class="amt ${Number(t.amount) < 0 ? 'out' : 'in'}">${moneySigned('$', t.amount)}</td>`
-        + `<td class="bal">${t.balance == null ? '' : money(t.balance)}</td>`;
+        + `<td class="bal">${b == null ? '' : money(b)}</td>`;
       tb.appendChild(tr);
     }
     table.appendChild(tb);

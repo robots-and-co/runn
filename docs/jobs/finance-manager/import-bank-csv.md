@@ -77,14 +77,18 @@ A row is money-in or money-out depending on which of Debit/Credit is populated.
 - Any overview or forecast → jobs 3 and 4.
 
 ## Decisions
-2026-07-28 (display) — The ledger must **eyeball-match the bank's own page**, so
-we store + show rows in the bank's exact export order (no re-sort — the export
-isn't strictly date-ordered) and show the bank's own Balance figure per row. The
-calculated total stays as the behind-the-scenes completeness check only (shown in
-the header as "current $X ✓ adds up" / "⚠ some may be missing"); it is NOT used
-as the per-row display balance (a date re-sort scrambled same-day rows and made
-the page look nothing like the bank's). "Current balance" = the Balance on the
-bank's most-recent row (native-order endpoint).
+2026-07-29 (display, final) — Ledger shows **latest at the top** (like the bank's
+website; the CSV itself exports oldest-first) and a **calculated** running
+balance that flows from the oldest row up: start at the opening balance, add each
+movement in date order, so the top row equals the current balance. The bank's own
+per-row Balance column is NOT displayed (can't be reproduced across same-day
+rows). Header: "current $X ✓ adds up" (calculated vs the bank's stated current)
+or "⚠ bank says $Y — some may be missing". Store stays in the CSV's native order;
+display sorts date-ascending for the running total then reverses for latest-first.
+
+2026-07-28 (display, superseded) — briefly tried showing the bank's Balance
+column verbatim in native order; wrong — the bank's site is latest-first and the
+per-row balance can't be reproduced. See the final entry above.
 
 2026-07-28 (reshape) — Bank dates carry **no time**, so same-day rows are ordered
 by the bank's own version of events and its per-row Balance can't be reproduced
