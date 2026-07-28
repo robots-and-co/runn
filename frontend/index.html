@@ -1067,6 +1067,12 @@
     body.show-finance .finance-pane { transform: translateX(0); }
     body.show-finance .chat-pane { display: flex; }
     body.show-finance .list-foot { display: none; }
+    /* The finance header reuses .chat-head, which becomes a chat-specific GRID on
+       mobile — that misplaced the finance buttons and wrapped the $ to a new row.
+       Force a plain flex row here; hide the "local only" badge to keep it on one line. */
+    .chat-head.finance-head { display: flex; align-items: center; gap: 8px; }
+    .finance-head .fin-local { display: none; }
+    .finance-head .finance-btn { margin-left: auto; }  /* badge hidden → push the buttons right */
     .finance-body { padding: 14px; }
     table.fin-table { font-size: 12px; }
     table.fin-table th, table.fin-table td { padding: 6px 6px; }
