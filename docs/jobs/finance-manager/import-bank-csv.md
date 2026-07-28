@@ -77,6 +77,19 @@ A row is money-in or money-out depending on which of Debit/Credit is populated.
 - Any overview or forecast → jobs 3 and 4.
 
 ## Decisions
+2026-07-28 (reshape) — Bank dates carry **no time**, so same-day rows are ordered
+by the bank's own version of events and its per-row Balance can't be reproduced
+from a date alone. So the running balance is now **calculated** (opening balance
++ every movement, in date order) — never read from the CSV Balance column. The
+integrity check is **start-to-end**: opening + all movements (order-independent)
+must equal the bank's current balance (the Balance on the bank's most-recent row,
+read from the file's native order). This survives same-day shuffles and still
+catches a genuinely missing batch. Opening on the first import is suggested as
+`bank_current − this statement's movements` and is editable. New meta fields:
+`calculated_balance`, `bank_current_balance`. Replaces the earlier per-row
+balance check (and the newest-first ordering fix below, which per-row check no
+longer needs — ordering is still used only for display + storage).
+
 2026-07-28 (fix) — Real bank export lists rows **newest-first**; the balance
 check and opening-balance derivation assumed oldest-first, producing a false
 "a row may be missing" warning and a wrong opening (the latest balance, not the

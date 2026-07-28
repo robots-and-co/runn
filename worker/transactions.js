@@ -52,17 +52,27 @@ async function readLedger() {
   if (l && Array.isArray(l.transactions)) {
     if (l.opening_balance === undefined) l.opening_balance = null; // set once, on the first import
     if (l.opening_date === undefined) l.opening_date = null;
+    if (l.bank_current_balance === undefined) l.bank_current_balance = null;
+    if (l.bank_current_date === undefined) l.bank_current_date = null;
     return l;
   }
-  return { version: 1, transactions: [], opening_balance: null, opening_date: null };
+  return {
+    version: 1, transactions: [],
+    opening_balance: null, opening_date: null,
+    bank_current_balance: null, bank_current_date: null,
+  };
 }
 
 async function getMeta() {
   const l = await readLedger();
+  const movements = round2(l.transactions.reduce((s, t) => s + (Number(t.amount) || 0), 0));
+  const calculated = (l.opening_balance != null) ? round2(Number(l.opening_balance) + movements) : null;
   return {
     count: l.transactions.length,
     opening_balance: l.opening_balance ?? null,
     opening_date: l.opening_date ?? null,
+    calculated_balance: calculated,               // opening + every movement (our source of truth)
+    bank_current_balance: l.bank_current_balance ?? null, // bank's last stated balance (cross-check)
   };
 }
 async function writeLedger(l) { await atomicWriteJson(LEDGER_PATH, l); }
@@ -192,47 +202,42 @@ function orderChronological(rows) {
   return rows;
 }
 
-// Integrity check: with rows in chronological order, each row's Balance must
-// equal the previous row's Balance +credit -debit. If it breaks, a row is likely
-// missing — surface it rather than silently accepting a gap.
-function balanceCheck(rows, opening) {
-  const withBal = rows.filter((r) => r.balance != null);
-  // When an opening balance is given (the first import), also anchor the very
-  // first row to it: opening + first row's movement should equal its Balance.
-  if (opening != null && withBal.length) {
-    const first = withBal[0];
-    const expected = round2(Number(opening) + first.amount);
-    if (Math.abs(expected - first.balance) > 0.005) {
-      return {
-        ok: false,
-        checked: 1,
-        message: `the opening balance ${round2(opening)} doesn't line up with the first row "${first.narrative}" (${first.date}): expected ${expected}, file says ${first.balance}.`,
-      };
-    }
+// Which way the file is sorted, from the first pair of rows with differing dates.
+function fileDirection(rows) {
+  for (let i = 1; i < rows.length; i++) {
+    const a = rows[i - 1].date, b = rows[i].date;
+    if (a !== b) return a > b ? 'desc' : 'asc';
   }
-  if (withBal.length < 2) {
+  return 'asc';
+}
+
+// The bank's CURRENT balance = the Balance on the row the bank lists as most
+// recent. We read it from the file's OWN order (not our date-only re-sort),
+// because within a single day the bank's ordering — and so its running balance —
+// is authoritative and we can't reconstruct it from a date alone. This one
+// endpoint figure is all we trust from the Balance column.
+function bankEndBalance(rows) {
+  const seq = fileDirection(rows) === 'desc' ? rows : rows.slice().reverse(); // seq[0] = most recent
+  for (const r of seq) if (r.balance != null) return { balance: r.balance, date: r.date };
+  return null;
+}
+
+// Integrity check that survives same-day ordering: opening balance + every
+// movement (order-independent) must equal the bank's current balance. If they
+// disagree, some transactions are missing — a whole batch, not a row shuffle.
+function startEndCheck(opening, movementsSum, end) {
+  if (opening == null || !end) {
+    return { ok: true, message: 'no bank balance to check against — using the calculated balance' };
+  }
+  const calculated = round2(Number(opening) + Number(movementsSum));
+  if (Math.abs(calculated - end.balance) > 0.005) {
+    const diff = round2(end.balance - calculated);
     return {
-      ok: true,
-      checked: withBal.length,
-      message: (opening != null && withBal.length) ? 'opening balance lines up with the first row' : 'no running balance to verify',
+      ok: false,
+      message: `calculated balance ${calculated} doesn't match the bank's current balance ${end.balance} (out by ${diff}). Some transactions are probably missing.`,
     };
   }
-  for (let i = 1; i < withBal.length; i++) {
-    const prev = withBal[i - 1], cur = withBal[i];
-    const expected = round2(prev.balance + cur.credit - cur.debit);
-    if (Math.abs(expected - cur.balance) > 0.005) {
-      return {
-        ok: false,
-        checked: i + 1,
-        message: `running balance breaks around "${cur.narrative}" (${cur.date}): expected ${expected}, file says ${cur.balance}. A row may be missing between imports.`,
-      };
-    }
-  }
-  return {
-    ok: true,
-    checked: withBal.length,
-    message: `running balance matches across all ${withBal.length} rows` + (opening != null ? ' (and the opening balance)' : ''),
-  };
+  return { ok: true, message: `calculated balance ${calculated} matches the bank's current balance` };
 }
 
 // Import (or preview) a CSV. body: { csv, account?, dryRun? }.
@@ -246,21 +251,20 @@ async function importCsv({ csv, account, dryRun, opening_balance, opening_date }
   const ledger = await readLedger();
   const isInitial = ledger.transactions.length === 0;
 
-  // Opening balance is a one-off: set on the very first import only. Prefer an
-  // explicit value; otherwise suggest it from the first row (its Balance minus
-  // that row's own movement = the balance that existed before it).
-  const firstWithBal = incoming.find((r) => r.balance != null);
-  const openingSuggested = firstWithBal ? round2(firstWithBal.balance - firstWithBal.amount) : null;
+  // The bank's current balance (this file's endpoint) and the batch's net move.
+  const end = bankEndBalance(parsed.rows);
+  const batchSum = round2(incoming.reduce((s, r) => s + r.amount, 0));
+
+  // Opening balance is a one-off, set on the first import. Prefer an explicit
+  // value; otherwise derive it so start + this statement's movements land on the
+  // bank's current balance (opening = current − movements). Order-independent.
   const explicitOpening = (opening_balance != null && opening_balance !== '' && Number.isFinite(Number(opening_balance)))
     ? round2(Number(opening_balance)) : null;
+  const openingSuggested = end ? round2(end.balance - batchSum) : null;
   const opening = isInitial ? (explicitOpening != null ? explicitOpening : openingSuggested)
                             : (ledger.opening_balance ?? null);
-  const openingDate = isInitial ? (opening_date || (firstWithBal ? firstWithBal.date : null))
+  const openingDate = isInitial ? (opening_date || incoming[0]?.date || null)
                                 : (ledger.opening_date ?? null);
-
-  // Only anchor the batch to the opening balance on the first import; on later
-  // imports the anchor is far in the past, so we just check the batch internally.
-  const check = balanceCheck(incoming, isInitial ? opening : null);
 
   const seen = new Set(ledger.transactions.map((t) => t._key || dedupKey(t)));
   const rules = (await readRules()).rules;   // learn-once rules applied on the way in
@@ -293,9 +297,22 @@ async function importCsv({ csv, account, dryRun, opening_balance, opening_date }
     fresh.push(rec);
   }
 
+  // Net movement of the ledger AFTER this import (existing + new). Order-free.
+  const prospectiveSum = round2(
+    ledger.transactions.reduce((s, t) => s + (Number(t.amount) || 0), 0)
+    + fresh.reduce((s, t) => s + t.amount, 0),
+  );
+  const check = startEndCheck(opening, prospectiveSum, end);
+  const calculated = (opening != null) ? round2(Number(opening) + prospectiveSum) : null;
+
   const saved = !dryRun && fresh.length > 0;
   if (saved) {
     if (isInitial && opening != null) { ledger.opening_balance = opening; ledger.opening_date = openingDate; }
+    // Remember the bank's latest stated current balance (a cross-check for the overview).
+    if (end && (ledger.bank_current_date == null || end.date >= ledger.bank_current_date)) {
+      ledger.bank_current_balance = end.balance;
+      ledger.bank_current_date = end.date;
+    }
     ledger.transactions.push(...fresh);
     await writeLedger(ledger);
   }
@@ -313,8 +330,10 @@ async function importCsv({ csv, account, dryRun, opening_balance, opening_date }
     opening_suggested: openingSuggested,
     opening_applied: opening,
     opening_date: openingDate,
+    calculated_balance: calculated,
+    bank_current_balance: end ? end.balance : null,
     preview: fresh.slice(0, 10).map((t) => ({
-      date: t.date, narrative: t.narrative, amount: t.amount, balance: t.balance,
+      date: t.date, narrative: t.narrative, amount: t.amount,
     })),
   };
 }
@@ -417,7 +436,8 @@ module.exports = {
   listTransactions,
   getMeta,
   parseTransactions,
-  balanceCheck,
+  bankEndBalance,
+  startEndCheck,
   importCsv,
   listCategories,
   addCategory,

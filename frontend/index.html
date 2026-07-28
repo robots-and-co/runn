@@ -2458,7 +2458,7 @@
     const wrap = document.createElement('div');
     wrap.className = 'fin-screen';
     wrap.innerHTML = `
-      <p class="fin-lead">Bring in a bank CSV. Rows you've already imported are skipped automatically (matched on the bank's Serial), and the running balance is checked for gaps. Nothing here leaves this machine.</p>
+      <p class="fin-lead">Bring in a bank CSV. Rows you've already imported are skipped automatically (matched on the bank's Serial). Your balance is calculated from your opening figure plus every transaction, and cross-checked against the bank's current balance to catch anything missing. Nothing here leaves this machine.</p>
       <div class="fin-drop" id="finDrop">
         <div class="big">Choose a CSV file</div>
         <div class="small">or drag it here — or paste the rows below</div>
@@ -2515,15 +2515,15 @@
     const s = p.summary, chk = s.balanceCheck || {};
     const rows = (s.preview || []).map((t) => `
       <tr><td>${esc(fmtDate(t.date))}</td><td class="narr">${esc(t.narrative)}</td>
-      <td class="amt ${Number(t.amount) < 0 ? 'out' : 'in'}">${moneySigned('$', t.amount)}</td>
-      <td class="bal">${t.balance == null ? '' : money(t.balance)}</td></tr>`).join('');
+      <td class="amt ${Number(t.amount) < 0 ? 'out' : 'in'}">${moneySigned('$', t.amount)}</td></tr>`).join('');
     // Opening balance: a one-off, shown only on the very first import (empty
-    // ledger). Pre-filled from the first row; the operator can correct it.
+    // ledger). Pre-filled so start + this statement lands on the bank's current
+    // balance; the operator can correct it to their known opening figure.
     const openBlock = s.is_initial ? `
       <div class="fin-summary">
         <div class="row"><span class="k">Opening balance</span>
           <span><span class="fin-money-pre">$</span><input id="finOpening" class="fin-opening-input" inputmode="decimal" value="${s.opening_applied != null ? s.opening_applied : ''}"></span></div>
-        <div class="fin-note" style="margin:6px 0 0">The balance just before the first row${s.opening_date ? ' (' + esc(fmtDate(s.opening_date)) + ')' : ''}. Set once — later imports carry on from here.</div>
+        <div class="fin-note" style="margin:6px 0 0">Your balance before the earliest transaction. Set once — later imports carry on from here. Every balance is then calculated from this, not read from the file.</div>
       </div>` : '';
     host.innerHTML = `
       ${openBlock}
@@ -2531,10 +2531,11 @@
         <div class="row"><span class="k">Rows read</span><span>${s.parsed}</span></div>
         <div class="row"><span class="k">New to add</span><span>${s.added}</span></div>
         <div class="row"><span class="k">Already imported</span><span>${s.skipped}</span></div>
+        ${s.calculated_balance != null ? `<div class="row"><span class="k">Calculated balance</span><span>${esc(money(s.calculated_balance))}</span></div>` : ''}
         <div class="row"><span class="k">Balance check</span>
           <span class="${chk.ok ? 'fin-check-ok' : 'fin-check-bad'}">${chk.ok ? '✓ ' : '⚠ '}${esc(chk.message || '')}</span></div>
       </div>
-      ${rows ? `<table class="fin-table"><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${rows}</tbody></table>
+      ${rows ? `<table class="fin-table"><thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="fin-note">Preview of the first rows to be added.</div>` : ''}
       <div class="fin-actions">
         <button class="fin-btn" id="finConfirm" ${s.added ? '' : 'disabled'}>${s.added ? `Import ${s.added} transaction${s.added === 1 ? '' : 's'}` : 'Nothing new to import'}</button>
@@ -2573,22 +2574,33 @@
       if (host) host.innerHTML = `<div class="fin-summary"><span class="fin-check-bad">Import failed: ${esc(e.message)}</span></div>`;
     }
   }
-  function latestBalance() {
-    let best = null;
-    for (const t of state.transactions) {
-      if (t.balance == null) continue;
-      if (!best || String(t.date) > String(best.date)) best = t;
-    }
-    return best ? best.balance : null;
+  // Running balance is CALCULATED, not read from the bank's Balance column:
+  // opening balance + each movement, accumulated in date order. (Same-day order
+  // is the bank's own business and doesn't affect the running total.)
+  function computeRunningBalances() {
+    const meta = state.financeMeta || {};
+    const asc = [...state.transactions].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    let running = (meta.opening_balance != null) ? Number(meta.opening_balance) : 0;
+    const byId = new Map();
+    for (const t of asc) { running = Math.round((running + (Number(t.amount) || 0)) * 100) / 100; byId.set(t.id, running); }
+    return byId;
   }
   function renderLedger(wrap) {
     const rows = [...state.transactions].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const meta = state.financeMeta || {};
+    const calc = computeRunningBalances();
     const head = document.createElement('div');
     head.className = 'fin-ledger-head';
-    const bal = latestBalance();
-    const meta = state.financeMeta || {};
     const openTxt = meta.opening_balance != null ? ' · opening ' + money(meta.opening_balance) : '';
-    head.innerHTML = `<h3>Imported transactions</h3><span class="sub">${rows.length} row${rows.length === 1 ? '' : 's'}${openTxt}${bal != null ? ' · latest balance ' + money(bal) : ''}</span>`;
+    const balTxt = meta.calculated_balance != null ? ' · balance ' + money(meta.calculated_balance) : '';
+    let bankTxt = '';
+    if (meta.calculated_balance != null && meta.bank_current_balance != null) {
+      const match = Math.abs(meta.calculated_balance - meta.bank_current_balance) <= 0.005;
+      bankTxt = match
+        ? ' <span class="fin-check-ok">✓ matches bank</span>'
+        : ` <span class="fin-check-bad">⚠ bank says ${esc(money(meta.bank_current_balance))}</span>`;
+    }
+    head.innerHTML = `<h3>Imported transactions</h3><span class="sub">${rows.length} row${rows.length === 1 ? '' : 's'}${openTxt}${balTxt}${bankTxt}</span>`;
     wrap.appendChild(head);
     if (!rows.length) {
       const e = document.createElement('div'); e.className = 'fin-soon';
@@ -2601,10 +2613,11 @@
     table.innerHTML = '<thead><tr><th>Date</th><th>Description</th><th>Money in / out</th><th>Balance</th></tr></thead>';
     const tb = document.createElement('tbody');
     for (const t of rows.slice(0, 500)) {
+      const b = calc.get(t.id);
       const tr = document.createElement('tr');
       tr.innerHTML = `<td>${esc(fmtDate(t.date))}</td><td class="narr">${esc(t.narrative)}</td>`
         + `<td class="amt ${Number(t.amount) < 0 ? 'out' : 'in'}">${moneySigned('$', t.amount)}</td>`
-        + `<td class="bal">${t.balance == null ? '' : money(t.balance)}</td>`;
+        + `<td class="bal">${b == null ? '' : money(b)}</td>`;
       tb.appendChild(tr);
     }
     table.appendChild(tb);
