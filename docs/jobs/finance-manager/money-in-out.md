@@ -1,6 +1,6 @@
 ---
 order: 2
-status: todo
+status: doing
 title: Money in & out — match to invoices, categorize
 ---
 
@@ -56,3 +56,20 @@ future imports do it automatically.
 
 ## Out of scope
 - Charts / cash position → job 3. Projection → job 4.
+
+## Decisions
+2026-07-28 — Backend core built + unit-tested (categories, learn-once rules,
+tagging). Learn-once keys on a Narrative "stem": lowercased, whitespace-
+collapsed, trailing reference/date tokens (pure digits, dates, card refs)
+stripped, so "AGL ENERGY 111" and "AGL ENERGY 999" share one rule; names with
+letters ("7-eleven") are preserved. Tagging a row's category/recurring teaches a
+rule (unless `make_rule:false`); rules apply on the way in during import
+(`auto_tagged` count returned). Stores: `finance/categories.json` (6 seed
+categories, extendable), `finance/rules.json`. Routes: `PATCH /transactions/:id`
+(category/recurring/invoice_id), `GET|POST /finance/categories`,
+`GET /finance/rules`, `DELETE /finance/rules/:stem`.
+
+**Still to build:** (a) invoice reconciliation — match a bank credit to the
+invoice it paid (auto-suggest by amount+date, confirm sets `invoice_id`; the
+no-double-count read logic lands with the overview in job 3); (b) the "Money in
+& out" screen itself (the tab is a placeholder). Screen UX pending operator sign-off.

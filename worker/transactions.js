@@ -23,11 +23,27 @@ const { DATA_ROOT, readJsonOr, atomicWriteJson, ensureDir } = require('./store')
 
 const FINANCE_DIR = path.join(DATA_ROOT, 'finance');
 const LEDGER_PATH = path.join(FINANCE_DIR, 'transactions.json');
+const CATEGORIES_PATH = path.join(FINANCE_DIR, 'categories.json');
+const RULES_PATH = path.join(FINANCE_DIR, 'rules.json');
 
 const CANONICAL_HEADER = 'Bank Account,Date,Narrative,Debit Amount,Credit Amount,Balance,Categories,Serial';
 
+// A few sensible starter categories the operator can extend or delete — not a
+// fixed taxonomy. kind: 'in' (money in), 'out' (money out), 'both'.
+const DEFAULT_CATEGORIES = [
+  { id: 'client-income', name: 'Client income', kind: 'in' },
+  { id: 'other-income',  name: 'Other income',  kind: 'in' },
+  { id: 'utilities',     name: 'Utilities',      kind: 'out' },
+  { id: 'software',      name: 'Software',        kind: 'out' },
+  { id: 'supplies',      name: 'Supplies',        kind: 'out' },
+  { id: 'bank-fees',     name: 'Bank fees',       kind: 'out' },
+];
+
 const nowIso = () => new Date().toISOString();
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+function slugify(s) {
+  return String(s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || null;
+}
 
 async function init() { await ensureDir(FINANCE_DIR); }
 
@@ -234,13 +250,14 @@ async function importCsv({ csv, account, dryRun, opening_balance, opening_date }
   const check = balanceCheck(incoming, isInitial ? opening : null);
 
   const seen = new Set(ledger.transactions.map((t) => t._key || dedupKey(t)));
+  const rules = (await readRules()).rules;   // learn-once rules applied on the way in
 
   const fresh = [];
-  let skipped = 0;
+  let skipped = 0, autoTagged = 0;
   for (const t of incoming) {
     if (seen.has(t._key)) { skipped++; continue; } // already imported, or dup within this file
     seen.add(t._key);
-    fresh.push({
+    const rec = {
       id: t.id,
       account: t.account,
       date: t.date,
@@ -252,12 +269,15 @@ async function importCsv({ csv, account, dryRun, opening_balance, opening_date }
       balance: t.balance,
       bank_category: t.bank_category,
       serial: t.serial,
-      category: null,      // our own category — set in job 2
-      recurring: false,    // learn-once recurring flag — set in job 2
-      invoice_id: null,    // reconciliation link — set in job 2
+      category: null,      // our own category (learn-once rule may fill it below)
+      recurring: false,    // learn-once recurring flag
+      invoice_id: null,    // reconciliation link — set when matched to an invoice
       _key: t._key,
       imported_at: nowIso(),
-    });
+    };
+    applyRulesToRow(rec, rules);
+    if (rec.rule_applied) autoTagged++;
+    fresh.push(rec);
   }
 
   const saved = !dryRun && fresh.length > 0;
@@ -271,6 +291,7 @@ async function importCsv({ csv, account, dryRun, opening_balance, opening_date }
     parsed: incoming.length,
     added: fresh.length,
     skipped,
+    auto_tagged: autoTagged,
     total: ledger.transactions.length + (saved ? 0 : fresh.length),
     balanceCheck: check,
     dryRun: !!dryRun,
@@ -285,6 +306,96 @@ async function importCsv({ csv, account, dryRun, opening_balance, opening_date }
   };
 }
 
+// ── Categories ───────────────────────────────────────────────
+async function listCategories() {
+  const c = await readJsonOr(CATEGORIES_PATH, null);
+  if (c && Array.isArray(c.categories)) return c.categories;
+  await atomicWriteJson(CATEGORIES_PATH, { version: 1, categories: DEFAULT_CATEGORIES });
+  return DEFAULT_CATEGORIES;
+}
+async function addCategory({ name, kind } = {}) {
+  const nm = String(name || '').trim();
+  if (!nm) { const e = new Error('category name required'); e.status = 400; throw e; }
+  const k = (kind === 'in' || kind === 'out' || kind === 'both') ? kind : 'both';
+  const cats = await listCategories();
+  const id = slugify(nm);
+  if (!cats.some((c) => c.id === id)) {
+    cats.push({ id, name: nm, kind: k });
+    await atomicWriteJson(CATEGORIES_PATH, { version: 1, categories: cats });
+  }
+  return cats;
+}
+
+// ── Learn-once rules ─────────────────────────────────────────
+// A rule remembers, for a payee, the category and/or recurring flag the operator
+// set once. Keyed on a "stem" of the Narrative: lowercased, whitespace-collapsed,
+// with trailing reference/date tokens (pure digits, dates, card refs) stripped —
+// so "AGL ENERGY 1234" and "AGL ENERGY 9987" share one rule. Deterministic and
+// explainable; no fuzzy matching, no AI.
+function narrativeStem(s) {
+  const toks = String(s || '').toLowerCase().replace(/\s+/g, ' ').trim().split(' ');
+  while (toks.length > 1 && /^[\d/\-#*.:]+$/.test(toks[toks.length - 1])) toks.pop();
+  return toks.join(' ');
+}
+async function readRules() {
+  const r = await readJsonOr(RULES_PATH, null);
+  return (r && Array.isArray(r.rules)) ? r : { version: 1, rules: [] };
+}
+async function listRules() { return (await readRules()).rules; }
+async function writeRules(store) { await atomicWriteJson(RULES_PATH, store); }
+
+async function upsertRule({ narrative, category, recurring } = {}) {
+  const stem = narrativeStem(narrative);
+  if (!stem) return null;
+  const store = await readRules();
+  let rule = store.rules.find((r) => r.match === stem);
+  if (!rule) { rule = { match: stem, category: null, recurring: false, created_at: nowIso() }; store.rules.push(rule); }
+  if (category !== undefined) rule.category = category || null;
+  if (recurring !== undefined) rule.recurring = !!recurring;
+  rule.updated_at = nowIso();
+  // A rule with nothing to say is just noise — drop it.
+  if (rule.category == null && !rule.recurring) store.rules = store.rules.filter((r) => r !== rule);
+  await writeRules(store);
+  return rule;
+}
+async function deleteRule(stem) {
+  const store = await readRules();
+  const before = store.rules.length;
+  store.rules = store.rules.filter((r) => r.match !== stem);
+  if (store.rules.length !== before) await writeRules(store);
+  return store.rules.length !== before;
+}
+// Fill a row's category/recurring from the first matching rule (doesn't override
+// values already set on the row). Records which rule fired, for transparency.
+function applyRulesToRow(row, rules) {
+  const stem = narrativeStem(row.narrative);
+  const rule = rules.find((r) => r.match === stem);
+  if (!rule) return row;
+  if (rule.category != null && row.category == null) row.category = rule.category;
+  if (rule.recurring && !row.recurring) row.recurring = true;
+  row.rule_applied = rule.match;
+  return row;
+}
+
+// ── Tag / reconcile a single transaction ─────────────────────
+// patch: { category?, recurring?, invoice_id?, make_rule? }. Setting category or
+// recurring also teaches a learn-once rule (unless make_rule === false), so the
+// same payee is auto-tagged on future imports.
+async function patchTransaction(id, patch = {}) {
+  const ledger = await readLedger();
+  const t = ledger.transactions.find((x) => x.id === id);
+  if (!t) { const e = new Error('transaction not found'); e.status = 404; throw e; }
+  let taught = false;
+  if ('category' in patch) { t.category = patch.category || null; taught = true; }
+  if ('recurring' in patch) { t.recurring = !!patch.recurring; taught = true; }
+  if ('invoice_id' in patch) { t.invoice_id = patch.invoice_id || null; } // reconciliation link
+  await writeLedger(ledger);
+  if (taught && patch.make_rule !== false) {
+    await upsertRule({ narrative: t.narrative, category: t.category, recurring: t.recurring });
+  }
+  return t;
+}
+
 module.exports = {
   FINANCE_DIR,
   LEDGER_PATH,
@@ -295,4 +406,11 @@ module.exports = {
   parseTransactions,
   balanceCheck,
   importCsv,
+  listCategories,
+  addCategory,
+  listRules,
+  upsertRule,
+  deleteRule,
+  narrativeStem,
+  patchTransaction,
 };

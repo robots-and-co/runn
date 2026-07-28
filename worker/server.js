@@ -978,6 +978,28 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, await transactions.importCsv(body));
       } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
     }
+    if (m === 'PATCH' && (mm = url.pathname.match(/^\/transactions\/([^/]+)$/))) {
+      const body = await readBody(req);
+      try {
+        return sendJson(res, 200, await transactions.patchTransaction(mm[1], body));
+      } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+    }
+    if (m === 'GET' && url.pathname === '/finance/categories') {
+      return sendJson(res, 200, await transactions.listCategories());
+    }
+    if (m === 'POST' && url.pathname === '/finance/categories') {
+      const body = await readBody(req);
+      try {
+        return sendJson(res, 201, await transactions.addCategory(body));
+      } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+    }
+    if (m === 'GET' && url.pathname === '/finance/rules') {
+      return sendJson(res, 200, await transactions.listRules());
+    }
+    if (m === 'DELETE' && (mm = url.pathname.match(/^\/finance\/rules\/(.+)$/))) {
+      const ok = await transactions.deleteRule(decodeURIComponent(mm[1]));
+      return sendJson(res, 200, { ok });
+    }
 
     // ── Clients (read-only here; CRUD ported with billing later) ──
     if (m === 'GET' && url.pathname === '/clients') {
