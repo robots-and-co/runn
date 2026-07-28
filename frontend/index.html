@@ -458,6 +458,9 @@
     margin-left: auto; font-size: 12px; color: var(--muted);
     white-space: nowrap; padding-right: 4px;
   }
+  /* Chart button lives at the right of the finance header — same spot it sits in
+     the jobs-list header — so you can flip back from inside the finance view. */
+  .finance-head .finance-btn { margin-left: 8px; }
   .finance-tabs {
     display: flex; gap: 6px; padding: 10px 16px 0; flex-wrap: wrap;
     border-bottom: 1px solid var(--border);
@@ -1216,7 +1219,8 @@
     <section class="finance-pane" id="financePane">
       <div class="chat-head finance-head">
         <span class="ttl">Finances</span>
-        <span class="fin-local" title="Nothing here leaves this machine — no cloud, no AI">🔒 local only · tap 📊 to flip back</span>
+        <span class="fin-local" title="Nothing here leaves this machine — no cloud, no AI">🔒 local only</span>
+        <button class="finance-btn is-active" id="financeClose" type="button" title="Back to jobs" aria-label="Back to the jobs list">📊</button>
       </div>
       <div class="finance-tabs" id="financeTabs"></div>
       <div class="finance-body" id="financeBody"></div>
@@ -4228,6 +4232,7 @@
   $('backBtn').addEventListener('click', () => closeChat());
   $('billingBtn').addEventListener('click', toggleInvoices);
   $('financeBtn').addEventListener('click', toggleFinance);
+  $('financeClose').addEventListener('click', toggleFinance);   // same toggle, from inside the finance header
   // The doc-pane chevron (mobile only) returns to the invoice list.
   $('billingBack').addEventListener('click', closeBillingDoc);
   // Device/browser back button: pop back toward the jobs list instead of leaving.
