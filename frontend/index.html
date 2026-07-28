@@ -1221,6 +1221,9 @@
         <span class="ttl">Finances</span>
         <span class="fin-local" title="Nothing here leaves this machine — no cloud, no AI">🔒 local only</span>
         <button class="finance-btn is-active" id="financeClose" type="button" title="Back to jobs" aria-label="Back to the jobs list">📊</button>
+        <button class="total clickable" id="billingBtnFin" type="button" title="Invoices">
+          <span class="amt" id="valueTotalFin">0.00</span>
+        </button>
       </div>
       <div class="finance-tabs" id="financeTabs"></div>
       <div class="finance-body" id="financeBody"></div>
@@ -1579,7 +1582,9 @@
   }
   function renderTotal(jobs) {
     const total = jobs.reduce((s, j) => s + jobValue(j), 0);
-    $('valueTotal').textContent = total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const txt = total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    $('valueTotal').textContent = txt;
+    const fin = $('valueTotalFin'); if (fin) fin.textContent = txt;   // mirror in the finance header
   }
   // The 'open' filter is a group: every status that isn't wrapped up. The
   // picker also offers each status individually plus 'all'.
@@ -2447,6 +2452,16 @@
     // Flip out first (desktop), then tear down. Device-back (fromPop) closes instantly.
     if (fromPop) { teardown(); return; }
     finFlip('out', teardown);
+  }
+  // Jump straight from the finance page to invoices (flip out, then open it).
+  function financeToInvoices() {
+    finFlip('out', () => {
+      state.financePane = false;
+      state.importPreview = null;
+      document.body.classList.remove('show-finance');
+      $('financeBtn').classList.remove('is-active');
+      if (!state.invoicesPane) enterInvoices();
+    });
   }
   function openFinanceScreen(key) {
     const s = FINANCE_SCREENS.find((x) => x.key === key);
@@ -4233,6 +4248,7 @@
   $('billingBtn').addEventListener('click', toggleInvoices);
   $('financeBtn').addEventListener('click', toggleFinance);
   $('financeClose').addEventListener('click', toggleFinance);   // same toggle, from inside the finance header
+  $('billingBtnFin').addEventListener('click', financeToInvoices);   // finance header → invoices
   // The doc-pane chevron (mobile only) returns to the invoice list.
   $('billingBack').addEventListener('click', closeBillingDoc);
   // Device/browser back button: pop back toward the jobs list instead of leaving.
