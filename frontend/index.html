@@ -444,23 +444,21 @@
      once .finance-btn has claimed the free space). */
   .total { margin-left: 8px; }
 
-  .finance-pane { flex: 1; display: none; flex-direction: column; min-width: 0;
-    transform-origin: center center; backface-visibility: hidden; }
-  body.show-finance .finance-pane { display: flex; }
+  /* Finances lives INSIDE the flipping list body (like the invoices list), under
+     the fixed Runn header — so the 📊 button flips jobs ⇄ finances in place using
+     the same flipPane() animation, and the layout can't be pushed off-screen.
+     There's no separate finance document pane, so on desktop the list pane widens
+     to fill the window; on mobile it's already full width. */
+  .finance-view { flex: 1; min-height: 0; display: none; flex-direction: column; }
+  body.show-finance #jobList,
+  body.show-finance .usage-strip,
+  body.show-finance .focus-bar,
+  body.show-finance .list-sub,
+  body.show-finance .list-search,
+  body.show-finance .list-foot { display: none; }
+  body.show-finance .finance-view { display: flex; }
+  body.show-finance .list-pane { width: 100%; min-width: 0; }
   body.show-finance .chat-pane { display: none; }
-  /* Same card-flip as the invoices list, applied to the whole finance view. */
-  .finance-pane.flip-in  { animation: listFlipIn .26s ease-out forwards; }
-  .finance-pane.flip-out { animation: listFlipOut .15s ease-in forwards; }
-  @media (prefers-reduced-motion: reduce) {
-    .finance-pane.flip-in, .finance-pane.flip-out { animation: none; }
-  }
-  .finance-head .fin-local {
-    margin-left: auto; font-size: 12px; color: var(--muted);
-    white-space: nowrap; padding-right: 4px;
-  }
-  /* Chart button lives at the right of the finance header — same spot it sits in
-     the jobs-list header — so you can flip back from inside the finance view. */
-  .finance-head .finance-btn { margin-left: 8px; }
   .finance-tabs {
     display: flex; gap: 6px; padding: 10px 16px 0; flex-wrap: wrap;
     border-bottom: 1px solid var(--border);
@@ -1062,17 +1060,8 @@
     body.show-billing .billing-pane { transform: translateX(0); }
     body.show-billing .chat-pane { display: flex; }   /* don't fight the overlay on mobile */
 
-    .finance-pane { display: flex; position: fixed; inset: 0; background: var(--bg);
-      transform: translateX(100%); transition: transform 0.22s ease; z-index: 6; }
-    body.show-finance .finance-pane { transform: translateX(0); }
-    body.show-finance .chat-pane { display: flex; }
-    body.show-finance .list-foot { display: none; }
-    /* The finance header reuses .chat-head, which becomes a chat-specific GRID on
-       mobile — that misplaced the finance buttons and wrapped the $ to a new row.
-       Force a plain flex row here; hide the "local only" badge to keep it on one line. */
-    .chat-head.finance-head { display: flex; align-items: center; gap: 8px; }
-    .finance-head .fin-local { display: none; }
-    .finance-head .finance-btn { margin-left: auto; }  /* badge hidden → push the buttons right */
+    /* Finances flips in the full-width list body (Runn header stays put), so no
+       overlay pane on mobile — the 📊 button in the header flips back. */
     .finance-body { padding: 14px; }
     table.fin-table { font-size: 12px; }
     table.fin-table th, table.fin-table td { padding: 6px 6px; }
@@ -1160,6 +1149,10 @@
         </div>
         <div class="job-list" id="jobList"></div>
         <div class="billing-list" id="billingList"></div>
+        <div class="finance-view" id="financeView">
+          <div class="finance-tabs" id="financeTabs"></div>
+          <div class="finance-body" id="financeBody"></div>
+        </div>
       </div>
       <div class="list-foot">
         <button class="btn-newjob" id="newJobBtn">+ Job</button>
@@ -1220,19 +1213,6 @@
         <span class="ttl-badge badge" id="billingBadge" hidden></span>
       </div>
       <div class="billing-body" id="billingBody"></div>
-    </section>
-
-    <section class="finance-pane" id="financePane">
-      <div class="chat-head finance-head">
-        <span class="ttl">Finances</span>
-        <span class="fin-local" title="Nothing here leaves this machine — no cloud, no AI">🔒 local only</span>
-        <button class="finance-btn is-active" id="financeClose" type="button" title="Back to jobs" aria-label="Back to the jobs list">📊</button>
-        <button class="total clickable" id="billingBtnFin" type="button" title="Invoices">
-          <span class="amt" id="valueTotalFin">0.00</span>
-        </button>
-      </div>
-      <div class="finance-tabs" id="financeTabs"></div>
-      <div class="finance-body" id="financeBody"></div>
     </section>
   </div>
   <div class="chip-menu" id="chipMenu" hidden></div>
@@ -1588,9 +1568,7 @@
   }
   function renderTotal(jobs) {
     const total = jobs.reduce((s, j) => s + jobValue(j), 0);
-    const txt = total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    $('valueTotal').textContent = txt;
-    const fin = $('valueTotalFin'); if (fin) fin.textContent = txt;   // mirror in the finance header
+    $('valueTotal').textContent = total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
   // The 'open' filter is a group: every status that isn't wrapped up. The
   // picker also offers each status individually plus 'all'.
@@ -2354,6 +2332,10 @@
     state.billingSel = null;
     state.editing = null;
     resetNewJobPicker();
+    // Leave finances if it was open (they share the list body).
+    state.financePane = false;
+    document.body.classList.remove('show-finance');
+    $('financeBtn').classList.remove('is-active');
     document.body.classList.add('show-invoices');
     $('billingBtn').classList.add('is-active');
     if (isMobile()) {
@@ -2411,63 +2393,37 @@
     { key: 'overview', label: 'Overview',       ready: false, job: 3 },
     { key: 'forecast', label: 'Forecast',       ready: false, job: 4 },
   ];
-  function toggleFinance() { if (state.financePane) exitFinance(); else enterFinance(); }
-  // Card-flip helper for the finance pane (mirrors the invoices flipPane), but on
-  // the pane itself. Skipped on mobile (the pane slides) and for reduced-motion.
-  function finFlip(kind, after) {
-    const el = $('financePane');
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (!el || reduce || isMobile()) { if (after) after(); return; }
-    el.classList.remove('flip-in', 'flip-out');
-    void el.offsetWidth;                 // restart the animation if one just ran
-    el.classList.add(kind === 'in' ? 'flip-in' : 'flip-out');
-    const done = (e) => {
-      if (e.target !== el) return;
-      el.removeEventListener('animationend', done);
-      if (after) after();               // hide (display:none) BEFORE clearing the class, so no snap-back flash
-      el.classList.remove('flip-in', 'flip-out');
-    };
-    el.addEventListener('animationend', done);
+  // Flip the list body between jobs and finances, exactly like toggleInvoices.
+  function toggleFinance() {
+    flipPane(() => {
+      if (state.financePane) exitFinance();
+      else enterFinance();
+    });
   }
   function enterFinance() {
     state.financePane = true;
     state.currentId = null;
     state.importPreview = null;
     state.financeScreen = 'import';
+    // Leave invoices if it was open (they share the list body).
     document.body.classList.remove('show-invoices', 'show-billing');
     state.invoicesPane = false;
+    $('billingBtn').classList.remove('is-active');
     document.body.classList.add('show-finance');
     $('financeBtn').classList.add('is-active');
-    $('billingBtn').classList.remove('is-active');
     if (isMobile() && !(history.state && history.state.runnFinance)) history.pushState({ runnFinance: true }, '');
     refreshTransactions();   // fire-and-forget; re-renders when it lands
     renderFinance();
-    finFlip('in');           // flip the finance view into place
   }
   function exitFinance(opts) {
     const fromPop = opts === true || (opts && opts.fromPop === true);
-    const teardown = () => {
-      state.financePane = false;
-      state.importPreview = null;
-      document.body.classList.remove('show-finance');
-      $('financeBtn').classList.remove('is-active');
-      renderList();
-      renderChat();
-      if (!fromPop && history.state && history.state.runnFinance) history.back();
-    };
-    // Flip out first (desktop), then tear down. Device-back (fromPop) closes instantly.
-    if (fromPop) { teardown(); return; }
-    finFlip('out', teardown);
-  }
-  // Jump straight from the finance page to invoices (flip out, then open it).
-  function financeToInvoices() {
-    finFlip('out', () => {
-      state.financePane = false;
-      state.importPreview = null;
-      document.body.classList.remove('show-finance');
-      $('financeBtn').classList.remove('is-active');
-      if (!state.invoicesPane) enterInvoices();
-    });
+    state.financePane = false;
+    state.importPreview = null;
+    document.body.classList.remove('show-finance');
+    $('financeBtn').classList.remove('is-active');
+    renderList();
+    renderChat();
+    if (!fromPop && history.state && history.state.runnFinance) history.back();
   }
   function openFinanceScreen(key) {
     const s = FINANCE_SCREENS.find((x) => x.key === key);
@@ -4253,8 +4209,6 @@
   $('backBtn').addEventListener('click', () => closeChat());
   $('billingBtn').addEventListener('click', toggleInvoices);
   $('financeBtn').addEventListener('click', toggleFinance);
-  $('financeClose').addEventListener('click', toggleFinance);   // same toggle, from inside the finance header
-  $('billingBtnFin').addEventListener('click', financeToInvoices);   // finance header → invoices
   // The doc-pane chevron (mobile only) returns to the invoice list.
   $('billingBack').addEventListener('click', closeBillingDoc);
   // Device/browser back button: pop back toward the jobs list instead of leaving.
