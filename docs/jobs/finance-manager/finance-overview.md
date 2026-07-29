@@ -69,3 +69,14 @@ operator's worth (cash on hand + money owed). The bars are the story (flows); th
 total is the position, so it reads cash + owed rather than in − out (money in/out
 already sit inside cash on hand). A sub-line spells out the total's makeup. The
 per-month breakdown was dropped (can return if wanted).
+
+2026-07-30 — **Finances restructured around the Overview.** Left list is now
+Overview (default landing) + generated BAS reports (each financial year's four
+quarters + full year). The Overview merges the dashboard + forecast on top, with
+three sub-tabs beneath: **Transactions** (import + reconcile — the old "Money in
+& out", renamed), **Subscriptions** (regular outgoings, from the "repeats
+monthly" flag), and **Contracts** (expected income). Import is no longer its own
+tab; it sits at the top of Transactions. BAS reports are cash-basis GST with the
+agreed default (GST on everything except bank fees & wages), and surface GST-free
+and unsorted amounts as caveats. A per-category GST toggle can refine the default
+later. Frontend-only change.
