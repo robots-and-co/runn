@@ -26,6 +26,7 @@ const {
 const jobs = require('./jobs');
 const invoices = require('./invoices');
 const transactions = require('./transactions');
+const contracts = require('./contracts');
 const bridge = require('./bridge');
 const scheduler = require('./scheduler');
 const usage = require('./usage');
@@ -1001,6 +1002,28 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok });
     }
 
+    // ── Contracts (expected income; feeds the forecast) ──
+    if (m === 'GET' && url.pathname === '/finance/contracts') {
+      return sendJson(res, 200, await contracts.listContracts());
+    }
+    if (m === 'POST' && url.pathname === '/finance/contracts') {
+      const body = await readBody(req);
+      try {
+        return sendJson(res, 201, await contracts.createContract(body));
+      } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+    }
+    if (m === 'PATCH' && (mm = url.pathname.match(/^\/finance\/contracts\/([^/]+)$/))) {
+      const body = await readBody(req);
+      try {
+        return sendJson(res, 200, await contracts.patchContract(mm[1], body));
+      } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+    }
+    if (m === 'DELETE' && (mm = url.pathname.match(/^\/finance\/contracts\/([^/]+)$/))) {
+      try {
+        return sendJson(res, 200, await contracts.deleteContract(mm[1]));
+      } catch (e) { return sendJson(res, e.status || 404, { error: e.message }); }
+    }
+
     // ── Clients (read-only here; CRUD ported with billing later) ──
     if (m === 'GET' && url.pathname === '/clients') {
       const files = await fsp.readdir(CLIENTS_DIR).catch(() => []);
@@ -1246,6 +1269,7 @@ function scheduleUsageBroadcast() {
   await jobs.init();
   await invoices.init();
   await transactions.init();
+  await contracts.init();
   await ensureDir(CLIENTS_DIR);
   await ensureDir(ATTACHMENTS_DIR);
   // Rebuild the session index from existing jobs and catch up any AI turns the
