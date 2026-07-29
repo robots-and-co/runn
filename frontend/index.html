@@ -39,7 +39,7 @@
     overscroll-behavior: none;
   }
 
-  .app { display: flex; height: 100dvh; perspective: 1600px; }
+  .app { display: flex; height: 100dvh; }
 
   /* ── Left: job list ─────────────────────────────── */
   .list-pane {
@@ -1116,12 +1116,8 @@
        `position:fixed` anchors to the nearest transformed/perspective ancestor,
        and .list-pane sets `perspective`; that trapped the FAB inside the pane.
        Fix: drop the perspective on mobile (the list flip just goes flat) so the
-       FAB anchors to the viewport instead. Same reason we drop it on .app: its
-       perspective (added for the desktop finance card-flip) would otherwise
-       anchor the fixed .chat-pane to .app's 100dvh box, pushing the composer
-       below the fold behind the URL bar. The finance flip is desktop-only, so
-       mobile loses nothing. */
-    .list-pane, .app { perspective: none; }
+       FAB anchors to the viewport instead. */
+    .list-pane { perspective: none; }
     .list-foot {
       position: fixed; right: 16px; bottom: calc(16px + var(--safe-b)); z-index: 20;
       display: flex; justify-content: flex-end;
