@@ -545,6 +545,38 @@
   }
   .fin-inv-x:hover { color: #b23b2a; }
 
+  /* Overview */
+  .fin-ov-cards { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+  .fin-ov-card { flex: 1; min-width: 150px; border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; background: var(--surface); }
+  .fin-ov-card .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  .fin-ov-card .big { font-size: 23px; font-weight: 700; margin-top: 5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .fin-ov-card .sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .fin-ov-card.pos .big { color: #2f7a45; }
+  .fin-ov-card.neg .big { color: #b23b2a; }
+  .fin-ov-sec { margin: 22px 0 4px; }
+  .fin-ov-sec h3 { margin: 0 0 10px; font-size: 15px; }
+  .fin-mon { display: grid; grid-template-columns: 58px 1fr 92px; gap: 12px; align-items: center; padding: 6px 0; }
+  .fin-mon .mlabel { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .fin-mon-bars { display: flex; flex-direction: column; gap: 3px; }
+  .fin-bar { height: 9px; border-radius: 3px; min-width: 1px; }
+  .fin-bar.in { background: #58b06f; }
+  .fin-bar.out { background: #d0685c; }
+  .fin-mon .mnet { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; text-align: right; }
+  .fin-mon .mnet.pos { color: #2f7a45; }
+  .fin-mon .mnet.neg { color: #b23b2a; }
+  .fin-catrow { display: grid; grid-template-columns: 130px 1fr 88px; gap: 12px; align-items: center; padding: 5px 0; font-size: 13px; }
+  .fin-catrow .cname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fin-catrow.uncat .cname { color: var(--muted); font-style: italic; }
+  .fin-cattrack { background: var(--surface-2); border-radius: 4px; height: 9px; overflow: hidden; }
+  .fin-catfill { height: 100%; background: #8aa0b6; border-radius: 4px; }
+  .fin-catrow .cval { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .fin-owe { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; background: var(--surface); cursor: pointer; }
+  .fin-owe:hover { border-color: var(--brand); }
+  .fin-owe .who { font-size: 12px; color: var(--muted); min-width: 0; }
+  .fin-owe .who b { display: block; font-size: 14px; color: var(--ink); font-weight: 600; }
+  .fin-owe .over { color: #b23b2a; font-weight: 600; }
+  .fin-owe .amt { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; color: var(--brand); white-space: nowrap; }
+
   /* Invoice document — mirrors the real Robots & Co. A4 tax invoice.
      Draft = editable (number + due + line removal); issued = read-only. */
   .inv-doc { max-width: 760px; margin: 0 auto; }
@@ -2421,7 +2453,7 @@
   const FINANCE_SCREENS = [
     { key: 'import',   label: 'Import',         ready: true },
     { key: 'ledger',   label: 'Money in & out', ready: true },
-    { key: 'overview', label: 'Overview',       ready: false, job: 3 },
+    { key: 'overview', label: 'Overview',       ready: true },
     { key: 'forecast', label: 'Forecast',       ready: false, job: 4 },
   ];
   // Flip the list body between jobs and finances, exactly like toggleInvoices.
@@ -2483,6 +2515,7 @@
     body.innerHTML = '';
     if (state.financeScreen === 'import') return renderFinanceImport(body);
     if (state.financeScreen === 'ledger') return renderMoneyInOut(body);
+    if (state.financeScreen === 'overview') return renderOverview(body);
     const s = FINANCE_SCREENS.find((x) => x.key === state.financeScreen);
     const d = document.createElement('div');
     d.className = 'fin-soon';
@@ -2676,6 +2709,142 @@
     b.title = `Match this deposit to invoice #${cand.id} (${money(cand.total)}) and mark it paid`;
     b.addEventListener('click', () => reconcileDeposit(t, cand.id));
     td.appendChild(b);
+  }
+
+  // ── Overview (where do I stand) ─────────────────────────────
+  function latestTxnDate() {
+    let d = null;
+    for (const t of state.transactions) if (t.date && (!d || t.date > d)) d = t.date;
+    return d;
+  }
+  function monthlyTotals(txns) {
+    const m = new Map();
+    for (const t of txns) {
+      const key = String(t.date).slice(0, 7);
+      if (key.length !== 7) continue;
+      let g = m.get(key); if (!g) { g = { month: key, in: 0, out: 0 }; m.set(key, g); }
+      const a = Number(t.amount) || 0;
+      if (a >= 0) g.in += a; else g.out += -a;
+    }
+    return [...m.values()]
+      .map((g) => ({ month: g.month, in: round2(g.in), out: round2(g.out), net: round2(g.in - g.out) }))
+      .sort((a, b) => b.month.localeCompare(a.month)); // most recent first
+  }
+  function categoryTotals(txns, dir) {
+    const m = new Map();
+    for (const t of txns) {
+      const a = Number(t.amount) || 0;
+      if (dir === 'out' && a >= 0) continue;
+      if (dir === 'in' && a < 0) continue;
+      const key = t.category || '__uncat__';
+      m.set(key, round2((m.get(key) || 0) + Math.abs(a)));
+    }
+    return [...m.entries()]
+      .map(([id, total]) => ({ id, name: id === '__uncat__' ? 'Uncategorized' : (catById(id)?.name || id), total }))
+      .sort((a, b) => b.total - a.total);
+  }
+  function unpaidInvoices() {
+    return [...state.invoices.values()]
+      .filter((inv) => inv.status !== 'paid')
+      .map((inv) => ({ inv, amount: Number(inv.balance != null ? inv.balance : inv.total) || 0 }))
+      .filter((x) => x.amount > 0.005)
+      .sort((a, b) => String(a.inv.due_at).localeCompare(String(b.inv.due_at)));
+  }
+  function monthLabel(ym) {
+    const d = new Date(ym + '-01T00:00:00');
+    return isNaN(d) ? ym : d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+  }
+  // Drill-down: leave finances, open the invoice on the invoices screen.
+  function goToInvoice(id) {
+    state.financePane = false;
+    document.body.classList.remove('show-finance');
+    $('financeBtn').classList.remove('is-active');
+    enterInvoices();
+    openInvoiceDoc({ kind: 'invoice', id });
+  }
+
+  function renderOverview(body) {
+    const wrap = document.createElement('div');
+    wrap.className = 'fin-screen fin-overview';
+    const meta = state.financeMeta || {};
+    const txns = state.transactions;
+    if (!txns.length) {
+      wrap.innerHTML = '<div class="fin-soon">Nothing here yet — import a bank CSV first (Import tab).</div>';
+      body.appendChild(wrap); return;
+    }
+    const months = monthlyTotals(txns);
+    const totIn = round2(months.reduce((s, m) => s + m.in, 0));
+    const totOut = round2(months.reduce((s, m) => s + m.out, 0));
+    const owed = unpaidInvoices();
+    const owedTotal = round2(owed.reduce((s, o) => s + o.amount, 0));
+    const uncat = txns.filter((t) => !t.category).length;
+    const asOf = latestTxnDate();
+
+    const cards = document.createElement('div'); cards.className = 'fin-ov-cards';
+    cards.innerHTML = `
+      <div class="fin-ov-card"><div class="lbl">Cash on hand</div><div class="big">${meta.calculated_balance != null ? esc(money(meta.calculated_balance)) : '—'}</div><div class="sub">${asOf ? 'as at ' + esc(fmtDate(asOf)) : ''}</div></div>
+      <div class="fin-ov-card pos"><div class="lbl">Money in</div><div class="big">${esc(money(totIn))}</div><div class="sub">across ${months.length} month${months.length === 1 ? '' : 's'}</div></div>
+      <div class="fin-ov-card neg"><div class="lbl">Money out</div><div class="big">${esc(money(totOut))}</div><div class="sub">net ${esc(moneySigned('$', round2(totIn - totOut)))}</div></div>
+      <div class="fin-ov-card"><div class="lbl">Owed to you</div><div class="big">${esc(money(owedTotal))}</div><div class="sub">${owed.length} unpaid invoice${owed.length === 1 ? '' : 's'}</div></div>`;
+    wrap.appendChild(cards);
+
+    if (uncat) {
+      const n = document.createElement('div'); n.className = 'fin-note';
+      n.innerHTML = `<span class="fin-check-bad">${uncat} transaction${uncat === 1 ? '' : 's'} still uncategorized</span> — sort them on the Money in &amp; out tab for a truer breakdown.`;
+      wrap.appendChild(n);
+    }
+
+    // Money in vs out, by month
+    const maxMonth = Math.max(1, ...months.map((m) => Math.max(m.in, m.out)));
+    const secM = document.createElement('div'); secM.className = 'fin-ov-sec';
+    secM.innerHTML = '<h3>Money in vs out, by month</h3>';
+    for (const m of months.slice(0, 12)) {
+      const row = document.createElement('div'); row.className = 'fin-mon';
+      row.innerHTML = `<span class="mlabel">${esc(monthLabel(m.month))}</span>
+        <span class="fin-mon-bars">
+          <span class="fin-bar in" style="width:${(m.in / maxMonth * 100).toFixed(1)}%" title="in ${esc(money(m.in))}"></span>
+          <span class="fin-bar out" style="width:${(m.out / maxMonth * 100).toFixed(1)}%" title="out ${esc(money(m.out))}"></span>
+        </span>
+        <span class="mnet ${m.net < 0 ? 'neg' : 'pos'}">${esc(moneySigned('$', m.net))}</span>`;
+      secM.appendChild(row);
+    }
+    wrap.appendChild(secM);
+
+    // Where the money went (out by category)
+    const catsOut = categoryTotals(txns, 'out');
+    if (catsOut.length) {
+      const maxCat = Math.max(1, ...catsOut.map((c) => c.total));
+      const secC = document.createElement('div'); secC.className = 'fin-ov-sec';
+      secC.innerHTML = '<h3>Where the money went</h3>';
+      for (const c of catsOut) {
+        const row = document.createElement('div'); row.className = 'fin-catrow' + (c.id === '__uncat__' ? ' uncat' : '');
+        row.innerHTML = `<span class="cname">${esc(c.name)}</span>
+          <span class="fin-cattrack"><span class="fin-catfill" style="width:${(c.total / maxCat * 100).toFixed(1)}%"></span></span>
+          <span class="cval">${esc(money(c.total))}</span>`;
+        secC.appendChild(row);
+      }
+      wrap.appendChild(secC);
+    }
+
+    // Who owes you
+    const secO = document.createElement('div'); secO.className = 'fin-ov-sec';
+    secO.innerHTML = '<h3>Who owes you</h3>';
+    if (!owed.length) {
+      const e = document.createElement('div'); e.className = 'fin-soon'; e.textContent = 'All issued invoices are paid. 🎉';
+      secO.appendChild(e);
+    } else {
+      for (const o of owed) {
+        const overdue = o.inv.due_at && o.inv.due_at < today();
+        const who = clientName(o.inv.client_id) || (o.inv.snapshot && o.inv.snapshot.to && o.inv.snapshot.to.company) || ('#' + o.inv.id);
+        const row = document.createElement('div'); row.className = 'fin-owe';
+        row.innerHTML = `<span class="who"><b>${esc(who)}</b>#${esc(o.inv.id)} · due ${esc(fmtDate(o.inv.due_at))}${overdue ? ' <span class="over">overdue</span>' : ''}</span><span class="amt">${esc(money(o.amount))}</span>`;
+        row.addEventListener('click', () => goToInvoice(o.inv.id));
+        secO.appendChild(row);
+      }
+    }
+    wrap.appendChild(secO);
+
+    body.appendChild(wrap);
   }
 
   function renderFinanceImport(body) {

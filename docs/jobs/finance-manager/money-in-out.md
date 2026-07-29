@@ -1,6 +1,6 @@
 ---
 order: 2
-status: doing
+status: done
 title: Money in & out — match to invoices, categorize
 ---
 

@@ -1,6 +1,6 @@
 ---
 order: 1
-status: doing
+status: done
 title: Import — bank CSV in, duplicate-proof
 ---
 
