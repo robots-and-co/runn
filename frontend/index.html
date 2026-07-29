@@ -2432,7 +2432,7 @@
     state.financePane = true;
     state.currentId = null;
     state.importPreview = null;
-    state.financeScreen = 'import';
+    // Keep whichever finance tab you were last on (defaults to 'import' first time).
     // Leave invoices if it was open (they share the list body).
     document.body.classList.remove('show-invoices', 'show-billing');
     state.invoicesPane = false;
@@ -2541,6 +2541,24 @@
       if (i >= 0) state.transactions[i] = updated;
       if (opts.rerender) { renderFinance(); const s = $('financeBody'); if (s) s.scrollTop = scroll; }
     } catch (e) { alert('Update failed: ' + e.message); }
+  }
+  // Reconcile a deposit to the invoice it paid: link it AND mark the invoice paid
+  // (which also flips its billed jobs to paid, same as the invoices screen).
+  async function reconcileDeposit(t, invId) {
+    const scroller = $('financeBody');
+    const scroll = scroller ? scroller.scrollTop : 0;
+    try {
+      const updated = await patchJson(`/transactions/${t.id}`, { invoice_id: invId });
+      const i = state.transactions.findIndex((x) => x.id === t.id);
+      if (i >= 0) state.transactions[i] = updated;
+      const inv = state.invoices.get(invId);
+      if (inv && inv.status !== 'paid') {
+        const paid = await patchJson(`/invoices/${invId}`, { status: 'paid' });
+        state.invoices.set(paid.id, paid);
+      }
+    } catch (e) { alert('Reconcile failed: ' + e.message); }
+    renderFinance();
+    const s = $('financeBody'); if (s) s.scrollTop = scroll;
   }
   async function addCategoryFor(t, selectEl) {
     const name = (prompt('New category name:') || '').trim();
@@ -2652,8 +2670,8 @@
     const b = document.createElement('button');
     b.className = 'fin-inv-match'; b.type = 'button';
     b.textContent = `Paid #${cand.id}?`;
-    b.title = `Match this deposit to invoice #${cand.id} (${money(cand.total)})`;
-    b.addEventListener('click', () => patchTxn(t.id, { invoice_id: cand.id }, { rerender: true }));
+    b.title = `Match this deposit to invoice #${cand.id} (${money(cand.total)}) and mark it paid`;
+    b.addEventListener('click', () => reconcileDeposit(t, cand.id));
     td.appendChild(b);
   }
 
