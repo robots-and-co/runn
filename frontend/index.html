@@ -2815,6 +2815,12 @@
     const totOut = round2(months.reduce((s, m) => s + m.out, 0));
     const owed = unpaidInvoices();
     const owedTotal = round2(owed.reduce((s, o) => s + o.amount, 0));
+    // Not yet billed = done work that hasn't been turned into an invoice — the
+    // stage before "owed". Same rollup the Billing tab uses; invoicing a job
+    // flips it to 'invoiced' so it drops out here and can't double-count.
+    const billGroups = billingGroups();
+    const notBilledTotal = round2(billGroups.reduce((s, g) => s + g.total, 0));
+    const notBilledJobs = billGroups.reduce((s, g) => s + g.rows.length, 0);
     const uncat = txns.filter((t) => !t.category).length;
     const asOf = latestTxnDate();
 
@@ -2823,6 +2829,7 @@
       <div class="fin-ov-card"><div class="lbl">Cash on hand</div><div class="big">${meta.calculated_balance != null ? esc(money(meta.calculated_balance)) : '—'}</div><div class="sub">${asOf ? 'as at ' + esc(fmtDate(asOf)) : ''}</div></div>
       <div class="fin-ov-card pos"><div class="lbl">Money in</div><div class="big">${esc(money(totIn))}</div><div class="sub">across ${months.length} month${months.length === 1 ? '' : 's'}</div></div>
       <div class="fin-ov-card neg"><div class="lbl">Money out</div><div class="big">${esc(money(totOut))}</div><div class="sub">net ${esc(moneySigned('$', round2(totIn - totOut)))}</div></div>
+      <div class="fin-ov-card"><div class="lbl">Not yet billed</div><div class="big">${esc(money(notBilledTotal))}</div><div class="sub">${notBilledJobs} done job${notBilledJobs === 1 ? '' : 's'} not yet invoiced</div></div>
       <div class="fin-ov-card"><div class="lbl">Owed to you</div><div class="big">${esc(money(owedTotal))}</div><div class="sub">${owed.length} unpaid invoice${owed.length === 1 ? '' : 's'}</div></div>`;
     wrap.appendChild(cards);
 

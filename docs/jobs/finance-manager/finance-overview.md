@@ -50,3 +50,10 @@ invoice). **No double-count** falls out naturally: cash flow comes from the bank
 transactions (a reconciled deposit is one row), and "owed" lists only unpaid
 invoices — so a paid+reconciled invoice drops out of "owed" and isn't re-added as
 income. An "N still uncategorized" nudge points at the Money in & out tab.
+
+2026-07-29 — Added a fifth headline card, **Not yet billed** (= sum of the
+Billing tab's rollup: done, non-archived jobs on billable clients with a rate,
+not yet invoiced). Sits before "Owed to you" in the money-coming pipeline (done
+→ not yet billed → invoiced/owed → paid/cash). No double-count: invoicing a job
+flips its status to `invoiced`, so it leaves this pool the moment it enters
+"owed". Headline number only — no per-client breakdown.
