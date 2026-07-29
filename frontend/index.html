@@ -602,6 +602,21 @@
   table.fin-fc-table td.num { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   table.fin-fc-table td.closing { font-weight: 700; }
   table.fin-fc-table td.closing.neg { color: #b23b2a; }
+  /* Contracts */
+  .fin-ctr-list { display: flex; flex-direction: column; gap: 12px; margin: 8px 0 14px; }
+  .fin-ctr-card { border: 1px solid var(--border); border-radius: 12px; padding: 13px 14px; background: var(--surface); }
+  .fin-ctr-card.inactive { opacity: 0.55; }
+  .fin-ctr-row1 { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .fin-ctr-label { flex: 1; font: inherit; font-size: 15px; font-weight: 600; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--ink); }
+  .fin-ctr-active { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .fin-ctr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .fin-ctr-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+  .fin-ctr-grid input, .fin-ctr-grid select { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--ink); text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .fin-ctr-foot { display: flex; justify-content: flex-end; margin-top: 10px; }
+  .fin-ctr-del { font: inherit; font-size: 12px; color: #b23b2a; background: none; border: 0; cursor: pointer; padding: 4px 6px; }
+  .fin-ctr-del:hover { text-decoration: underline; }
+  .fin-ctr-add { font: inherit; font-size: 14px; font-weight: 600; padding: 10px 16px; border: 1px dashed var(--border); border-radius: 9px; background: var(--surface); color: var(--brand); cursor: pointer; }
+  .fin-ctr-add:hover { border-color: var(--brand); }
   .fin-catrow { display: grid; grid-template-columns: 130px 1fr 88px; gap: 12px; align-items: center; padding: 5px 0; font-size: 13px; }
   .fin-catrow .cname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fin-catrow.uncat .cname { color: var(--muted); font-style: italic; }
@@ -624,6 +639,10 @@
     border-radius: 8px; cursor: pointer; border: 1px solid var(--border);
     background: var(--surface); color: var(--ink);
   }
+  .inv-contract-link { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); font-size: 13px; }
+  .inv-contract-link .lbl { color: var(--muted); }
+  .inv-contract-link select, .inv-contract-link input { font: inherit; font-size: 13px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--ink); }
+  .inv-contract-link .inv-ctr-note { color: var(--muted); font-size: 12px; }
   .inv-actions .primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   .inv-actions .primary:disabled { opacity: .5; cursor: default; }
   .inv-actions .danger { color: #a33; margin-left: auto; }
@@ -1361,6 +1380,8 @@
     financeScreen: 'import', // which finance screen: 'import' now; overview/forecast/reconcile land in later jobs
     transactions: [],      // the money-in/out ledger (GET /transactions)
     financeCategories: [], // our own categories (GET /finance/categories)
+    contracts: [],         // expected-income contracts (GET /finance/contracts)
+    forecastMonths: 6,     // forecast horizon (3 / 6 / 12)
     financeMeta: null,     // { count, opening_balance, opening_date } from GET /transactions/meta
     importPreview: null,   // last dry-run result awaiting confirm: { summary, csv, account }
   };
@@ -2503,6 +2524,7 @@
     { key: 'ledger',   label: 'Money in & out', hint: 'Categorize & match invoices',  ready: true },
     { key: 'overview', label: 'Overview',       hint: 'Cash, in vs out, who owes',    ready: true },
     { key: 'forecast', label: 'Forecast',       hint: 'Project the next few months',  ready: true },
+    { key: 'contracts', label: 'Contracts',      hint: 'Expected income you can count on', ready: true },
   ];
   // Flip the list body between jobs and the finance tab list, like toggleInvoices.
   function toggleFinance() {
@@ -2559,14 +2581,16 @@
   }
   async function refreshTransactions() {
     try {
-      const [rows, meta, cats] = await Promise.all([
+      const [rows, meta, cats, ctrs] = await Promise.all([
         fetch('/transactions').then((r) => r.json()),
         fetch('/transactions/meta').then((r) => r.json()).catch(() => null),
         fetch('/finance/categories').then((r) => r.json()).catch(() => null),
+        fetch('/finance/contracts').then((r) => r.json()).catch(() => null),
       ]);
       state.transactions = Array.isArray(rows) ? rows : [];
       state.financeMeta = meta || { count: state.transactions.length, opening_balance: null, opening_date: null };
       if (Array.isArray(cats)) state.financeCategories = cats;
+      if (Array.isArray(ctrs)) state.contracts = ctrs;
     } catch (e) { console.error('load transactions failed', e); }
     if (state.financePane) {
       const sc = $('financeBody'); const top = sc ? sc.scrollTop : 0;
@@ -2605,6 +2629,7 @@
     if (state.financeScreen === 'ledger') return renderMoneyInOut(body);
     if (state.financeScreen === 'overview') return renderOverview(body);
     if (state.financeScreen === 'forecast') return renderForecast(body);
+    if (state.financeScreen === 'contracts') return renderContracts(body);
     const d = document.createElement('div');
     d.className = 'fin-soon';
     d.textContent = `“${s ? s.label : 'This screen'}” arrives in job ${s && s.job ? s.job : ''} of the finance build.`;
@@ -2992,17 +3017,34 @@
       else bucket = due;
       invByMonth.set(bucket, round2((invByMonth.get(bucket) || 0) + u.amount));
     }
+    // Contracts add expected income for months not yet invoiced. Any invoice
+    // stamped with a contract + period means that month is already counted (as
+    // the real invoice above), so we drop the contract's estimate for it — the
+    // no-double-count guard. The match is the explicit link, never text.
+    const covered = new Set();
+    for (const inv of state.invoices.values()) {
+      if (inv.contract_id && inv.contract_period) covered.add(inv.contract_id + '|' + inv.contract_period);
+    }
+    const activeContracts = (state.contracts || []).filter((c) => c.active && (!c.cadence || c.cadence === 'monthly'));
+    const contractForMonth = (k) => round2(activeContracts.reduce((s, c) => {
+      if (c.start_month && k < c.start_month) return s;
+      if (c.end_month && k > c.end_month) return s;
+      if (covered.has(c.id + '|' + k)) return s;            // already invoiced this month
+      return s + (Number(c.amount) || 0);
+    }, 0));
+
     const months = [];
     let opening = start;
     for (const k of keys) {
       const invIn = round2(invByMonth.get(k) || 0);
-      const expIn = round2(rec.inMonthly + invIn);
+      const contractIn = contractForMonth(k);
+      const expIn = round2(rec.inMonthly + invIn + contractIn);
       const expOut = rec.outMonthly;
       const closing = round2(opening + expIn - expOut);
-      months.push({ month: k, opening: round2(opening), invIn, expIn, expOut, closing });
+      months.push({ month: k, opening: round2(opening), invIn, contractIn, expIn, expOut, closing });
       opening = closing;
     }
-    return { start, rec, unpaid, dropped, months };
+    return { start, rec, unpaid, dropped, months, contracts: activeContracts };
   }
 
   function renderForecast(body) {
@@ -3042,6 +3084,7 @@
     basis.innerHTML = `Built from cash on hand <b>${esc(money(f.start))}</b>, `
       + `${f.rec.items.length} recurring item${f.rec.items.length === 1 ? '' : 's'} `
       + `(${esc(money(f.rec.inMonthly))} in / ${esc(money(f.rec.outMonthly))} out each month), `
+      + `${f.contracts.length} contract${f.contracts.length === 1 ? '' : 's'}, `
       + `and ${f.unpaid.length} unpaid invoice${f.unpaid.length === 1 ? '' : 's'}. Arithmetic only — no forecasting model.`
       + (f.dropped ? ` (${f.dropped} invoice${f.dropped === 1 ? '' : 's'} due beyond ${n} months left out.)` : '')
       + (f.rec.items.length ? '' : ' Flag bills as “repeats monthly” on the Money in &amp; out tab to sharpen this.');
@@ -3079,6 +3122,77 @@
     table.appendChild(tb);
     secT.appendChild(table);
     wrap.appendChild(secT);
+
+    body.appendChild(wrap);
+  }
+
+  // ── Contracts (expected income) ─────────────────────────────
+  async function reloadContracts() {
+    try { const c = await fetch('/finance/contracts').then((r) => r.json()); if (Array.isArray(c)) state.contracts = c; }
+    catch (e) { console.error('load contracts failed', e); }
+  }
+  async function addContract() {
+    try { await postJson('/finance/contracts', { label: 'New contract', active: true }); await reloadContracts(); renderFinanceContent(); }
+    catch (e) { alert('Could not add contract: ' + e.message); }
+  }
+  async function saveContract(id, patch) {
+    try { await patchJson('/finance/contracts/' + id, patch); await reloadContracts(); }
+    catch (e) { alert('Could not save contract: ' + e.message); }
+  }
+  async function removeContract(id) {
+    if (!confirm('Delete this contract? It will stop feeding the forecast.')) return;
+    try { await fetch('/finance/contracts/' + id, { method: 'DELETE' }); await reloadContracts(); renderFinanceContent(); }
+    catch (e) { alert('Could not delete contract: ' + e.message); }
+  }
+
+  function contractCard(c) {
+    const card = document.createElement('div'); card.className = 'fin-ctr-card' + (c.active ? '' : ' inactive');
+    const clientOpts = ['<option value="">— no client —</option>']
+      .concat([...state.clients.values()].map((cl) => `<option value="${esc(cl.id)}"${cl.id === c.client_id ? ' selected' : ''}>${esc(cl.name)}</option>`))
+      .join('');
+    card.innerHTML = `
+      <div class="fin-ctr-row1">
+        <input class="fin-ctr-label" type="text" value="${esc(c.label || '')}" placeholder="What it's for (e.g. Server maintenance &amp; Off-site backup)">
+        <label class="fin-ctr-active"><input type="checkbox" ${c.active ? 'checked' : ''}> active</label>
+      </div>
+      <div class="fin-ctr-grid">
+        <label>Client<select class="fin-ctr-client">${clientOpts}</select></label>
+        <label>Amount / month<input class="fin-ctr-amount" type="number" step="0.01" inputmode="decimal" value="${c.amount != null ? esc(String(c.amount)) : ''}" placeholder="0.00"></label>
+        <label>Starts<input class="fin-ctr-start" type="month" value="${esc(c.start_month || '')}"></label>
+        <label>Ends (blank = ongoing)<input class="fin-ctr-end" type="month" value="${esc(c.end_month || '')}"></label>
+      </div>
+      <div class="fin-ctr-foot"><button type="button" class="fin-ctr-del">Delete</button></div>`;
+    const q = (sel) => card.querySelector(sel);
+    q('.fin-ctr-label').addEventListener('change', (e) => saveContract(c.id, { label: e.target.value }));
+    q('.fin-ctr-active input').addEventListener('change', (e) => saveContract(c.id, { active: e.target.checked }).then(() => renderFinanceContent()));
+    q('.fin-ctr-client').addEventListener('change', (e) => saveContract(c.id, { client_id: e.target.value }));
+    q('.fin-ctr-amount').addEventListener('change', (e) => saveContract(c.id, { amount: e.target.value }));
+    q('.fin-ctr-start').addEventListener('change', (e) => saveContract(c.id, { start_month: e.target.value }));
+    q('.fin-ctr-end').addEventListener('change', (e) => saveContract(c.id, { end_month: e.target.value }));
+    q('.fin-ctr-del').addEventListener('click', () => removeContract(c.id));
+    return card;
+  }
+
+  function renderContracts(body) {
+    const wrap = document.createElement('div'); wrap.className = 'fin-screen fin-contracts';
+    const lead = document.createElement('p'); lead.className = 'fin-lead';
+    lead.textContent = 'Income you’ve agreed in advance — who, how much, and when it recurs. Contracts feed the expected money-in on the Forecast. Once you invoice a given month, link that invoice to the contract (on the invoice itself) and the forecast switches to the real invoice for that month, so the same money is never counted twice.';
+    wrap.appendChild(lead);
+
+    const list = document.createElement('div'); list.className = 'fin-ctr-list';
+    const contracts = (state.contracts || []).slice().sort((a, b) => String(a.label).localeCompare(String(b.label)));
+    if (!contracts.length) {
+      const e = document.createElement('div'); e.className = 'fin-soon'; e.textContent = 'No contracts yet — add your first recurring income below.';
+      list.appendChild(e);
+    } else {
+      for (const c of contracts) list.appendChild(contractCard(c));
+    }
+    wrap.appendChild(list);
+
+    const add = document.createElement('button'); add.type = 'button'; add.className = 'fin-ctr-add';
+    add.textContent = '+ New contract';
+    add.addEventListener('click', addContract);
+    wrap.appendChild(add);
 
     body.appendChild(wrap);
   }
@@ -3630,11 +3744,49 @@
     actions.appendChild(voidBtn);
     wrap.appendChild(actions);
 
+    // Link this invoice to a contract + month, so the forecast uses it instead of
+    // the contract's estimate for that month (no double-count). Only shown when
+    // contracts exist to link to.
+    if ((state.contracts || []).length) wrap.appendChild(contractLinkBox(inv));
+
     const paper = document.createElement('div'); paper.className = 'inv-paper';
     paper.innerHTML = invPaperHtml(invoicePaperOpts(inv, false));
     wrap.appendChild(paper);
     body.appendChild(wrap);
     wireLogoFallback(paper);
+  }
+
+  // The "covers contract X for month Y" control shown on an issued invoice.
+  function contractLinkBox(inv) {
+    const box = document.createElement('div'); box.className = 'inv-contract-link';
+    const opts = ['<option value="">— not a contract —</option>']
+      .concat((state.contracts || []).map((c) => {
+        const who = c.client_id && clientName(c.client_id) ? ' · ' + clientName(c.client_id) : '';
+        return `<option value="${esc(c.id)}"${c.id === inv.contract_id ? ' selected' : ''}>${esc(c.label + who)}</option>`;
+      })).join('');
+    box.innerHTML = `<span class="lbl">Covers contract</span>
+      <select class="inv-ctr-sel">${opts}</select>
+      <span class="lbl">for</span>
+      <input class="inv-ctr-period" type="month" value="${esc(inv.contract_period || '')}">
+      <span class="inv-ctr-note"></span>`;
+    const sel = box.querySelector('.inv-ctr-sel');
+    const per = box.querySelector('.inv-ctr-period');
+    const note = box.querySelector('.inv-ctr-note');
+    const setNote = () => { note.textContent = !sel.value ? '' : (per.value ? 'linked ✓' : 'pick the month'); };
+    const save = async () => {
+      try {
+        const inv2 = await patchJson('/invoices/' + inv.id, {
+          contract_id: sel.value || null,
+          contract_period: sel.value ? (per.value || null) : null,
+        });
+        state.invoices.set(inv2.id, inv2);
+        setNote();
+      } catch (e) { note.textContent = 'save failed'; }
+    };
+    sel.addEventListener('change', save);
+    per.addEventListener('change', save);
+    setNote();
+    return box;
   }
 
   async function markPaid(id, btn) {

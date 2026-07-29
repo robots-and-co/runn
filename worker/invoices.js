@@ -155,6 +155,14 @@ async function patchInvoice(id, patch = {}) {
     }
   }
   if (typeof patch.notes === 'string') inv.notes = patch.notes;
+  // Contract link: which contract (and which YYYY-MM period) this invoice covers.
+  // Lets the forecast use the real invoice for that month and drop the contract's
+  // estimate — so expected income is never counted twice.
+  if ('contract_id' in patch) inv.contract_id = patch.contract_id || null;
+  if ('contract_period' in patch) {
+    const mm = String(patch.contract_period || '').match(/^(\d{4})-(\d{1,2})/);
+    inv.contract_period = mm ? `${mm[1]}-${mm[2].padStart(2, '0')}` : null;
+  }
   inv.updated_at = nowIso();
   await atomicWriteJson(invoicePath(id), inv);
   return inv;
