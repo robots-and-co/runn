@@ -570,6 +570,20 @@
   .fin-mon .mnet { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; text-align: right; }
   .fin-mon .mnet.pos { color: #2f7a45; }
   .fin-mon .mnet.neg { color: #b23b2a; }
+  /* Bottom line: money in / owed / out bars + total worth */
+  .fin-bl { display: flex; flex-direction: column; gap: 10px; }
+  .fin-bl-row { display: grid; grid-template-columns: 96px 1fr 110px; gap: 12px; align-items: center; }
+  .fin-bl-row .lbl { font-size: 13px; color: var(--muted); }
+  .fin-bl-track { background: var(--surface-2); border-radius: 5px; height: 15px; overflow: hidden; }
+  .fin-bl-bar { height: 100%; border-radius: 5px; min-width: 1px; }
+  .fin-bl-bar.in { background: #58b06f; }
+  .fin-bl-bar.owed { background: #cd9b3f; }
+  .fin-bl-bar.out { background: #d0685c; }
+  .fin-bl-row .val { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+  .fin-bl-total { display: grid; grid-template-columns: 96px 1fr 110px; gap: 4px 12px; align-items: baseline; margin-top: 4px; padding-top: 11px; border-top: 1px solid var(--border); }
+  .fin-bl-total .lbl { font-size: 14px; font-weight: 700; color: var(--ink); }
+  .fin-bl-total .val { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 19px; font-weight: 800; color: var(--brand); }
+  .fin-bl-total .sub { grid-column: 1 / -1; text-align: right; font-size: 11.5px; color: var(--muted); }
   .fin-catrow { display: grid; grid-template-columns: 130px 1fr 88px; gap: 12px; align-items: center; padding: 5px 0; font-size: 13px; }
   .fin-catrow .cname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fin-catrow.uncat .cname { color: var(--muted); font-style: italic; }
@@ -2855,20 +2869,25 @@
       wrap.appendChild(n);
     }
 
-    // Money in vs out, by month
-    const maxMonth = Math.max(1, ...months.map((m) => Math.max(m.in, m.out)));
+    // Money in, owed & out — the bottom line. Three bars (in, owed, out) and the
+    // total worth beneath. The total is a position, not a flow, so it reads cash
+    // on hand + money owed (money in/out already live inside cash on hand) — the
+    // bars tell the story, the total is what you're actually worth.
+    const blMax = Math.max(1, totIn, comingTotal, totOut);
+    const worth = round2(cashNow + comingTotal);
+    const blRow = (cls, label, val) =>
+      `<div class="fin-bl-row"><span class="lbl">${label}</span>
+        <span class="fin-bl-track"><span class="fin-bl-bar ${cls}" style="width:${(val / blMax * 100).toFixed(1)}%"></span></span>
+        <span class="val">${esc(money(val))}</span></div>`;
     const secM = document.createElement('div'); secM.className = 'fin-ov-sec';
-    secM.innerHTML = '<h3>Money in vs out, by month</h3>';
-    for (const m of months.slice(0, 12)) {
-      const row = document.createElement('div'); row.className = 'fin-mon';
-      row.innerHTML = `<span class="mlabel">${esc(monthLabel(m.month))}</span>
-        <span class="fin-mon-bars">
-          <span class="fin-bar in" style="width:${(m.in / maxMonth * 100).toFixed(1)}%" title="in ${esc(money(m.in))}"></span>
-          <span class="fin-bar out" style="width:${(m.out / maxMonth * 100).toFixed(1)}%" title="out ${esc(money(m.out))}"></span>
-        </span>
-        <span class="mnet ${m.net < 0 ? 'neg' : 'pos'}">${esc(moneySigned('$', m.net))}</span>`;
-      secM.appendChild(row);
-    }
+    secM.innerHTML = `<h3>Money in, owed &amp; out</h3>
+      <div class="fin-bl">
+        ${blRow('in', 'Money in', totIn)}
+        ${blRow('owed', 'Money owed', comingTotal)}
+        ${blRow('out', 'Money out', totOut)}
+        <div class="fin-bl-total"><span class="lbl">Total</span><span></span><span class="val">${esc(money(worth))}</span>
+          <span class="sub">cash on hand ${esc(money(cashNow))} + money owed ${esc(money(comingTotal))}</span></div>
+      </div>`;
     wrap.appendChild(secM);
 
     // Where the money went (out by category)

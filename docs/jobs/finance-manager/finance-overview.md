@@ -62,3 +62,10 @@ flips its status to `invoiced`, so it leaves this pool the moment it enters
 not yet billed + unpaid invoices. Rationale: money owed is a timing matter, not a
 separate balance — so the operator's real standing is one figure, not a mental
 sum of "cash" and "owed". The individual cards remain as the breakdown.
+
+2026-07-29 — Replaced the by-month cash chart with a **bottom-line summary**:
+three bars — money in, money owed, money out — and a **Total** beneath = the
+operator's worth (cash on hand + money owed). The bars are the story (flows); the
+total is the position, so it reads cash + owed rather than in − out (money in/out
+already sit inside cash on hand). A sub-line spells out the total's makeup. The
+per-month breakdown was dropped (can return if wanted).
