@@ -73,3 +73,14 @@ categories, extendable), `finance/rules.json`. Routes: `PATCH /transactions/:id`
 invoice it paid (auto-suggest by amount+date, confirm sets `invoice_id`; the
 no-double-count read logic lands with the overview in job 3); (b) the "Money in
 & out" screen itself (the tab is a placeholder). Screen UX pending operator sign-off.
+
+2026-07-29 (screen built) — The "Money in & out" tab is live. Per-row inline
+controls: a kind-filtered **category** dropdown (money-in rows offer in+both
+categories, money-out offer out+both; "+ New category…" prompts and POSTs one),
+a **repeats-monthly** checkbox, and for deposits a one-tap **"Paid #INV?"** match
+(client-side suggestion by exact amount + date on/after issue within 120 days,
+unpaid invoices preferred; confirm sets `invoice_id`, "×" unlinks). Tagging
+category/recurring PATCHes the txn and teaches the learn-once rule. Header shows
+"N to categorize". No-double-count read logic (excluding matched deposits vs
+their invoices) still lands with the overview (job 3). Reconcile match is
+amount-exact only for now; fuzzy/partial matches are out of scope.

@@ -517,6 +517,33 @@
   table.fin-table td.amt.in { color: #2f7a45; }
   table.fin-table td.amt.out { color: #b23b2a; }
   table.fin-table td.bal { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; color: var(--muted); }
+  table.fin-table th.num, table.fin-table td.amt { text-align: right; }
+  table.fin-table th.ctr, table.fin-table td.ctr { text-align: center; }
+
+  /* Money in & out controls */
+  .fin-cat-select {
+    font: inherit; font-size: 13px; padding: 5px 8px; max-width: 170px;
+    border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--ink);
+  }
+  .fin-cat-select.unset { color: var(--muted); border-style: dashed; }
+  .fin-cat-select:focus { border-color: var(--brand); outline: none; }
+  .fin-rep { width: 17px; height: 17px; cursor: pointer; accent-color: var(--brand); }
+  .fin-dash { color: var(--muted); }
+  .fin-inv-cell { white-space: nowrap; }
+  .fin-inv-match {
+    font: inherit; font-size: 12px; padding: 5px 10px; cursor: pointer;
+    border: 1px solid var(--brand); color: var(--brand); background: var(--surface); border-radius: 999px;
+  }
+  .fin-inv-match:hover { background: var(--brand); color: #fff; }
+  .fin-inv-linked {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 600;
+    color: #2f7a45; background: #e2f3e6; padding: 3px 8px; border-radius: 999px;
+  }
+  .fin-inv-x {
+    border: none; background: none; cursor: pointer; color: var(--muted);
+    font-size: 15px; line-height: 1; padding: 0 2px; margin-left: 2px;
+  }
+  .fin-inv-x:hover { color: #b23b2a; }
 
   /* Invoice document — mirrors the real Robots & Co. A4 tax invoice.
      Draft = editable (number + due + line removal); issued = read-only. */
@@ -1252,6 +1279,7 @@
     financePane: false,    // Finances area open (top-bar Finances button)
     financeScreen: 'import', // which finance screen: 'import' now; overview/forecast/reconcile land in later jobs
     transactions: [],      // the money-in/out ledger (GET /transactions)
+    financeCategories: [], // our own categories (GET /finance/categories)
     financeMeta: null,     // { count, opening_balance, opening_date } from GET /transactions/meta
     importPreview: null,   // last dry-run result awaiting confirm: { summary, csv, account }
   };
@@ -2389,7 +2417,7 @@
   // Everything here hits only this app's own backend — no cloud, no AI.
   const FINANCE_SCREENS = [
     { key: 'import',   label: 'Import',         ready: true },
-    { key: 'ledger',   label: 'Money in & out', ready: false, job: 2 },
+    { key: 'ledger',   label: 'Money in & out', ready: true },
     { key: 'overview', label: 'Overview',       ready: false, job: 3 },
     { key: 'forecast', label: 'Forecast',       ready: false, job: 4 },
   ];
@@ -2434,12 +2462,14 @@
   }
   async function refreshTransactions() {
     try {
-      const [rows, meta] = await Promise.all([
+      const [rows, meta, cats] = await Promise.all([
         fetch('/transactions').then((r) => r.json()),
         fetch('/transactions/meta').then((r) => r.json()).catch(() => null),
+        fetch('/finance/categories').then((r) => r.json()).catch(() => null),
       ]);
       state.transactions = Array.isArray(rows) ? rows : [];
       state.financeMeta = meta || { count: state.transactions.length, opening_balance: null, opening_date: null };
+      if (Array.isArray(cats)) state.financeCategories = cats;
     } catch (e) { console.error('load transactions failed', e); }
     if (state.financePane) renderFinance();
   }
@@ -2449,6 +2479,7 @@
     const body = $('financeBody');
     body.innerHTML = '';
     if (state.financeScreen === 'import') return renderFinanceImport(body);
+    if (state.financeScreen === 'ledger') return renderMoneyInOut(body);
     const s = FINANCE_SCREENS.find((x) => x.key === state.financeScreen);
     const d = document.createElement('div');
     d.className = 'fin-soon';
@@ -2468,6 +2499,164 @@
       bar.appendChild(b);
     }
   }
+
+  // ── Money in & out (categorize + reconcile) ─────────────────
+  const catById = (id) => state.financeCategories.find((c) => c.id === id) || null;
+  // Categories that suit a row: money-in rows get 'in'+'both', money-out get 'out'+'both'.
+  function categoriesForAmount(amount) {
+    const want = Number(amount) < 0 ? 'out' : 'in';
+    return state.financeCategories.filter((c) => c.kind === want || c.kind === 'both');
+  }
+  // Best invoice a deposit likely paid: same amount, dated on/after the invoice
+  // (within ~120 days). Unpaid invoices win over already-paid ones.
+  function matchInvoiceFor(t) {
+    if (!(Number(t.amount) > 0)) return null;
+    const amt = round2(t.amount);
+    let best = null;
+    for (const inv of state.invoices.values()) {
+      if (Math.abs(round2(inv.total) - amt) > 0.005) continue;         // same amount
+      if (inv.issued_at && t.date < inv.issued_at) continue;           // paid on/after issue
+      if (inv.issued_at && daysBetween(inv.issued_at, t.date) > 120) continue;
+      if (!best) { best = inv; continue; }
+      const invUnpaid = inv.status !== 'paid', bestUnpaid = best.status !== 'paid';
+      // prefer an unpaid invoice; among equals, the most recently issued
+      const better = (invUnpaid && !bestUnpaid)
+        || (invUnpaid === bestUnpaid && String(inv.issued_at) > String(best.issued_at));
+      if (better) best = inv;
+    }
+    return best;
+  }
+  function daysBetween(a, b) {
+    const da = new Date(a + 'T00:00:00Z'), db = new Date(b + 'T00:00:00Z');
+    return Math.abs(Math.round((db - da) / 86400000));
+  }
+  // Persist a tag/link; update local state. Re-render only when asked (invoice
+  // link changes the row's look; a dropdown/checkbox already shows its own change).
+  async function patchTxn(id, patch, opts = {}) {
+    const scroller = $('financeBody');
+    const scroll = scroller ? scroller.scrollTop : 0;
+    try {
+      const updated = await patchJson(`/transactions/${id}`, patch);
+      const i = state.transactions.findIndex((x) => x.id === id);
+      if (i >= 0) state.transactions[i] = updated;
+      if (opts.rerender) { renderFinance(); const s = $('financeBody'); if (s) s.scrollTop = scroll; }
+    } catch (e) { alert('Update failed: ' + e.message); }
+  }
+  async function addCategoryFor(t, selectEl) {
+    const name = (prompt('New category name:') || '').trim();
+    if (!name) { selectEl.value = t.category || ''; return; }
+    const kind = Number(t.amount) < 0 ? 'out' : 'in';
+    try {
+      const cats = await postJson('/finance/categories', { name, kind });
+      if (Array.isArray(cats)) state.financeCategories = cats;
+      const added = state.financeCategories.find((c) => c.name === name);
+      await patchTxn(t.id, { category: added ? added.id : null });
+      renderFinance();
+    } catch (e) { alert('Could not add category: ' + e.message); selectEl.value = t.category || ''; }
+  }
+
+  function renderMoneyInOut(body) {
+    const wrap = document.createElement('div');
+    wrap.className = 'fin-screen fin-mio';
+    const rows = [...state.transactions].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const uncat = rows.filter((t) => !t.category).length;
+    const head = document.createElement('div');
+    head.className = 'fin-ledger-head';
+    head.innerHTML = `<h3>Money in &amp; out</h3><span class="sub">${rows.length} row${rows.length === 1 ? '' : 's'}${uncat ? ` · <span class="fin-check-bad">${uncat} to categorize</span>` : ' · <span class="fin-check-ok">all categorized</span>'}</span>`;
+    wrap.appendChild(head);
+    if (!rows.length) {
+      const e = document.createElement('div'); e.className = 'fin-soon';
+      e.textContent = 'Nothing here yet — import a bank CSV first (Import tab).';
+      wrap.appendChild(e);
+      body.appendChild(wrap);
+      return;
+    }
+    const p = document.createElement('p');
+    p.className = 'fin-lead';
+    p.innerHTML = 'Sort each row into a category and flag anything that repeats monthly — do it once and future imports copy it. For money in, confirm which invoice it paid so it isn’t counted twice.';
+    wrap.appendChild(p);
+
+    const table = document.createElement('table');
+    table.className = 'fin-table fin-mio-table';
+    table.innerHTML = '<thead><tr><th>Date</th><th>Description</th><th class="num">In / out</th><th>Category</th><th class="ctr">Repeats</th><th>Invoice</th></tr></thead>';
+    const tb = document.createElement('tbody');
+    for (const t of rows) tb.appendChild(mioRow(t));
+    table.appendChild(tb);
+    wrap.appendChild(table);
+    body.appendChild(wrap);
+  }
+
+  function mioRow(t) {
+    const tr = document.createElement('tr');
+    const isIn = Number(t.amount) >= 0;
+
+    // Date + description + amount
+    const tdDate = document.createElement('td'); tdDate.textContent = fmtDate(t.date);
+    const tdNarr = document.createElement('td'); tdNarr.className = 'narr'; tdNarr.textContent = t.narrative;
+    const tdAmt = document.createElement('td');
+    tdAmt.className = 'amt ' + (isIn ? 'in' : 'out');
+    tdAmt.textContent = moneySigned('$', t.amount);
+
+    // Category dropdown (kind-filtered) + "add new"
+    const tdCat = document.createElement('td');
+    const sel = document.createElement('select');
+    sel.className = 'fin-cat-select' + (t.category ? '' : ' unset');
+    const opt0 = new Option('— pick —', '');
+    sel.appendChild(opt0);
+    for (const c of categoriesForAmount(t.amount)) sel.appendChild(new Option(c.name, c.id));
+    // If the stored category doesn't fit this row's kind, still show it so it isn't lost.
+    if (t.category && !categoriesForAmount(t.amount).some((c) => c.id === t.category)) {
+      const c = catById(t.category); if (c) sel.appendChild(new Option(c.name, c.id));
+    }
+    sel.appendChild(new Option('+ New category…', '__new__'));
+    sel.value = t.category || '';
+    sel.addEventListener('change', () => {
+      if (sel.value === '__new__') return addCategoryFor(t, sel);
+      sel.classList.toggle('unset', !sel.value);
+      patchTxn(t.id, { category: sel.value || null });
+    });
+    tdCat.appendChild(sel);
+
+    // Repeats-monthly toggle
+    const tdRep = document.createElement('td');
+    tdRep.className = 'ctr';
+    const rep = document.createElement('input');
+    rep.type = 'checkbox'; rep.className = 'fin-rep'; rep.checked = !!t.recurring;
+    rep.title = 'Repeats monthly — future imports of this payee inherit it';
+    rep.addEventListener('change', () => patchTxn(t.id, { recurring: rep.checked }));
+    tdRep.appendChild(rep);
+
+    // Invoice match (money-in only)
+    const tdInv = document.createElement('td');
+    tdInv.className = 'fin-inv-cell';
+    if (isIn && Number(t.amount) > 0) fillInvoiceCell(tdInv, t);
+    else tdInv.innerHTML = '<span class="fin-dash">—</span>';
+
+    tr.append(tdDate, tdNarr, tdAmt, tdCat, tdRep, tdInv);
+    return tr;
+  }
+
+  function fillInvoiceCell(td, t) {
+    td.innerHTML = '';
+    if (t.invoice_id) {
+      const link = document.createElement('span'); link.className = 'fin-inv-linked';
+      link.textContent = '#' + t.invoice_id;
+      const x = document.createElement('button');
+      x.className = 'fin-inv-x'; x.type = 'button'; x.title = 'Unlink'; x.textContent = '×';
+      x.addEventListener('click', () => patchTxn(t.id, { invoice_id: null }, { rerender: true }));
+      td.append(link, x);
+      return;
+    }
+    const cand = matchInvoiceFor(t);
+    if (!cand) { td.innerHTML = '<span class="fin-dash">—</span>'; return; }
+    const b = document.createElement('button');
+    b.className = 'fin-inv-match'; b.type = 'button';
+    b.textContent = `Paid #${cand.id}?`;
+    b.title = `Match this deposit to invoice #${cand.id} (${money(cand.total)})`;
+    b.addEventListener('click', () => patchTxn(t.id, { invoice_id: cand.id }, { rerender: true }));
+    td.appendChild(b);
+  }
+
   function renderFinanceImport(body) {
     const wrap = document.createElement('div');
     wrap.className = 'fin-screen';
