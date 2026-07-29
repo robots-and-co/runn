@@ -2464,17 +2464,19 @@
     $('billingBtn').classList.toggle('is-active', !!state.invoicesPane);
     $('jobsBtn').classList.toggle('is-active', !state.financePane && !state.invoicesPane);
   }
-  // Jobs button: return to the jobs list, closing whichever pane is open.
+  // The three header buttons act like radio buttons: tapping the view you're
+  // already on does nothing (no toggle-off). Jobs button returns to the jobs
+  // list, closing whichever pane is open.
   function showJobs() {
-    if (state.financePane) toggleFinance();
-    else if (state.invoicesPane) toggleInvoices();
-    else syncNav();
+    if (!state.financePane && !state.invoicesPane) { syncNav(); return; }
+    flipPane(() => {
+      if (state.financePane) exitFinance();
+      else if (state.invoicesPane) exitInvoices();
+    });
   }
   function toggleInvoices() {
-    flipPane(() => {
-      if (state.invoicesPane) exitInvoices();
-      else enterInvoices();
-    });
+    if (state.invoicesPane) return;   // already on invoices — ignore
+    flipPane(() => { enterInvoices(); });
   }
   // Half-flip the list body out (edge-on), run `applyChange` while it's hidden,
   // then flip the new content back in. Honours reduced-motion (instant swap).
@@ -2576,10 +2578,8 @@
   ];
   // Flip the list body between jobs and the finance tab list, like toggleInvoices.
   function toggleFinance() {
-    flipPane(() => {
-      if (state.financePane) exitFinance();
-      else enterFinance();
-    });
+    if (state.financePane) return;   // already on finances — ignore
+    flipPane(() => { enterFinance(); });
   }
   function enterFinance() {
     state.financePane = true;
