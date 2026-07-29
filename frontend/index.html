@@ -579,6 +579,14 @@
   .fin-bl-bar.in { background: #58b06f; }
   .fin-bl-bar.owed { background: #cd9b3f; }
   .fin-bl-bar.out { background: #d0685c; }
+  .fin-bl-split { display: flex; }               /* money in + owed share one bar */
+  .fin-bl-split .fin-bl-bar { border-radius: 0; } /* track's rounding + overflow clip the ends */
+  .fin-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: -2px 0 12px; font-size: 11px; color: var(--muted); }
+  .fin-legend .k { display: inline-flex; align-items: center; gap: 5px; }
+  .fin-legend .k::before { content: ''; width: 10px; height: 10px; border-radius: 3px; }
+  .fin-legend .k.in::before { background: #58b06f; }
+  .fin-legend .k.owed::before { background: #cd9b3f; }
+  .fin-legend .k.out::before { background: #d0685c; }
   .fin-bl-row .val { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
   .fin-bl-total { display: grid; grid-template-columns: 96px 1fr 110px; gap: 4px 12px; align-items: baseline; margin-top: 4px; padding-top: 11px; border-top: 1px solid var(--border); }
   .fin-bl-total .lbl { font-size: 14px; font-weight: 700; color: var(--ink); }
@@ -2952,22 +2960,28 @@
       wrap.appendChild(n);
     }
 
-    // Money in, owed & out — the bottom line. Three bars (in, owed, out) and the
-    // total worth beneath. The total is a position, not a flow, so it reads cash
-    // on hand + money owed (money in/out already live inside cash on hand) — the
-    // bars tell the story, the total is what you're actually worth.
-    const blMax = Math.max(1, totIn, comingTotal, totOut);
+    // Money in & owed vs money out — the bottom line. Money in and money owed
+    // share ONE bar (green + amber segments) so their combined length reads
+    // directly against the money-out bar below: is what's coming in (received +
+    // owed) more than what's going out? The Total beneath is the position (worth
+    // = cash on hand + money owed), since money in/out already sit inside cash.
+    const incomingTotal = round2(totIn + comingTotal);
+    const blMax = Math.max(1, incomingTotal, totOut);
     const worth = round2(cashNow + comingTotal);
-    const blRow = (cls, label, val) =>
-      `<div class="fin-bl-row"><span class="lbl">${label}</span>
-        <span class="fin-bl-track"><span class="fin-bl-bar ${cls}" style="width:${(val / blMax * 100).toFixed(1)}%"></span></span>
-        <span class="val">${esc(money(val))}</span></div>`;
+    const pct = (v) => (v / blMax * 100).toFixed(1);
     const secM = document.createElement('div'); secM.className = 'fin-ov-sec';
-    secM.innerHTML = `<h3>Money in, owed &amp; out</h3>
+    secM.innerHTML = `<h3>Money in &amp; owed vs money out</h3>
+      <div class="fin-legend"><span class="k in">Money in</span><span class="k owed">Money owed</span><span class="k out">Money out</span></div>
       <div class="fin-bl">
-        ${blRow('in', 'Money in', totIn)}
-        ${blRow('owed', 'Money owed', comingTotal)}
-        ${blRow('out', 'Money out', totOut)}
+        <div class="fin-bl-row"><span class="lbl">In + owed</span>
+          <span class="fin-bl-track fin-bl-split">
+            <span class="fin-bl-bar in" style="width:${pct(totIn)}%" title="in ${esc(money(totIn))}"></span>
+            <span class="fin-bl-bar owed" style="width:${pct(comingTotal)}%" title="owed ${esc(money(comingTotal))}"></span>
+          </span>
+          <span class="val">${esc(money(incomingTotal))}</span></div>
+        <div class="fin-bl-row"><span class="lbl">Money out</span>
+          <span class="fin-bl-track"><span class="fin-bl-bar out" style="width:${pct(totOut)}%"></span></span>
+          <span class="val">${esc(money(totOut))}</span></div>
         <div class="fin-bl-total"><span class="lbl">Total</span><span></span><span class="val">${esc(money(worth))}</span>
           <span class="sub">cash on hand ${esc(money(cashNow))} + money owed ${esc(money(comingTotal))}</span></div>
       </div>`;
