@@ -555,6 +555,10 @@
   .fin-ov-card .sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
   .fin-ov-card.pos .big { color: #2f7a45; }
   .fin-ov-card.neg .big { color: #b23b2a; }
+  .fin-ov-total { border: 1px solid var(--brand); border-radius: 12px; padding: 16px 18px; background: var(--surface); margin-bottom: 12px; }
+  .fin-ov-total .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  .fin-ov-total .big { font-size: 30px; font-weight: 800; margin-top: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--brand); }
+  .fin-ov-total .sub { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
   .fin-ov-sec { margin: 22px 0 4px; }
   .fin-ov-sec h3 { margin: 0 0 10px; font-size: 15px; }
   .fin-mon { display: grid; grid-template-columns: 58px 1fr 92px; gap: 12px; align-items: center; padding: 6px 0; }
@@ -2823,6 +2827,18 @@
     const notBilledJobs = billGroups.reduce((s, g) => s + g.rows.length, 0);
     const uncat = txns.filter((t) => !t.category).length;
     const asOf = latestTxnDate();
+
+    // Total position: what you're worth once everything owed lands. Owed money
+    // is a timing matter, not a separate balance — so fold cash + not-yet-billed
+    // + unpaid invoices into one headline instead of making the eye add them up.
+    const cashNow = round2(Number(meta.calculated_balance) || 0);
+    const comingTotal = round2(notBilledTotal + owedTotal);
+    const totalCard = document.createElement('div'); totalCard.className = 'fin-ov-total';
+    totalCard.innerHTML = `
+      <div class="lbl">Total position</div>
+      <div class="big">${esc(money(round2(cashNow + comingTotal)))}</div>
+      <div class="sub">${esc(money(cashNow))} cash on hand + ${esc(money(comingTotal))} owed to you (not yet billed + unpaid invoices)</div>`;
+    wrap.appendChild(totalCard);
 
     const cards = document.createElement('div'); cards.className = 'fin-ov-cards';
     cards.innerHTML = `

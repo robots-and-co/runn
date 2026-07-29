@@ -57,3 +57,8 @@ not yet invoiced). Sits before "Owed to you" in the money-coming pipeline (done
 → not yet billed → invoiced/owed → paid/cash). No double-count: invoicing a job
 flips its status to `invoiced`, so it leaves this pool the moment it enters
 "owed". Headline number only — no per-client breakdown.
+
+2026-07-29 — Added a **Total position** headline above the cards: cash on hand +
+not yet billed + unpaid invoices. Rationale: money owed is a timing matter, not a
+separate balance — so the operator's real standing is one figure, not a mental
+sum of "cash" and "owed". The individual cards remain as the breakdown.
