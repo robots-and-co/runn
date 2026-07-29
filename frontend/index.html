@@ -575,7 +575,7 @@
   .fin-bl-row { display: grid; grid-template-columns: 96px 1fr 110px; gap: 12px; align-items: center; }
   .fin-bl-row .lbl { font-size: 13px; color: var(--muted); }
   .fin-bl-track { background: var(--surface-2); border-radius: 5px; height: 15px; overflow: hidden; }
-  .fin-bl-bar { height: 100%; border-radius: 5px; min-width: 1px; }
+  .fin-bl-bar { display: block; height: 100%; border-radius: 5px; min-width: 1px; }
   .fin-bl-bar.in { background: #58b06f; }
   .fin-bl-bar.owed { background: #cd9b3f; }
   .fin-bl-bar.out { background: #d0685c; }
@@ -588,7 +588,7 @@
   .fin-catrow .cname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fin-catrow.uncat .cname { color: var(--muted); font-style: italic; }
   .fin-cattrack { background: var(--surface-2); border-radius: 4px; height: 9px; overflow: hidden; }
-  .fin-catfill { height: 100%; background: #8aa0b6; border-radius: 4px; }
+  .fin-catfill { display: block; height: 100%; background: #8aa0b6; border-radius: 4px; }
   .fin-catrow .cval { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .fin-owe { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; background: var(--surface); cursor: pointer; }
   .fin-owe:hover { border-color: var(--brand); }
