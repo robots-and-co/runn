@@ -431,17 +431,19 @@
   .badge.st-sent { background: #fdeede; color: #a85513; }
   .badge.st-paid { background: #e2f3e6; color: #2f7a45; }
 
-  /* ── Finances ───────────────────────────────────── */
-  .finance-btn {
-    margin-left: auto; flex-shrink: 0; height: 32px; width: 34px;
+  /* ── Header nav buttons (Jobs · Finances · Invoices) ── */
+  /* The three view switchers cluster on the right; the Jobs button claims the
+     free space (margin-left:auto), then Finances + total sit beside it. */
+  .jobs-btn, .finance-btn {
+    flex-shrink: 0; height: 32px; width: 34px;
     display: inline-flex; align-items: center; justify-content: center;
     background: var(--surface); border: 1px solid #dbe3ec; border-radius: 8px;
     font-size: 15px; cursor: pointer; padding: 0;
   }
-  .finance-btn:hover { border-color: var(--brand); }
-  .finance-btn.is-active { background: var(--brand); border-color: var(--brand); }
-  /* total sits right after the finance button (its own margin-left:auto is a no-op
-     once .finance-btn has claimed the free space). */
+  .jobs-btn { margin-left: auto; }
+  .finance-btn { margin-left: 8px; }
+  .jobs-btn:hover, .finance-btn:hover { border-color: var(--brand); }
+  .jobs-btn.is-active, .finance-btn.is-active { background: var(--brand); border-color: var(--brand); }
   .total { margin-left: 8px; }
 
   /* Finances mirrors the invoices layout exactly: the tabs live as a LEFT LIST
@@ -1273,6 +1275,7 @@
       <div class="list-head">
         <button class="logo" id="logoReset" type="button" title="Reload — clears cached copies for a clean test">R</button>
         <h1>Runn</h1>
+        <button class="jobs-btn is-active" id="jobsBtn" type="button" title="Jobs — your task list" aria-label="Jobs">📋</button>
         <button class="finance-btn" id="financeBtn" type="button" title="Finances — money in &amp; out, all kept on this machine" aria-label="Finances">📊</button>
         <button class="total clickable" id="billingBtn" type="button" title="Invoices — tap to flip this list to billing">
           <span class="amt" id="valueTotal">0.00</span>
@@ -2454,6 +2457,19 @@
   // is swallowed (avoids the back from closePreview cascading into exitInvoices).
   let suppressPop = false;
 
+  // Highlight exactly one header nav button for the view you're in. Jobs (the
+  // default list) is active whenever neither Finances nor Invoices is open.
+  function syncNav() {
+    $('financeBtn').classList.toggle('is-active', !!state.financePane);
+    $('billingBtn').classList.toggle('is-active', !!state.invoicesPane);
+    $('jobsBtn').classList.toggle('is-active', !state.financePane && !state.invoicesPane);
+  }
+  // Jobs button: return to the jobs list, closing whichever pane is open.
+  function showJobs() {
+    if (state.financePane) toggleFinance();
+    else if (state.invoicesPane) toggleInvoices();
+    else syncNav();
+  }
   function toggleInvoices() {
     flipPane(() => {
       if (state.invoicesPane) exitInvoices();
@@ -2493,9 +2509,8 @@
     // Leave finances if it was open (they share the list body).
     state.financePane = false;
     document.body.classList.remove('show-finance', 'show-finance-main');
-    $('financeBtn').classList.remove('is-active');
     document.body.classList.add('show-invoices');
-    $('billingBtn').classList.add('is-active');
+    syncNav();
     if (isMobile()) {
       if (!(history.state && history.state.runnInvoices)) history.pushState({ runnInvoices: true }, '');
     } else {
@@ -2510,7 +2525,7 @@
     state.billingSel = null;
     state.editing = null;
     document.body.classList.remove('show-invoices', 'show-billing');
-    $('billingBtn').classList.remove('is-active');
+    syncNav();
     renderList();
     renderChat();
     if (!fromPop && history.state && history.state.runnInvoices) history.back();
@@ -2574,9 +2589,8 @@
     // Leave invoices if it was open (they share the list body).
     document.body.classList.remove('show-invoices', 'show-billing');
     state.invoicesPane = false;
-    $('billingBtn').classList.remove('is-active');
     document.body.classList.add('show-finance');
-    $('financeBtn').classList.add('is-active');
+    syncNav();
     if (isMobile()) {
       if (!(history.state && history.state.runnFinance)) history.pushState({ runnFinance: true }, '');
     } else {
@@ -2590,7 +2604,7 @@
     state.financePane = false;
     state.importPreview = null;
     document.body.classList.remove('show-finance', 'show-finance-main');
-    $('financeBtn').classList.remove('is-active');
+    syncNav();
     renderList();
     renderChat();
     if (!fromPop && history.state && history.state.runnFinance) history.back();
@@ -2932,7 +2946,6 @@
   function goToInvoice(id) {
     state.financePane = false;
     document.body.classList.remove('show-finance');
-    $('financeBtn').classList.remove('is-active');
     enterInvoices();
     openInvoiceDoc({ kind: 'invoice', id });
   }
@@ -4132,14 +4145,13 @@
       state.billingSel = null;
       state.editing = null;
       document.body.classList.remove('show-invoices', 'show-billing');
-      $('billingBtn').classList.remove('is-active');
     }
     if (state.financePane) {
       state.financePane = false;
       state.importPreview = null;
       document.body.classList.remove('show-finance', 'show-finance-main');
-      $('financeBtn').classList.remove('is-active');
     }
+    syncNav();
     state.currentId = id;
     state.editingTurn = null;
     state.picking = false;
@@ -5154,6 +5166,7 @@
 
   // ── Wiring ──────────────────────────────────────
   $('backBtn').addEventListener('click', () => closeChat());
+  $('jobsBtn').addEventListener('click', showJobs);
   $('billingBtn').addEventListener('click', toggleInvoices);
   $('financeBtn').addEventListener('click', toggleFinance);
   // The doc-pane chevrons (mobile only) return to their list.
