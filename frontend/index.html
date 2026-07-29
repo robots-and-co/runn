@@ -444,32 +444,34 @@
      once .finance-btn has claimed the free space). */
   .total { margin-left: 8px; }
 
-  /* Finances lives INSIDE the flipping list body (like the invoices list), under
-     the fixed Runn header — so the 📊 button flips jobs ⇄ finances in place using
-     the same flipPane() animation, and the layout can't be pushed off-screen.
-     There's no separate finance document pane, so on desktop the list pane widens
-     to fill the window; on mobile it's already full width. */
-  .finance-view { flex: 1; min-height: 0; display: none; flex-direction: column; }
+  /* Finances mirrors the invoices layout exactly: the tabs live as a LEFT LIST
+     (in the flipping list body, under the fixed Runn header), and the selected
+     tab's content fills the MAIN pane full-width — just like the invoice list +
+     invoice document. The 📊 button flips jobs ⇄ finance-tabs via flipPane(). */
+  .finance-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px; display: none; }
   body.show-finance #jobList,
   body.show-finance .usage-strip,
   body.show-finance .focus-bar,
   body.show-finance .list-sub,
   body.show-finance .list-search,
   body.show-finance .list-foot { display: none; }
-  body.show-finance .finance-view { display: flex; }
-  body.show-finance .list-pane { width: 100%; min-width: 0; }
-  body.show-finance .chat-pane { display: none; }
-  .finance-tabs {
-    display: flex; gap: 6px; padding: 10px 16px 0; flex-wrap: wrap;
-    border-bottom: 1px solid var(--border);
-  }
-  .finance-tab {
-    border: 1px solid var(--border); background: var(--surface); border-radius: 8px 8px 0 0;
-    padding: 8px 12px; font: inherit; font-size: 13px; cursor: pointer; color: var(--muted);
-    border-bottom: 0; margin-bottom: -1px;
-  }
-  .finance-tab.active { color: var(--ink); font-weight: 600; border-color: var(--border); background: var(--bg); }
-  .finance-tab:disabled { cursor: default; opacity: .55; }
+  body.show-finance .finance-list { display: block; }
+
+  /* Finance content pane (the tab body) = the main column, exactly like billing. */
+  .finance-pane { flex: 1; display: none; flex-direction: column; min-width: 0; }
+  body.show-finance-main .finance-pane { display: flex; }
+  body.show-finance-main .chat-pane { display: none; }
+
+  /* Left-list tab entries — same card look as the invoice list rows. */
+  .fin-nav { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+    padding: 14px; margin-bottom: 8px; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--surface); cursor: pointer; font: inherit; }
+  .fin-nav:hover { border-color: var(--brand); }
+  .fin-nav.active { border-color: var(--brand); box-shadow: inset 3px 0 0 var(--brand); }
+  .fin-nav:disabled { cursor: default; opacity: .55; }
+  .fin-nav .main { flex: 1; min-width: 0; }
+  .fin-nav .ttl { font-weight: 600; font-size: 15px; }
+  .fin-nav .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
   .finance-body { flex: 1; overflow: auto; padding: 18px; }
   .fin-screen { max-width: 860px; }
   .fin-lead { color: var(--muted); font-size: 14px; margin: 0 0 16px; line-height: 1.5; }
@@ -1119,15 +1121,18 @@
     body.show-billing .billing-pane { transform: translateX(0); }
     body.show-billing .chat-pane { display: flex; }   /* don't fight the overlay on mobile */
 
-    /* Finances flips in the full-width list body (Runn header stays put), so no
-       overlay pane on mobile — the 📊 button in the header flips back. */
+    /* Finance content pane slides over like the billing (invoice) pane. */
+    .finance-pane { display: flex; position: fixed; inset: 0; background: var(--bg);
+      transform: translateX(100%); transition: transform 0.22s ease; z-index: 6; }
+    body.show-finance-main .finance-pane { transform: translateX(0); }
+    body.show-finance-main .chat-pane { display: flex; }
     .finance-body { padding: 14px; }
     table.fin-table { font-size: 12px; }
     /* Clear the phone's home/gesture bar so the last row scrolls fully into view.
        Android Chrome usually reports the gesture bar as 0 safe-area, so a floor
        is needed (the jobs list clears it with ~88px of FAB padding). max() uses
        the safe-area inset instead on devices that do report one (e.g. iOS). */
-    .billing-list { padding-bottom: max(80px, calc(24px + var(--safe-b))); }
+    .billing-list, .finance-list { padding-bottom: max(80px, calc(24px + var(--safe-b))); }
     .billing-body { padding-bottom: max(72px, calc(16px + var(--safe-b))); }
     .finance-body { padding-bottom: max(72px, calc(14px + var(--safe-b))); }
     table.fin-table th, table.fin-table td { padding: 6px 6px; }
@@ -1211,10 +1216,7 @@
         </div>
         <div class="job-list" id="jobList"></div>
         <div class="billing-list" id="billingList"></div>
-        <div class="finance-view" id="financeView">
-          <div class="finance-tabs" id="financeTabs"></div>
-          <div class="finance-body" id="financeBody"></div>
-        </div>
+        <div class="finance-list" id="financeList"></div>
       </div>
       <div class="list-foot">
         <button class="btn-newjob" id="newJobBtn">+ Job</button>
@@ -1275,6 +1277,14 @@
         <span class="ttl-badge badge" id="billingBadge" hidden></span>
       </div>
       <div class="billing-body" id="billingBody"></div>
+    </section>
+
+    <section class="finance-pane" id="financePane">
+      <div class="chat-head billing-head">
+        <button class="back" id="financeBack" type="button" aria-label="Back">‹</button>
+        <span class="ttl" id="financeContentTitle">Finances</span>
+      </div>
+      <div class="finance-body" id="financeBody"></div>
     </section>
   </div>
   <div class="chip-menu" id="chipMenu" hidden></div>
@@ -2397,7 +2407,7 @@
     resetNewJobPicker();
     // Leave finances if it was open (they share the list body).
     state.financePane = false;
-    document.body.classList.remove('show-finance');
+    document.body.classList.remove('show-finance', 'show-finance-main');
     $('financeBtn').classList.remove('is-active');
     document.body.classList.add('show-invoices');
     $('billingBtn').classList.add('is-active');
@@ -2450,13 +2460,15 @@
   // Same slide-over mechanics as the invoice document pane. Job 1 ships the
   // Import screen; the other tabs are placeholders until their jobs land.
   // Everything here hits only this app's own backend — no cloud, no AI.
+  // Tabs are a LEFT LIST (like the invoice list); each opens its content in the
+  // MAIN pane (like an invoice document). Mirrors the invoices layout exactly.
   const FINANCE_SCREENS = [
-    { key: 'import',   label: 'Import',         ready: true },
-    { key: 'ledger',   label: 'Money in & out', ready: true },
-    { key: 'overview', label: 'Overview',       ready: true },
-    { key: 'forecast', label: 'Forecast',       ready: false, job: 4 },
+    { key: 'import',   label: 'Import',         hint: 'Bring in a bank CSV',          ready: true },
+    { key: 'ledger',   label: 'Money in & out', hint: 'Categorize & match invoices',  ready: true },
+    { key: 'overview', label: 'Overview',       hint: 'Cash, in vs out, who owes',    ready: true },
+    { key: 'forecast', label: 'Forecast',       hint: 'Project the next few months',  ready: false, job: 4 },
   ];
-  // Flip the list body between jobs and finances, exactly like toggleInvoices.
+  // Flip the list body between jobs and the finance tab list, like toggleInvoices.
   function toggleFinance() {
     flipPane(() => {
       if (state.financePane) exitFinance();
@@ -2474,7 +2486,11 @@
     $('billingBtn').classList.remove('is-active');
     document.body.classList.add('show-finance');
     $('financeBtn').classList.add('is-active');
-    if (isMobile() && !(history.state && history.state.runnFinance)) history.pushState({ runnFinance: true }, '');
+    if (isMobile()) {
+      if (!(history.state && history.state.runnFinance)) history.pushState({ runnFinance: true }, '');
+    } else {
+      document.body.classList.add('show-finance-main');   // desktop: content fills the main column
+    }
     refreshTransactions();   // fire-and-forget; re-renders when it lands
     renderFinance();
   }
@@ -2482,18 +2498,28 @@
     const fromPop = opts === true || (opts && opts.fromPop === true);
     state.financePane = false;
     state.importPreview = null;
-    document.body.classList.remove('show-finance');
+    document.body.classList.remove('show-finance', 'show-finance-main');
     $('financeBtn').classList.remove('is-active');
     renderList();
     renderChat();
     if (!fromPop && history.state && history.state.runnFinance) history.back();
   }
+  // Open a tab: its content fills the main pane (a slide-over on mobile).
   function openFinanceScreen(key) {
     const s = FINANCE_SCREENS.find((x) => x.key === key);
     if (!s || !s.ready) return;
     state.financeScreen = key;
     state.importPreview = null;
+    document.body.classList.add('show-finance-main');
+    if (isMobile() && !(history.state && history.state.runnFinanceContent)) history.pushState({ runnFinanceContent: true }, '');
     renderFinance();
+  }
+  // Mobile back chevron on the content pane → return to the tab list.
+  function closeFinanceContent(opts) {
+    const fromPop = opts === true || (opts && opts.fromPop === true);
+    if (isMobile()) document.body.classList.remove('show-finance-main');
+    renderFinanceNav();
+    if (!fromPop && history.state && history.state.runnFinanceContent) { suppressPop = true; history.back(); }
   }
   async function refreshTransactions() {
     try {
@@ -2506,34 +2532,46 @@
       state.financeMeta = meta || { count: state.transactions.length, opening_balance: null, opening_date: null };
       if (Array.isArray(cats)) state.financeCategories = cats;
     } catch (e) { console.error('load transactions failed', e); }
-    if (state.financePane) renderFinance();
+    if (state.financePane) {
+      const sc = $('financeBody'); const top = sc ? sc.scrollTop : 0;
+      renderFinance();
+      const sc2 = $('financeBody'); if (sc2) sc2.scrollTop = top;   // keep place on live refresh
+    }
   }
   function renderFinance() {
     if (!state.financePane) return;
-    renderFinanceTabs();
+    renderFinanceNav();
+    renderFinanceContent();
+  }
+  // The left-pane tab list.
+  function renderFinanceNav() {
+    const list = $('financeList');
+    if (!list) return;
+    list.innerHTML = '';
+    for (const s of FINANCE_SCREENS) {
+      const b = document.createElement('button');
+      b.className = 'fin-nav' + (s.key === state.financeScreen ? ' active' : '');
+      b.disabled = !s.ready;
+      b.innerHTML = `<span class="main"><span class="ttl">${esc(s.label)}</span><span class="sub">${esc(s.ready ? s.hint : 'Coming in job ' + s.job)}</span></span>`;
+      if (s.ready) b.addEventListener('click', () => openFinanceScreen(s.key));
+      list.appendChild(b);
+    }
+  }
+  // The selected tab's content, in the main pane.
+  function renderFinanceContent() {
     const body = $('financeBody');
+    if (!body) return;
+    const s = FINANCE_SCREENS.find((x) => x.key === state.financeScreen);
+    const titleEl = $('financeContentTitle');
+    if (titleEl) titleEl.textContent = s ? s.label : 'Finances';
     body.innerHTML = '';
     if (state.financeScreen === 'import') return renderFinanceImport(body);
     if (state.financeScreen === 'ledger') return renderMoneyInOut(body);
     if (state.financeScreen === 'overview') return renderOverview(body);
-    const s = FINANCE_SCREENS.find((x) => x.key === state.financeScreen);
     const d = document.createElement('div');
     d.className = 'fin-soon';
     d.textContent = `“${s ? s.label : 'This screen'}” arrives in job ${s && s.job ? s.job : ''} of the finance build.`;
     body.appendChild(d);
-  }
-  function renderFinanceTabs() {
-    const bar = $('financeTabs');
-    bar.innerHTML = '';
-    for (const s of FINANCE_SCREENS) {
-      const b = document.createElement('button');
-      b.className = 'finance-tab' + (s.key === state.financeScreen ? ' active' : '');
-      b.textContent = s.label;
-      b.disabled = !s.ready;
-      if (!s.ready) b.title = `Coming in job ${s.job}`;
-      b.addEventListener('click', () => openFinanceScreen(s.key));
-      bar.appendChild(b);
-    }
   }
 
   // ── Money in & out (categorize + reconcile) ─────────────────
@@ -3569,7 +3607,7 @@
     if (state.financePane) {
       state.financePane = false;
       state.importPreview = null;
-      document.body.classList.remove('show-finance');
+      document.body.classList.remove('show-finance', 'show-finance-main');
       $('financeBtn').classList.remove('is-active');
     }
     state.currentId = id;
@@ -4588,14 +4626,16 @@
   $('backBtn').addEventListener('click', () => closeChat());
   $('billingBtn').addEventListener('click', toggleInvoices);
   $('financeBtn').addEventListener('click', toggleFinance);
-  // The doc-pane chevron (mobile only) returns to the invoice list.
+  // The doc-pane chevrons (mobile only) return to their list.
   $('billingBack').addEventListener('click', closeBillingDoc);
+  $('financeBack').addEventListener('click', closeFinanceContent);
   // Device/browser back button: pop back toward the jobs list instead of leaving.
   window.addEventListener('popstate', () => {
     if (suppressPop) { suppressPop = false; return; }
     const preview = $('invPreview');
     if (preview && preview.classList.contains('open')) { closePreview({ fromPop: true }); return; }
     if (document.body.classList.contains('show-chat')) closeChat({ fromPop: true });
+    else if (state.financePane && document.body.classList.contains('show-finance-main') && isMobile()) closeFinanceContent({ fromPop: true });
     else if (state.financePane) exitFinance({ fromPop: true });
     else if (state.invoicesPane && state.billingSel) closeBillingDoc({ fromPop: true });
     else if (state.invoicesPane) exitInvoices({ fromPop: true });
