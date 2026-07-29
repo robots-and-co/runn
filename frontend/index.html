@@ -2756,47 +2756,74 @@
     } catch (e) { alert('Could not add category: ' + e.message); selectEl.value = t.category || ''; }
   }
 
+  // The single transactions list: every bank row (newest first) with its running
+  // balance AND the reconciliation controls (category, repeats, matched invoice)
+  // on the same row. One list, not two.
   function renderMoneyInOut(body) {
     const wrap = document.createElement('div');
     wrap.className = 'fin-screen fin-mio';
-    const rows = [...state.transactions].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const meta = state.financeMeta || {};
+    // Running balance from the opening balance up in date order; shown newest-first
+    // so the top row carries the current balance, climbing down toward the opening.
+    const chrono = [...state.transactions].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    let running = (meta.opening_balance != null) ? Number(meta.opening_balance) : 0;
+    const calcById = new Map();
+    for (const t of chrono) { running = round2(running + (Number(t.amount) || 0)); calcById.set(t.id, running); }
+    const rows = [...chrono].reverse();
     const uncat = rows.filter((t) => !t.category).length;
+
     const head = document.createElement('div');
     head.className = 'fin-ledger-head';
-    head.innerHTML = `<h3>Money in &amp; out</h3><span class="sub">${rows.length} row${rows.length === 1 ? '' : 's'}${uncat ? ` · <span class="fin-check-bad">${uncat} to categorize</span>` : ' · <span class="fin-check-ok">all categorized</span>'}</span>`;
+    const curTxt = meta.calculated_balance != null ? ' · current ' + money(meta.calculated_balance) : '';
+    let checkTxt = '';
+    if (meta.calculated_balance != null && meta.bank_current_balance != null) {
+      const match = Math.abs(meta.calculated_balance - meta.bank_current_balance) <= 0.005;
+      checkTxt = match ? ' <span class="fin-check-ok">✓ adds up</span>'
+        : ` <span class="fin-check-bad">⚠ bank says ${esc(money(meta.bank_current_balance))} — some may be missing</span>`;
+    }
+    const uncatTxt = rows.length ? (uncat ? ` · <span class="fin-check-bad">${uncat} to categorize</span>` : ' · <span class="fin-check-ok">all categorized</span>') : '';
+    head.innerHTML = `<h3>Transactions</h3><span class="sub">${rows.length} row${rows.length === 1 ? '' : 's'}${curTxt}${checkTxt}${uncatTxt}</span>`;
     wrap.appendChild(head);
     if (!rows.length) {
       const e = document.createElement('div'); e.className = 'fin-soon';
-      e.textContent = 'Nothing here yet — import a bank CSV first (Import tab).';
+      e.textContent = 'Nothing here yet — import a bank CSV above.';
       wrap.appendChild(e);
       body.appendChild(wrap);
       return;
     }
     const p = document.createElement('p');
     p.className = 'fin-lead';
-    p.innerHTML = 'Sort each row into a category and flag anything that repeats monthly — do it once and future imports copy it. For money in, confirm which invoice it paid so it isn’t counted twice.';
+    p.innerHTML = 'Every bank row, newest first. Sort each into a category and flag anything that repeats monthly — do it once and future imports copy it. For money in, confirm which invoice it paid so it isn’t counted twice.';
     wrap.appendChild(p);
 
     const table = document.createElement('table');
     table.className = 'fin-table fin-mio-table';
-    table.innerHTML = '<thead><tr><th>Date</th><th>Description</th><th class="num">In / out</th><th>Category</th><th class="ctr">Repeats</th><th>Invoice</th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Date</th><th>Description</th><th class="num">In / out</th><th class="num">Balance</th><th>Category</th><th class="ctr">Repeats</th><th>Invoice</th></tr></thead>';
     const tb = document.createElement('tbody');
-    for (const t of rows) tb.appendChild(mioRow(t));
+    for (const t of rows.slice(0, 500)) tb.appendChild(mioRow(t, calcById.get(t.id)));
     table.appendChild(tb);
     wrap.appendChild(table);
+    if (rows.length > 500) {
+      const m = document.createElement('div'); m.className = 'fin-note';
+      m.textContent = `Showing the latest 500 of ${rows.length}.`;
+      wrap.appendChild(m);
+    }
     body.appendChild(wrap);
   }
 
-  function mioRow(t) {
+  function mioRow(t, balance) {
     const tr = document.createElement('tr');
     const isIn = Number(t.amount) >= 0;
 
-    // Date + description + amount
+    // Date + description + amount + running balance
     const tdDate = document.createElement('td'); tdDate.textContent = fmtDate(t.date);
     const tdNarr = document.createElement('td'); tdNarr.className = 'narr'; tdNarr.textContent = t.narrative;
     const tdAmt = document.createElement('td');
     tdAmt.className = 'amt ' + (isIn ? 'in' : 'out');
     tdAmt.textContent = moneySigned('$', t.amount);
+    const tdBal = document.createElement('td');
+    tdBal.className = 'bal';
+    tdBal.textContent = balance == null ? '' : money(balance);
 
     // Category dropdown (kind-filtered) + "add new"
     const tdCat = document.createElement('td');
@@ -2833,7 +2860,7 @@
     if (isIn && Number(t.amount) > 0) fillInvoiceCell(tdInv, t);
     else tdInv.innerHTML = '<span class="fin-dash">—</span>';
 
-    tr.append(tdDate, tdNarr, tdAmt, tdCat, tdRep, tdInv);
+    tr.append(tdDate, tdNarr, tdAmt, tdBal, tdCat, tdRep, tdInv);
     return tr;
   }
 
@@ -3439,7 +3466,6 @@
     });
 
     if (state.importPreview) renderImportPreview(wrap.querySelector('#finPreview'));
-    renderLedger(wrap);
   }
   async function previewImport(csv, opening) {
     const host = $('finPreview');
@@ -3522,57 +3548,6 @@
       if (host) host.innerHTML = `<div class="fin-summary"><span class="fin-check-bad">Import failed: ${esc(e.message)}</span></div>`;
     }
   }
-  function renderLedger(wrap) {
-    const meta = state.financeMeta || {};
-    // Calculate the running balance from the OLDEST up: start at the opening
-    // balance, add each movement in date order. Then show the list latest-first
-    // (newest at the top, like the bank's website) — so the balance climbs as you
-    // read downward toward the opening, and the top row is the current balance.
-    const chrono = [...state.transactions].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    let running = (meta.opening_balance != null) ? Number(meta.opening_balance) : 0;
-    const calcById = new Map();
-    for (const t of chrono) { running = round2(running + (Number(t.amount) || 0)); calcById.set(t.id, running); }
-    const rows = [...chrono].reverse(); // latest at the top
-
-    const head = document.createElement('div');
-    head.className = 'fin-ledger-head';
-    const curTxt = meta.calculated_balance != null ? ' · current ' + money(meta.calculated_balance) : '';
-    let checkTxt = '';
-    if (meta.calculated_balance != null && meta.bank_current_balance != null) {
-      const match = Math.abs(meta.calculated_balance - meta.bank_current_balance) <= 0.005;
-      checkTxt = match
-        ? ' <span class="fin-check-ok">✓ adds up</span>'
-        : ` <span class="fin-check-bad">⚠ bank says ${esc(money(meta.bank_current_balance))} — some may be missing</span>`;
-    }
-    head.innerHTML = `<h3>Imported transactions</h3><span class="sub">${rows.length} row${rows.length === 1 ? '' : 's'}${curTxt}${checkTxt}</span>`;
-    wrap.appendChild(head);
-    if (!rows.length) {
-      const e = document.createElement('div'); e.className = 'fin-soon';
-      e.textContent = 'No transactions yet — import a CSV above.';
-      wrap.appendChild(e);
-      return;
-    }
-    const table = document.createElement('table');
-    table.className = 'fin-table';
-    table.innerHTML = '<thead><tr><th>Date</th><th>Description</th><th>Money in / out</th><th>Balance</th></tr></thead>';
-    const tb = document.createElement('tbody');
-    for (const t of rows.slice(0, 500)) {
-      const b = calcById.get(t.id);
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${esc(fmtDate(t.date))}</td><td class="narr">${esc(t.narrative)}</td>`
-        + `<td class="amt ${Number(t.amount) < 0 ? 'out' : 'in'}">${moneySigned('$', t.amount)}</td>`
-        + `<td class="bal">${b == null ? '' : money(b)}</td>`;
-      tb.appendChild(tr);
-    }
-    table.appendChild(tb);
-    wrap.appendChild(table);
-    if (rows.length > 500) {
-      const m = document.createElement('div'); m.className = 'fin-note';
-      m.textContent = `Showing the latest 500 of ${rows.length}.`;
-      wrap.appendChild(m);
-    }
-  }
-
   function billingGroups() {
     const groups = new Map();   // clientId -> { client, rows:[], total }
     for (const j of state.jobs.values()) {
