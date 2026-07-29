@@ -1092,10 +1092,12 @@
     .finance-body { padding: 14px; }
     table.fin-table { font-size: 12px; }
     /* Clear the phone's home/gesture bar so the last row scrolls fully into view.
-       The jobs list already does this via its FAB padding; these scroll areas didn't. */
-    .billing-list { padding-bottom: calc(24px + var(--safe-b)); }
-    .billing-body { padding-bottom: calc(16px + var(--safe-b)); }
-    .finance-body { padding-bottom: calc(14px + var(--safe-b)); }
+       Android Chrome usually reports the gesture bar as 0 safe-area, so a floor
+       is needed (the jobs list clears it with ~88px of FAB padding). max() uses
+       the safe-area inset instead on devices that do report one (e.g. iOS). */
+    .billing-list { padding-bottom: max(80px, calc(24px + var(--safe-b))); }
+    .billing-body { padding-bottom: max(72px, calc(16px + var(--safe-b))); }
+    .finance-body { padding-bottom: max(72px, calc(14px + var(--safe-b))); }
     table.fin-table th, table.fin-table td { padding: 6px 6px; }
     .inv-paper { padding: 22px 20px; min-height: 0; }
     .inv-head { flex-direction: column; gap: 16px; }
