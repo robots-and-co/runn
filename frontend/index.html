@@ -617,6 +617,24 @@
   .fin-ctr-del:hover { text-decoration: underline; }
   .fin-ctr-add { font: inherit; font-size: 14px; font-weight: 600; padding: 10px 16px; border: 1px dashed var(--border); border-radius: 9px; background: var(--surface); color: var(--brand); cursor: pointer; }
   .fin-ctr-add:hover { border-color: var(--brand); }
+  /* Left-list report group + Overview sub-tabs */
+  .fin-nav-head { padding: 14px 14px 5px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; }
+  .fin-subtabs { margin-top: 26px; border-top: 1px solid var(--border); padding-top: 16px; }
+  .fin-subtab-bar { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .fin-subtab { font: inherit; font-size: 14px; font-weight: 600; padding: 8px 15px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--muted); cursor: pointer; }
+  .fin-subtab.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+  .fin-sub-total td { border-top: 2px solid var(--border); font-weight: 600; }
+  /* BAS report */
+  .fin-report-head h2 { margin: 0 0 3px; font-size: 20px; }
+  .fin-report-sub { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
+  .fin-report-net { border: 1px solid var(--brand); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; background: var(--surface); }
+  .fin-report-net.refund { border-color: #2f7a45; }
+  .fin-report-net .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  .fin-report-net .big { font-size: 30px; font-weight: 800; margin-top: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--brand); }
+  .fin-report-net.refund .big { color: #2f7a45; }
+  .fin-report-net .sub { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
+  table.fin-report-table td.num { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table.fin-report-table td.bas-code { font-weight: 700; color: var(--muted); }
   .fin-catrow { display: grid; grid-template-columns: 130px 1fr 88px; gap: 12px; align-items: center; padding: 5px 0; font-size: 13px; }
   .fin-catrow .cname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fin-catrow.uncat .cname { color: var(--muted); font-style: italic; }
@@ -1377,7 +1395,9 @@
     dueFilter: 'all',      // 'all' | 'overdue' | 'today' | 'thisweek' | 'none'
     searchTerm: '',        // free-text filter over title / client / project / notes
     financePane: false,    // Finances area open (top-bar Finances button)
-    financeScreen: 'import', // which finance screen: 'import' now; overview/forecast/reconcile land in later jobs
+    financeScreen: 'overview', // 'overview' (default landing) | 'report'
+    overviewTab: 'transactions', // sub-tab under the Overview: transactions | subscriptions | contracts
+    reportSel: null,       // the selected BAS report period when financeScreen === 'report'
     transactions: [],      // the money-in/out ledger (GET /transactions)
     financeCategories: [], // our own categories (GET /finance/categories)
     contracts: [],         // expected-income contracts (GET /finance/contracts)
@@ -2519,12 +2539,17 @@
   // Everything here hits only this app's own backend — no cloud, no AI.
   // Tabs are a LEFT LIST (like the invoice list); each opens its content in the
   // MAIN pane (like an invoice document). Mirrors the invoices layout exactly.
+  // The left list is now Overview (the default landing screen) plus generated BAS
+  // reports. Everything else — Transactions (import + reconcile), Subscriptions,
+  // Contracts — lives as tabs UNDER the Overview, and the Forecast is merged into
+  // the Overview dashboard.
   const FINANCE_SCREENS = [
-    { key: 'import',   label: 'Import',         hint: 'Bring in a bank CSV',          ready: true },
-    { key: 'ledger',   label: 'Money in & out', hint: 'Categorize & match invoices',  ready: true },
-    { key: 'overview', label: 'Overview',       hint: 'Cash, in vs out, who owes',    ready: true },
-    { key: 'forecast', label: 'Forecast',       hint: 'Project the next few months',  ready: true },
-    { key: 'contracts', label: 'Contracts',      hint: 'Expected income you can count on', ready: true },
+    { key: 'overview', label: 'Overview', hint: 'Cash, forecast, and your books', ready: true },
+  ];
+  const OVERVIEW_TABS = [
+    { key: 'transactions', label: 'Transactions' },
+    { key: 'subscriptions', label: 'Subscriptions' },
+    { key: 'contracts', label: 'Contracts' },
   ];
   // Flip the list body between jobs and the finance tab list, like toggleInvoices.
   function toggleFinance() {
@@ -2603,7 +2628,7 @@
     renderFinanceNav();
     renderFinanceContent();
   }
-  // The left-pane tab list.
+  // The left-pane list: Overview, then the generated BAS reports.
   function renderFinanceNav() {
     const list = $('financeList');
     if (!list) return;
@@ -2611,29 +2636,43 @@
     for (const s of FINANCE_SCREENS) {
       const b = document.createElement('button');
       b.className = 'fin-nav' + (s.key === state.financeScreen ? ' active' : '');
-      b.disabled = !s.ready;
-      b.innerHTML = `<span class="main"><span class="ttl">${esc(s.label)}</span><span class="sub">${esc(s.ready ? s.hint : 'Coming in job ' + s.job)}</span></span>`;
-      if (s.ready) b.addEventListener('click', () => openFinanceScreen(s.key));
+      b.innerHTML = `<span class="main"><span class="ttl">${esc(s.label)}</span><span class="sub">${esc(s.hint)}</span></span>`;
+      b.addEventListener('click', () => openFinanceScreen(s.key));
       list.appendChild(b);
+    }
+    const reports = financeReports();
+    if (reports.length) {
+      const head = document.createElement('div'); head.className = 'fin-nav-head'; head.textContent = 'BAS reports';
+      list.appendChild(head);
+      for (const rep of reports) {
+        const active = state.financeScreen === 'report' && state.reportSel && state.reportSel.key === rep.key;
+        const b = document.createElement('button');
+        b.className = 'fin-nav' + (active ? ' active' : '');
+        b.innerHTML = `<span class="main"><span class="ttl">${esc(rep.label)}</span><span class="sub">${esc(rep.sub)}</span></span>`;
+        b.addEventListener('click', () => openFinanceReport(rep));
+        list.appendChild(b);
+      }
     }
   }
   // The selected tab's content, in the main pane.
   function renderFinanceContent() {
     const body = $('financeBody');
     if (!body) return;
-    const s = FINANCE_SCREENS.find((x) => x.key === state.financeScreen);
     const titleEl = $('financeContentTitle');
-    if (titleEl) titleEl.textContent = s ? s.label : 'Finances';
     body.innerHTML = '';
-    if (state.financeScreen === 'import') return renderFinanceImport(body);
-    if (state.financeScreen === 'ledger') return renderMoneyInOut(body);
-    if (state.financeScreen === 'overview') return renderOverview(body);
-    if (state.financeScreen === 'forecast') return renderForecast(body);
-    if (state.financeScreen === 'contracts') return renderContracts(body);
-    const d = document.createElement('div');
-    d.className = 'fin-soon';
-    d.textContent = `“${s ? s.label : 'This screen'}” arrives in job ${s && s.job ? s.job : ''} of the finance build.`;
-    body.appendChild(d);
+    if (state.financeScreen === 'report') {
+      if (titleEl) titleEl.textContent = state.reportSel ? state.reportSel.label : 'BAS report';
+      return renderReport(body);
+    }
+    if (titleEl) titleEl.textContent = 'Overview';
+    return renderOverviewScreen(body);
+  }
+  function openFinanceReport(rep) {
+    state.financeScreen = 'report';
+    state.reportSel = rep;
+    document.body.classList.add('show-finance-main');
+    if (isMobile() && !(history.state && history.state.runnFinanceContent)) history.pushState({ runnFinanceContent: true }, '');
+    renderFinance();
   }
 
   // ── Money in & out (categorize + reconcile) ─────────────────
@@ -3194,6 +3233,158 @@
     add.addEventListener('click', addContract);
     wrap.appendChild(add);
 
+    body.appendChild(wrap);
+  }
+
+  // ── Overview screen: dashboard + forecast on top, sub-tabs beneath ──────────
+  function renderOverviewScreen(body) {
+    const hasTx = state.transactions.length > 0;
+    if (hasTx) {
+      renderOverview(body);   // dashboard: cash, worth, in/owed/out, where money went, who owes
+      renderForecast(body);   // forecast, merged into the overview
+    } else {
+      const p = document.createElement('div'); p.className = 'fin-lead';
+      p.textContent = 'Import a bank CSV on the Transactions tab below to see your cash, forecast and BAS reports. Nothing here leaves this machine.';
+      body.appendChild(p);
+    }
+    const tabsWrap = document.createElement('div'); tabsWrap.className = 'fin-subtabs';
+    const bar = document.createElement('div'); bar.className = 'fin-subtab-bar';
+    for (const t of OVERVIEW_TABS) {
+      const b = document.createElement('button'); b.type = 'button';
+      b.className = 'fin-subtab' + (state.overviewTab === t.key ? ' active' : '');
+      b.textContent = t.label;
+      b.addEventListener('click', () => { state.overviewTab = t.key; renderFinanceContent(); });
+      bar.appendChild(b);
+    }
+    tabsWrap.appendChild(bar);
+    const sub = document.createElement('div'); sub.className = 'fin-subtab-body';
+    tabsWrap.appendChild(sub);
+    body.appendChild(tabsWrap);
+    const tab = state.overviewTab || 'transactions';
+    if (tab === 'subscriptions') renderSubscriptions(sub);
+    else if (tab === 'contracts') renderContracts(sub);
+    else renderTransactionsTab(sub);
+  }
+
+  // Transactions tab = import + the reconciliation ledger, together.
+  function renderTransactionsTab(sub) {
+    renderFinanceImport(sub);
+    renderMoneyInOut(sub);
+  }
+
+  // Subscriptions = regular outgoings: money-out rows flagged "repeats monthly",
+  // one per payee at its latest amount. Read-only; you flag them on Transactions.
+  function renderSubscriptions(sub) {
+    const wrap = document.createElement('div'); wrap.className = 'fin-screen';
+    const lead = document.createElement('p'); lead.className = 'fin-lead';
+    lead.textContent = 'Your regular outgoings — anything ticked “repeats monthly” on a money-out row in Transactions. These drive the money-out side of the Forecast.';
+    wrap.appendChild(lead);
+    const byPayee = new Map();
+    for (const t of state.transactions) {
+      if (!t.recurring || Number(t.amount) >= 0) continue;
+      const key = t.narrative || String(t.id);
+      const prev = byPayee.get(key);
+      if (!prev || String(t.date) > String(prev.date)) byPayee.set(key, t);
+    }
+    const items = [...byPayee.values()].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+    if (!items.length) {
+      const e = document.createElement('div'); e.className = 'fin-soon';
+      e.textContent = 'No subscriptions yet — tick “repeats monthly” on a money-out row in the Transactions tab.';
+      wrap.appendChild(e); sub.appendChild(wrap); return;
+    }
+    const total = round2(items.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0));
+    const table = document.createElement('table'); table.className = 'fin-table';
+    table.innerHTML = '<thead><tr><th>Payee</th><th>Category</th><th class="num">Per month</th></tr></thead>';
+    const tb = document.createElement('tbody');
+    for (const t of items) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td class="narr">${esc(t.narrative || '—')}</td>
+        <td>${esc(t.category ? (catById(t.category)?.name || t.category) : '—')}</td>
+        <td class="num amt out">${esc(money(Math.abs(Number(t.amount) || 0)))}</td>`;
+      tb.appendChild(tr);
+    }
+    const foot = document.createElement('tr'); foot.className = 'fin-sub-total';
+    foot.innerHTML = `<td>${items.length} subscription${items.length === 1 ? '' : 's'}</td><td></td><td class="num amt out"><b>${esc(money(total))}</b></td>`;
+    tb.appendChild(foot);
+    table.appendChild(tb);
+    wrap.appendChild(table);
+    sub.appendChild(wrap);
+  }
+
+  // ── BAS reports ─────────────────────────────────────────────
+  // Australian financial year runs Jul–Jun. A report is a period of bank
+  // transactions summarised for GST (cash basis).
+  const fyStartYear = (ym) => { const [y, m] = ym.split('-').map(Number); return m >= 7 ? y : y - 1; };
+  function financeReports() {
+    if (!state.transactions.length) return [];
+    const years = new Set();
+    for (const t of state.transactions) if (t.date) years.add(fyStartYear(String(t.date).slice(0, 7)));
+    years.add(fyStartYear(today().slice(0, 7)));
+    const out = [];
+    for (const sy of [...years].sort((a, b) => b - a)) {
+      const ey = sy + 1, fy = `${sy}–${String(ey).slice(2)}`;
+      out.push({ key: `bas:${sy}:eofy`, label: `${fy} — full year`, sub: `Jul ${sy} – Jun ${ey}`, from: `${sy}-07`, to: `${ey}-06` });
+      out.push({ key: `bas:${sy}:q1`, label: `${fy} · Q1`, sub: `Jul – Sep ${sy}`, from: `${sy}-07`, to: `${sy}-09` });
+      out.push({ key: `bas:${sy}:q2`, label: `${fy} · Q2`, sub: `Oct – Dec ${sy}`, from: `${sy}-10`, to: `${sy}-12` });
+      out.push({ key: `bas:${sy}:q3`, label: `${fy} · Q3`, sub: `Jan – Mar ${ey}`, from: `${ey}-01`, to: `${ey}-03` });
+      out.push({ key: `bas:${sy}:q4`, label: `${fy} · Q4`, sub: `Apr – Jun ${ey}`, from: `${ey}-04`, to: `${ey}-06` });
+    }
+    return out;
+  }
+  // Default GST treatment (operator's rule): GST applies to everything except bank
+  // fees and wages. null = uncategorised, surfaced as a caveat, never assumed.
+  function categoryHasGst(catId) {
+    if (!catId) return null;
+    const c = catById(catId);
+    const hay = String((c && c.name) || catId).toLowerCase().replace(/[-_]+/g, ' ');
+    if (/bank\s*fee|wage|salary|payroll|super/.test(hay)) return false;
+    return true;
+  }
+  function renderReport(body) {
+    const rep = state.reportSel;
+    const wrap = document.createElement('div'); wrap.className = 'fin-screen fin-report';
+    if (!rep) { wrap.innerHTML = '<div class="fin-soon">Pick a report from the list.</div>'; body.appendChild(wrap); return; }
+    const rows = state.transactions.filter((t) => { const k = String(t.date || '').slice(0, 7); return k >= rep.from && k <= rep.to; });
+    let salesInc = 0, purchInc = 0, gstFreeIn = 0, gstFreeOut = 0, uncatIn = 0, uncatOut = 0;
+    for (const t of rows) {
+      const a = Number(t.amount) || 0, g = categoryHasGst(t.category);
+      if (a >= 0) { if (g === null) uncatIn += a; else if (g === false) gstFreeIn += a; else salesInc += a; }
+      else { const v = -a; if (g === null) uncatOut += v; else if (g === false) gstFreeOut += v; else purchInc += v; }
+    }
+    salesInc = round2(salesInc); purchInc = round2(purchInc);
+    const salesGst = round2(salesInc / 11), purchGst = round2(purchInc / 11), net = round2(salesGst - purchGst);
+
+    const head = document.createElement('div'); head.className = 'fin-report-head';
+    head.innerHTML = `<h2>BAS — ${esc(rep.label)}</h2><p class="fin-report-sub">${esc(rep.sub)} · cash basis · GST on everything except bank fees &amp; wages</p>`;
+    wrap.appendChild(head);
+
+    const netCard = document.createElement('div'); netCard.className = 'fin-report-net ' + (net >= 0 ? 'pay' : 'refund');
+    netCard.innerHTML = `<div class="lbl">${net >= 0 ? 'Net GST to pay the ATO' : 'GST refund due to you'}</div>
+      <div class="big">${esc(money(Math.abs(net)))}</div>
+      <div class="sub">GST collected ${esc(money(salesGst))} − GST paid ${esc(money(purchGst))}</div>`;
+    wrap.appendChild(netCard);
+
+    const table = document.createElement('table'); table.className = 'fin-table fin-report-table';
+    table.innerHTML = '<thead><tr><th>Label</th><th>What</th><th class="num">Amount</th></tr></thead>';
+    const tb = document.createElement('tbody');
+    for (const [code, what, val] of [
+      ['G1', 'Total sales (GST inclusive)', salesInc],
+      ['1A', 'GST on sales (collected)', salesGst],
+      ['G11', 'Total purchases (GST inclusive)', purchInc],
+      ['1B', 'GST on purchases (paid)', purchGst],
+    ]) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td class="bas-code">${esc(code)}</td><td>${esc(what)}</td><td class="num">${esc(money(val))}</td>`;
+      tb.appendChild(tr);
+    }
+    table.appendChild(tb);
+    wrap.appendChild(table);
+
+    const notes = [];
+    if (gstFreeIn || gstFreeOut) notes.push(`GST-free (bank fees, wages): ${money(gstFreeIn)} in, ${money(gstFreeOut)} out — no GST, as set.`);
+    if (uncatIn || uncatOut) notes.push(`<span class="fin-check-bad">Unsorted: ${money(uncatIn)} in, ${money(uncatOut)} out</span> — not in the GST figures; categorise them on the Transactions tab for a correct BAS.`);
+    if (!rows.length) notes.push('No transactions in this period yet.');
+    if (notes.length) { const n = document.createElement('div'); n.className = 'fin-note'; n.innerHTML = notes.join('<br>'); wrap.appendChild(n); }
     body.appendChild(wrap);
   }
 
