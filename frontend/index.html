@@ -567,6 +567,13 @@
   .fin-bar { height: 9px; border-radius: 3px; min-width: 1px; }
   .fin-bar.in { background: #58b06f; }
   .fin-bar.out { background: #d0685c; }
+  .fin-bar.done { background: #cd9b3f; }
+  .fin-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: -2px 0 12px; font-size: 11px; color: var(--muted); }
+  .fin-legend .k { display: inline-flex; align-items: center; gap: 5px; }
+  .fin-legend .k::before { content: ''; width: 10px; height: 10px; border-radius: 3px; }
+  .fin-legend .k.in::before { background: #58b06f; }
+  .fin-legend .k.out::before { background: #d0685c; }
+  .fin-legend .k.done::before { background: #cd9b3f; }
   .fin-mon .mnet { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; text-align: right; }
   .fin-mon .mnet.pos { color: #2f7a45; }
   .fin-mon .mnet.neg { color: #b23b2a; }
@@ -2772,6 +2779,24 @@
       .map((g) => ({ month: g.month, in: round2(g.in), out: round2(g.out), net: round2(g.in - g.out) }))
       .sort((a, b) => b.month.localeCompare(a.month)); // most recent first
   }
+  // Work done but not yet billed, bucketed by the month the job was finished.
+  // This is earned income the bank hasn't seen yet — same rollup as the "Not yet
+  // billed" card, so it drops out of a month the moment the job is invoiced+paid
+  // (then it shows up as cash-in instead). No double-count with money-in.
+  function workDoneByMonth() {
+    const m = new Map();
+    for (const j of state.jobs.values()) {
+      if (j.archived || j.status !== 'done') continue;
+      const c = clientOf(j.client_id);
+      if (!c || c.non_billable || !c.rate_per_hour) continue;
+      const v = jobValue(j);
+      if (!v) continue;
+      const key = String(j.done_at || j.updated_at || j.created_at || '').slice(0, 7);
+      if (key.length !== 7) continue;
+      m.set(key, round2((m.get(key) || 0) + v));
+    }
+    return m;
+  }
   function categoryTotals(txns, dir) {
     const m = new Map();
     for (const t of txns) {
@@ -2815,6 +2840,15 @@
       body.appendChild(wrap); return;
     }
     const months = monthlyTotals(txns);
+    // Fold in work done (not yet billed) per month, so the net reflects what was
+    // earned, not just what moved through the bank. Add months that only have
+    // work done (no bank rows) so nothing earned is hidden.
+    const doneByMonth = workDoneByMonth();
+    for (const key of doneByMonth.keys()) {
+      if (!months.some((m) => m.month === key)) months.push({ month: key, in: 0, out: 0, net: 0 });
+    }
+    months.forEach((m) => { m.done = round2(doneByMonth.get(m.month) || 0); m.net = round2(m.in + m.done - m.out); });
+    months.sort((a, b) => b.month.localeCompare(a.month));
     const totIn = round2(months.reduce((s, m) => s + m.in, 0));
     const totOut = round2(months.reduce((s, m) => s + m.out, 0));
     const owed = unpaidInvoices();
@@ -2855,16 +2889,18 @@
       wrap.appendChild(n);
     }
 
-    // Money in vs out, by month
-    const maxMonth = Math.max(1, ...months.map((m) => Math.max(m.in, m.out)));
+    // Money in vs out (plus work done), by month
+    const maxMonth = Math.max(1, ...months.map((m) => Math.max(m.in, m.out, m.done || 0)));
     const secM = document.createElement('div'); secM.className = 'fin-ov-sec';
-    secM.innerHTML = '<h3>Money in vs out, by month</h3>';
+    secM.innerHTML = `<h3>Money in, out &amp; work done, by month</h3>
+      <div class="fin-legend"><span class="k in">Money in</span><span class="k out">Money out</span><span class="k done">Work done (not yet billed)</span></div>`;
     for (const m of months.slice(0, 12)) {
       const row = document.createElement('div'); row.className = 'fin-mon';
       row.innerHTML = `<span class="mlabel">${esc(monthLabel(m.month))}</span>
         <span class="fin-mon-bars">
           <span class="fin-bar in" style="width:${(m.in / maxMonth * 100).toFixed(1)}%" title="in ${esc(money(m.in))}"></span>
           <span class="fin-bar out" style="width:${(m.out / maxMonth * 100).toFixed(1)}%" title="out ${esc(money(m.out))}"></span>
+          <span class="fin-bar done" style="width:${((m.done || 0) / maxMonth * 100).toFixed(1)}%" title="work done ${esc(money(m.done || 0))}"></span>
         </span>
         <span class="mnet ${m.net < 0 ? 'neg' : 'pos'}">${esc(moneySigned('$', m.net))}</span>`;
       secM.appendChild(row);

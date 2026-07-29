@@ -62,3 +62,11 @@ flips its status to `invoiced`, so it leaves this pool the moment it enters
 not yet billed + unpaid invoices. Rationale: money owed is a timing matter, not a
 separate balance — so the operator's real standing is one figure, not a mental
 sum of "cash" and "owed". The individual cards remain as the breakdown.
+
+2026-07-29 — The by-month chart now has a **third bar, work done (not yet
+billed)**, bucketed by the month the job was finished, and the month's net =
+in + work done − out. The pure cash bars alone read "behind" (e.g. Jul −$680)
+while ignoring work earned that month; the net now reflects what was earned. No
+double-count: same rollup as the Not yet billed card, so a job drops out of its
+month the moment it's invoiced+paid and reappears as cash-in instead. The
+cash-only in/out/net cards up top are unchanged (still the cash view).
