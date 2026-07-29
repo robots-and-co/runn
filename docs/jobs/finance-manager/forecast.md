@@ -1,6 +1,6 @@
 ---
 order: 4
-status: todo
+status: doing
 title: Forecast — project the next few months
 ---
 
@@ -48,3 +48,13 @@ into it.
 through any cloud or AI service). Forecast is deterministic arithmetic; any prose
 is a templated sentence, not model output. This replaces the earlier
 "local model narrates the numbers" idea from the finances memory note.
+
+2026-07-29 (built) — Forecast tab is live. Inputs: cash on hand, transactions
+flagged "repeats monthly" (deduped per payee, most recent amount = the monthly
+figure), and unpaid invoices bucketed by due month (overdue → month 1, past the
+horizon → left out and counted). Projects from next month, carrying
+`closing = opening + expected_in − expected_out`. Horizon selector (3/6/12 mo)
+recomputes instantly. Shows: templated one-liner ("At this rate, cash is about
+$X by <month>") plus a below-zero warning, a "show the working" basis line, a
+per-month projected-balance bar (red when negative), and the full opening/in/out/
+closing table. No model of any kind — pure arithmetic.

@@ -584,6 +584,24 @@
   .fin-bl-total .lbl { font-size: 14px; font-weight: 700; color: var(--ink); }
   .fin-bl-total .val { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 19px; font-weight: 800; color: var(--brand); }
   .fin-bl-total .sub { grid-column: 1 / -1; text-align: right; font-size: 11.5px; color: var(--muted); }
+  /* Forecast */
+  .fin-fc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .fin-fc-head .lbl { font-size: 13px; color: var(--muted); font-weight: 600; }
+  .fin-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+  .fin-seg-btn { font: inherit; font-size: 13px; padding: 6px 14px; background: var(--surface); color: var(--muted); border: 0; border-left: 1px solid var(--border); cursor: pointer; }
+  .fin-seg-btn:first-child { border-left: 0; }
+  .fin-seg-btn.active { background: var(--brand); color: #fff; font-weight: 600; }
+  .fin-fc-summary { margin: 4px 0 12px; }
+  .fin-fc-summary .line { margin: 0 0 4px; font-size: 15px; }
+  .fin-fc-summary .line.warn { color: #b23b2a; font-weight: 600; }
+  .fin-fc-bar { display: grid; grid-template-columns: 58px 1fr 108px; gap: 12px; align-items: center; padding: 5px 0; }
+  .fin-fc-bar .mlabel { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .fin-fc-bar .mnet { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; text-align: right; }
+  .fin-fc-bar .mnet.pos { color: #2f7a45; }
+  .fin-fc-bar .mnet.neg { color: #b23b2a; }
+  table.fin-fc-table td.num { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table.fin-fc-table td.closing { font-weight: 700; }
+  table.fin-fc-table td.closing.neg { color: #b23b2a; }
   .fin-catrow { display: grid; grid-template-columns: 130px 1fr 88px; gap: 12px; align-items: center; padding: 5px 0; font-size: 13px; }
   .fin-catrow .cname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fin-catrow.uncat .cname { color: var(--muted); font-style: italic; }
@@ -2484,7 +2502,7 @@
     { key: 'import',   label: 'Import',         hint: 'Bring in a bank CSV',          ready: true },
     { key: 'ledger',   label: 'Money in & out', hint: 'Categorize & match invoices',  ready: true },
     { key: 'overview', label: 'Overview',       hint: 'Cash, in vs out, who owes',    ready: true },
-    { key: 'forecast', label: 'Forecast',       hint: 'Project the next few months',  ready: false, job: 4 },
+    { key: 'forecast', label: 'Forecast',       hint: 'Project the next few months',  ready: true },
   ];
   // Flip the list body between jobs and the finance tab list, like toggleInvoices.
   function toggleFinance() {
@@ -2586,6 +2604,7 @@
     if (state.financeScreen === 'import') return renderFinanceImport(body);
     if (state.financeScreen === 'ledger') return renderMoneyInOut(body);
     if (state.financeScreen === 'overview') return renderOverview(body);
+    if (state.financeScreen === 'forecast') return renderForecast(body);
     const d = document.createElement('div');
     d.className = 'fin-soon';
     d.textContent = `“${s ? s.label : 'This screen'}” arrives in job ${s && s.job ? s.job : ''} of the finance build.`;
@@ -2923,6 +2942,143 @@
       }
     }
     wrap.appendChild(secO);
+
+    body.appendChild(wrap);
+  }
+
+  // ── Forecast (project the next few months) ──────────────────
+  // Pure arithmetic, no model of any kind. Inputs are all local: cash on hand,
+  // transactions flagged "repeats monthly", and unpaid invoices' due dates.
+  const nextYm = (ym) => {
+    let [y, m] = ym.split('-').map(Number);
+    m += 1; if (m > 12) { m = 1; y += 1; }
+    return `${y}-${String(m).padStart(2, '0')}`;
+  };
+  // One entry per recurring payee, carrying its most recent amount as the monthly
+  // figure — so a bill flagged across several months counts once, not once a month.
+  function recurringStreams() {
+    const byPayee = new Map();
+    for (const t of state.transactions) {
+      if (!t.recurring) continue;
+      const key = t.narrative || String(t.id);
+      const prev = byPayee.get(key);
+      if (!prev || String(t.date) > String(prev.date)) byPayee.set(key, t);
+    }
+    const items = [...byPayee.values()].map((t) => ({ narrative: t.narrative, amount: Number(t.amount) || 0 }));
+    const inMonthly = round2(items.filter((i) => i.amount > 0).reduce((s, i) => s + i.amount, 0));
+    const outMonthly = round2(items.filter((i) => i.amount < 0).reduce((s, i) => s + -i.amount, 0));
+    return { items, inMonthly, outMonthly };
+  }
+  function buildForecast(nMonths) {
+    const rec = recurringStreams();
+    const start = round2(Number((state.financeMeta || {}).calculated_balance) || 0);
+    // Project from next calendar month (this month's recurring items have already
+    // hit the bank, so starting cash already reflects them).
+    const firstYm = nextYm(today().slice(0, 7));
+    const keys = [];
+    let cur = firstYm;
+    for (let i = 0; i < nMonths; i++) { keys.push(cur); cur = nextYm(cur); }
+    const lastKey = keys[keys.length - 1];
+    // Unpaid invoices land in their due month; anything overdue or due before the
+    // window lands in month 1; anything past the horizon is left out (and counted).
+    const unpaid = unpaidInvoices();
+    const invByMonth = new Map();
+    let dropped = 0;
+    for (const u of unpaid) {
+      const due = String(u.inv.due_at || '').slice(0, 7);
+      let bucket;
+      if (!due || due < firstYm) bucket = firstYm;
+      else if (due > lastKey) { dropped++; continue; }
+      else bucket = due;
+      invByMonth.set(bucket, round2((invByMonth.get(bucket) || 0) + u.amount));
+    }
+    const months = [];
+    let opening = start;
+    for (const k of keys) {
+      const invIn = round2(invByMonth.get(k) || 0);
+      const expIn = round2(rec.inMonthly + invIn);
+      const expOut = rec.outMonthly;
+      const closing = round2(opening + expIn - expOut);
+      months.push({ month: k, opening: round2(opening), invIn, expIn, expOut, closing });
+      opening = closing;
+    }
+    return { start, rec, unpaid, dropped, months };
+  }
+
+  function renderForecast(body) {
+    const wrap = document.createElement('div'); wrap.className = 'fin-screen fin-forecast';
+    if (!state.transactions.length) {
+      wrap.innerHTML = '<div class="fin-soon">Nothing to project yet — import a bank CSV first (Import tab).</div>';
+      body.appendChild(wrap); return;
+    }
+    const n = state.forecastMonths || 6;
+    const f = buildForecast(n);
+    const months = f.months;
+
+    // Horizon selector — adjust and recompute instantly.
+    const head = document.createElement('div'); head.className = 'fin-fc-head';
+    head.innerHTML = '<span class="lbl">Project forward</span>';
+    const seg = document.createElement('div'); seg.className = 'fin-seg';
+    for (const opt of [3, 6, 12]) {
+      const b = document.createElement('button'); b.type = 'button';
+      b.className = 'fin-seg-btn' + (opt === n ? ' active' : '');
+      b.textContent = opt + ' mo';
+      b.addEventListener('click', () => { state.forecastMonths = opt; renderFinanceContent(); });
+      seg.appendChild(b);
+    }
+    head.appendChild(seg);
+    wrap.appendChild(head);
+
+    // Templated summary (fill-in-the-blanks, never generated prose).
+    const last = months[months.length - 1];
+    const dip = months.find((m) => m.closing < 0);
+    const sum = document.createElement('div'); sum.className = 'fin-fc-summary';
+    sum.innerHTML = `<p class="line">At this rate, cash is about <b>${esc(money(last.closing))}</b> by ${esc(monthLabel(last.month))}.</p>`
+      + (dip ? `<p class="line warn">Heads up — cash dips below zero around ${esc(monthLabel(dip.month))}.</p>` : '');
+    wrap.appendChild(sum);
+
+    // Show the working: exactly what fed the projection.
+    const basis = document.createElement('div'); basis.className = 'fin-note';
+    basis.innerHTML = `Built from cash on hand <b>${esc(money(f.start))}</b>, `
+      + `${f.rec.items.length} recurring item${f.rec.items.length === 1 ? '' : 's'} `
+      + `(${esc(money(f.rec.inMonthly))} in / ${esc(money(f.rec.outMonthly))} out each month), `
+      + `and ${f.unpaid.length} unpaid invoice${f.unpaid.length === 1 ? '' : 's'}. Arithmetic only — no forecasting model.`
+      + (f.dropped ? ` (${f.dropped} invoice${f.dropped === 1 ? '' : 's'} due beyond ${n} months left out.)` : '')
+      + (f.rec.items.length ? '' : ' Flag bills as “repeats monthly” on the Money in &amp; out tab to sharpen this.');
+    wrap.appendChild(basis);
+
+    // Projected balance — one bar per month, red when it goes negative.
+    const maxAbs = Math.max(1, f.start, ...months.map((m) => Math.abs(m.closing)));
+    const secB = document.createElement('div'); secB.className = 'fin-ov-sec';
+    secB.innerHTML = '<h3>Projected balance</h3>';
+    for (const m of months) {
+      const neg = m.closing < 0;
+      const row = document.createElement('div'); row.className = 'fin-fc-bar';
+      row.innerHTML = `<span class="mlabel">${esc(monthLabel(m.month))}</span>
+        <span class="fin-bl-track"><span class="fin-bl-bar ${neg ? 'out' : 'in'}" style="width:${(Math.abs(m.closing) / maxAbs * 100).toFixed(1)}%"></span></span>
+        <span class="mnet ${neg ? 'neg' : 'pos'}">${esc(moneySigned('$', m.closing))}</span>`;
+      secB.appendChild(row);
+    }
+    wrap.appendChild(secB);
+
+    // Month-by-month table (opening, in, out, closing) — the full working.
+    const secT = document.createElement('div'); secT.className = 'fin-ov-sec';
+    secT.innerHTML = '<h3>Month by month</h3>';
+    const table = document.createElement('table'); table.className = 'fin-table fin-fc-table';
+    table.innerHTML = '<thead><tr><th>Month</th><th class="num">Opening</th><th class="num">Expected in</th><th class="num">Expected out</th><th class="num">Closing</th></tr></thead>';
+    const tb = document.createElement('tbody');
+    for (const m of months) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${esc(monthLabel(m.month))}</td>
+        <td class="num">${esc(money(m.opening))}</td>
+        <td class="num amt in">${esc(money(m.expIn))}</td>
+        <td class="num amt out">${esc(money(m.expOut))}</td>
+        <td class="num closing${m.closing < 0 ? ' neg' : ''}">${esc(money(m.closing))}</td>`;
+      tb.appendChild(tr);
+    }
+    table.appendChild(tb);
+    secT.appendChild(table);
+    wrap.appendChild(secT);
 
     body.appendChild(wrap);
   }
