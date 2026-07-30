@@ -431,19 +431,21 @@
   .badge.st-sent { background: #fdeede; color: #a85513; }
   .badge.st-paid { background: #e2f3e6; color: #2f7a45; }
 
-  /* ── Header nav buttons (Jobs · Finances · Invoices) ── */
-  /* The three view switchers cluster on the right; the Jobs button claims the
-     free space (margin-left:auto), then Finances + total sit beside it. */
+  /* ── Header nav buttons (Jobs · Finance) ── */
+  /* Two text switchers that split and stretch to fill the width left after the
+     logo and title; the invoices total stays pinned on the right. */
   .jobs-btn, .finance-btn {
-    flex-shrink: 0; height: 32px; width: 34px;
+    flex: 1; min-width: 0; height: 34px;
     display: inline-flex; align-items: center; justify-content: center;
     background: var(--surface); border: 1px solid #dbe3ec; border-radius: 8px;
-    font-size: 15px; cursor: pointer; padding: 0;
+    font: inherit; font-size: 14px; font-weight: 600; color: var(--ink);
+    cursor: pointer; padding: 0 10px; white-space: nowrap;
   }
-  .jobs-btn { margin-left: auto; }
-  .finance-btn { margin-left: 8px; }
+  .jobs-btn { margin-left: 4px; }
   .jobs-btn:hover, .finance-btn:hover { border-color: var(--brand); }
-  .jobs-btn.is-active, .finance-btn.is-active { background: var(--brand); border-color: var(--brand); }
+  .jobs-btn.is-active, .finance-btn.is-active {
+    background: var(--brand); border-color: var(--brand); color: #fff;
+  }
   .total { margin-left: 8px; }
 
   /* Finances mirrors the invoices layout exactly: the tabs live as a LEFT LIST
@@ -1275,8 +1277,8 @@
       <div class="list-head">
         <button class="logo" id="logoReset" type="button" title="Reload — clears cached copies for a clean test">R</button>
         <h1>Runn</h1>
-        <button class="jobs-btn is-active" id="jobsBtn" type="button" title="Jobs — your task list" aria-label="Jobs">⛑️</button>
-        <button class="finance-btn" id="financeBtn" type="button" title="Finances — money in &amp; out, all kept on this machine" aria-label="Finances">📊</button>
+        <button class="jobs-btn is-active" id="jobsBtn" type="button" title="Jobs — your task list">Jobs</button>
+        <button class="finance-btn" id="financeBtn" type="button" title="Finances — money in &amp; out, all kept on this machine">Finance</button>
         <button class="total clickable" id="billingBtn" type="button" title="Invoices — tap to flip this list to billing">
           <span class="amt" id="valueTotal">0.00</span>
         </button>
