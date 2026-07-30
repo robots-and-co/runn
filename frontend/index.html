@@ -423,19 +423,6 @@
   .badge.st-sent { background: #fdeede; color: #a85513; }
   .badge.st-paid { background: #e2f3e6; color: #2f7a45; }
 
-  /* ── Header nav: Jobs button (text) + the $ total (opens Finance) ── */
-  /* Jobs stretches to fill the width left after the logo/title; the $ total
-     stays pinned on the right and now opens the Finance area. */
-  .jobs-btn {
-    flex: 1; min-width: 0; height: 34px;
-    display: inline-flex; align-items: center; justify-content: center;
-    background: var(--surface); border: 1px solid #dbe3ec; border-radius: 8px;
-    font: inherit; font-size: 14px; font-weight: 600; color: var(--ink);
-    cursor: pointer; padding: 0 10px; white-space: nowrap; margin-left: 4px;
-  }
-  .jobs-btn:hover { border-color: var(--brand); }
-  .jobs-btn.is-active { background: var(--brand); border-color: var(--brand); color: #fff; }
-  .total { margin-left: 8px; }
 
   /* Finances mirrors the invoices layout exactly: the tabs live as a LEFT LIST
      (in the flipping list body, under the fixed Runn header), and the selected
@@ -1277,7 +1264,6 @@
       <div class="list-head">
         <button class="logo" id="logoReset" type="button" title="Reload — clears cached copies for a clean test">R</button>
         <h1>Runn</h1>
-        <button class="jobs-btn is-active" id="jobsBtn" type="button" title="Jobs — your task list">Jobs</button>
         <button class="total clickable" id="financeBtn" type="button" title="Finances — invoices, money in &amp; out, all kept on this machine">
           <span class="amt" id="valueTotal">0.00</span>
         </button>
@@ -2458,17 +2444,10 @@
   // is swallowed (avoids the back from closePreview cascading into exitFinance).
   let suppressPop = false;
 
-  // Two header nav buttons, radio-style: Jobs and Finance. Finance is active
-  // whenever the Finance area is open (invoices now live inside it); Jobs
-  // otherwise. Tapping the view you're already on does nothing.
+  // One header button: the $ total. It toggles between Jobs and the Finance
+  // area, and lights up (is-active) while Finance is open.
   function syncNav() {
     $('financeBtn').classList.toggle('is-active', !!state.financePane);
-    $('jobsBtn').classList.toggle('is-active', !state.financePane);
-  }
-  // Jobs button: return to the jobs list, closing the Finance area if open.
-  function showJobs() {
-    if (!state.financePane) { syncNav(); return; }
-    flipPane(() => { exitFinance(); });
   }
   // Half-flip the list body out (edge-on), run `applyChange` while it's hidden,
   // then flip the new content back in. Honours reduced-motion (instant swap).
@@ -2543,10 +2522,12 @@
     { key: 'subscriptions', label: 'Subscriptions' },
     { key: 'contracts', label: 'Contracts' },
   ];
-  // Flip the list body between jobs and the finance list (radio-style).
+  // The $ button toggles the whole Finance area on and off.
   function toggleFinance() {
-    if (state.financePane) return;   // already on finances — ignore
-    flipPane(() => { enterFinance(); });
+    flipPane(() => {
+      if (state.financePane) exitFinance();
+      else enterFinance();
+    });
   }
   function enterFinance() {
     state.financePane = true;
@@ -5154,7 +5135,6 @@
 
   // ── Wiring ──────────────────────────────────────
   $('backBtn').addEventListener('click', () => closeChat());
-  $('jobsBtn').addEventListener('click', showJobs);
   $('financeBtn').addEventListener('click', toggleFinance);
   // The doc-pane chevrons (mobile only) return to their list.
   $('billingBack').addEventListener('click', closeBillingDoc);
