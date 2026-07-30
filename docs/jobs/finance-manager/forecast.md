@@ -49,6 +49,19 @@ through any cloud or AI service). Forecast is deterministic arithmetic; any pros
 is a templated sentence, not model output. This replaces the earlier
 "local model narrates the numbers" idea from the finances memory note.
 
+2026-07-30 — Added hand-entered money-out: **debts owed** and **planned
+purchases** (new "Debts & purchases" sub-tab under the Overview). Backend
+`worker/commitments.js` + `/finance/commitments` CRUD, stored in
+`finance/commitments.json`. A *purchase* is a one-off with a `due_month` → lands
+as money-out that month. A *debt* has a `balance` owed now (lowers the Overview
+"Total position", the mirror of money owed to you) plus an optional monthly
+`amount` repayment that flows out from `start_month` until the balance clears (or
+`end_month`) — decrementing so it stops once paid off. A balance-only debt with
+no repayment just sits as a lower position. Neither is derived from the bank, so
+the operator enters only things NOT already flagged "repeats monthly" (no
+double-count). All arithmetic, no model. Needs one service restart to serve the
+new routes (frontend is live-mounted).
+
 2026-07-29 (built) — Forecast tab is live. Inputs: cash on hand, transactions
 flagged "repeats monthly" (deduped per payee, most recent amount = the monthly
 figure), and unpaid invoices bucketed by due month (overdue → month 1, past the

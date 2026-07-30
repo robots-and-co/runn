@@ -27,6 +27,7 @@ const jobs = require('./jobs');
 const invoices = require('./invoices');
 const transactions = require('./transactions');
 const contracts = require('./contracts');
+const commitments = require('./commitments');
 const bridge = require('./bridge');
 const scheduler = require('./scheduler');
 const usage = require('./usage');
@@ -1024,6 +1025,28 @@ const server = http.createServer(async (req, res) => {
       } catch (e) { return sendJson(res, e.status || 404, { error: e.message }); }
     }
 
+    // ── Commitments (debts owed + planned purchases; feed forecast money-out) ──
+    if (m === 'GET' && url.pathname === '/finance/commitments') {
+      return sendJson(res, 200, await commitments.listCommitments());
+    }
+    if (m === 'POST' && url.pathname === '/finance/commitments') {
+      const body = await readBody(req);
+      try {
+        return sendJson(res, 201, await commitments.createCommitment(body));
+      } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+    }
+    if (m === 'PATCH' && (mm = url.pathname.match(/^\/finance\/commitments\/([^/]+)$/))) {
+      const body = await readBody(req);
+      try {
+        return sendJson(res, 200, await commitments.patchCommitment(mm[1], body));
+      } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+    }
+    if (m === 'DELETE' && (mm = url.pathname.match(/^\/finance\/commitments\/([^/]+)$/))) {
+      try {
+        return sendJson(res, 200, await commitments.deleteCommitment(mm[1]));
+      } catch (e) { return sendJson(res, e.status || 404, { error: e.message }); }
+    }
+
     // ── Clients (read-only here; CRUD ported with billing later) ──
     if (m === 'GET' && url.pathname === '/clients') {
       const files = await fsp.readdir(CLIENTS_DIR).catch(() => []);
@@ -1270,6 +1293,7 @@ function scheduleUsageBroadcast() {
   await invoices.init();
   await transactions.init();
   await contracts.init();
+  await commitments.init();
   await ensureDir(CLIENTS_DIR);
   await ensureDir(ATTACHMENTS_DIR);
   // Rebuild the session index from existing jobs and catch up any AI turns the

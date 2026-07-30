@@ -616,6 +616,11 @@
   .fin-ctr-del:hover { text-decoration: underline; }
   .fin-ctr-add { font: inherit; font-size: 14px; font-weight: 600; padding: 10px 16px; border: 1px dashed var(--border); border-radius: 9px; background: var(--surface); color: var(--brand); cursor: pointer; }
   .fin-ctr-add:hover { border-color: var(--brand); }
+  /* Commitments: debt / purchase kind tag + the two add buttons */
+  .fin-cmt-adds { display: flex; gap: 10px; flex-wrap: wrap; }
+  .fin-cmt-tag { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+  .fin-cmt-tag.debt { background: #f6dedb; color: #b23b2a; }
+  .fin-cmt-tag.buy { background: #dde8f2; color: #2f5d86; }
   /* Left-list report group + Overview sub-tabs */
   .fin-nav-head { padding: 14px 14px 5px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; }
   .fin-subtabs { margin-top: 26px; border-top: 1px solid var(--border); padding-top: 16px; }
@@ -2521,6 +2526,7 @@
     { key: 'transactions', label: 'Transactions' },
     { key: 'subscriptions', label: 'Subscriptions' },
     { key: 'contracts', label: 'Contracts' },
+    { key: 'commitments', label: 'Debts & purchases' },
   ];
   // The $ button toggles the whole Finance area on and off.
   function toggleFinance() {
@@ -2587,16 +2593,18 @@
   }
   async function refreshTransactions() {
     try {
-      const [rows, meta, cats, ctrs] = await Promise.all([
+      const [rows, meta, cats, ctrs, cmts] = await Promise.all([
         fetch('/transactions').then((r) => r.json()),
         fetch('/transactions/meta').then((r) => r.json()).catch(() => null),
         fetch('/finance/categories').then((r) => r.json()).catch(() => null),
         fetch('/finance/contracts').then((r) => r.json()).catch(() => null),
+        fetch('/finance/commitments').then((r) => r.json()).catch(() => null),
       ]);
       state.transactions = Array.isArray(rows) ? rows : [];
       state.financeMeta = meta || { count: state.transactions.length, opening_balance: null, opening_date: null };
       if (Array.isArray(cats)) state.financeCategories = cats;
       if (Array.isArray(ctrs)) state.contracts = ctrs;
+      if (Array.isArray(cmts)) state.commitments = cmts;
     } catch (e) { console.error('load transactions failed', e); }
     if (state.financePane) {
       const sc = $('financeBody'); const top = sc ? sc.scrollTop : 0;
@@ -2985,11 +2993,16 @@
     // + unpaid invoices into one headline instead of making the eye add them up.
     const cashNow = round2(Number(meta.calculated_balance) || 0);
     const comingTotal = round2(notBilledTotal + owedTotal);
+    // Debts you owe now (hand-entered on the Debts & purchases tab) lower the
+    // position, the mirror of money owed to you raising it.
+    const owe = debtOwedTotal();
+    const nOwe = (state.commitments || []).filter((c) => c.active && c.kind === 'debt' && Number(c.balance) > 0).length;
+    const position = round2(cashNow + comingTotal - owe);
     const totalCard = document.createElement('div'); totalCard.className = 'fin-ov-total';
     totalCard.innerHTML = `
       <div class="lbl">Total position</div>
-      <div class="big">${esc(money(round2(cashNow + comingTotal)))}</div>
-      <div class="sub">${esc(money(cashNow))} cash on hand + ${esc(money(comingTotal))} owed to you (not yet billed + unpaid invoices)</div>`;
+      <div class="big">${esc(money(position))}</div>
+      <div class="sub">${esc(money(cashNow))} cash on hand + ${esc(money(comingTotal))} owed to you${owe ? ' − ' + esc(money(owe)) + ' you owe' : ''}</div>`;
     wrap.appendChild(totalCard);
 
     const cards = document.createElement('div'); cards.className = 'fin-ov-cards';
@@ -2998,7 +3011,8 @@
       <div class="fin-ov-card pos"><div class="lbl">Money in</div><div class="big">${esc(money(totIn))}</div><div class="sub">across ${months.length} month${months.length === 1 ? '' : 's'}</div></div>
       <div class="fin-ov-card neg"><div class="lbl">Money out</div><div class="big">${esc(money(totOut))}</div><div class="sub">net ${esc(moneySigned('$', round2(totIn - totOut)))}</div></div>
       <div class="fin-ov-card"><div class="lbl">Not yet billed</div><div class="big">${esc(money(notBilledTotal))}</div><div class="sub">${notBilledJobs} done job${notBilledJobs === 1 ? '' : 's'} not yet invoiced</div></div>
-      <div class="fin-ov-card"><div class="lbl">Owed to you</div><div class="big">${esc(money(owedTotal))}</div><div class="sub">${owed.length} unpaid invoice${owed.length === 1 ? '' : 's'}</div></div>`;
+      <div class="fin-ov-card"><div class="lbl">Owed to you</div><div class="big">${esc(money(owedTotal))}</div><div class="sub">${owed.length} unpaid invoice${owed.length === 1 ? '' : 's'}</div></div>`
+      + (owe ? `<div class="fin-ov-card neg"><div class="lbl">You owe</div><div class="big">${esc(money(owe))}</div><div class="sub">${nOwe} debt${nOwe === 1 ? '' : 's'}</div></div>` : '');
     wrap.appendChild(cards);
 
     if (uncat) {
@@ -3014,7 +3028,7 @@
     // = cash on hand + money owed), since money in/out already sit inside cash.
     const incomingTotal = round2(totIn + comingTotal);
     const blMax = Math.max(1, incomingTotal, totOut);
-    const worth = round2(cashNow + comingTotal);
+    const worth = round2(cashNow + comingTotal - owe);
     const pct = (v) => (v / blMax * 100).toFixed(1);
     const secM = document.createElement('div'); secM.className = 'fin-ov-sec';
     secM.innerHTML = `<h3>Money in &amp; owed vs money out</h3>
@@ -3030,7 +3044,7 @@
           <span class="fin-bl-track"><span class="fin-bl-bar out" style="width:${pct(totOut)}%"></span></span>
           <span class="val">${esc(money(totOut))}</span></div>
         <div class="fin-bl-total"><span class="lbl">Total</span><span></span><span class="val">${esc(money(worth))}</span>
-          <span class="sub">cash on hand ${esc(money(cashNow))} + money owed ${esc(money(comingTotal))}</span></div>
+          <span class="sub">cash on hand ${esc(money(cashNow))} + money owed ${esc(money(comingTotal))}${owe ? ' − debts ' + esc(money(owe)) : ''}</span></div>
       </div>`;
     wrap.appendChild(secM);
 
@@ -3133,18 +3147,55 @@
       return s + (Number(c.amount) || 0);
     }, 0));
 
+    // Commitments (hand-entered money-out): a one-off planned purchase lands in
+    // its due month; a debt's monthly repayment flows from its start until the
+    // balance clears (or its end month), decrementing as it goes so it stops once
+    // paid off. Neither is derived from the bank, so they don't double-count the
+    // recurring/subscription figures. Anything due before the window lands in
+    // month 1; anything past the horizon is left out.
+    const commitments = (state.commitments || []).filter((c) => c.active);
+    const plannedByMonth = new Map();
+    const addOut = (k, v) => { if (v > 0) plannedByMonth.set(k, round2((plannedByMonth.get(k) || 0) + v)); };
+    for (const c of commitments) {
+      if (c.kind === 'debt') {
+        const monthly = round2(Number(c.amount) || 0);
+        if (monthly <= 0) continue;                         // balance-only debt: nothing flows out
+        const hadBalance = round2(Number(c.balance) || 0) > 0;
+        let bal = round2(Number(c.balance) || 0);
+        const startK = c.start_month && c.start_month > firstYm ? c.start_month : firstYm;
+        for (const k of keys) {
+          if (k < startK) continue;
+          if (c.end_month && k > c.end_month) break;
+          if (hadBalance && bal <= 0) break;                // paid off
+          const pay = hadBalance ? Math.min(monthly, bal) : monthly;
+          bal = round2(bal - pay);
+          addOut(k, pay);
+        }
+      } else {
+        const due = String(c.due_month || '');
+        let bucket;
+        if (!due || due < firstYm) bucket = firstYm;
+        else if (due <= lastKey) bucket = due;
+        else continue;                                      // beyond horizon
+        addOut(bucket, round2(Number(c.amount) || 0));
+      }
+    }
+    const nDebt = commitments.filter((c) => c.kind === 'debt').length;
+    const nBuy = commitments.filter((c) => c.kind === 'purchase').length;
+
     const months = [];
     let opening = start;
     for (const k of keys) {
       const invIn = round2(invByMonth.get(k) || 0);
       const contractIn = contractForMonth(k);
       const expIn = round2(rec.inMonthly + invIn + contractIn);
-      const expOut = rec.outMonthly;
+      const plannedOut = round2(plannedByMonth.get(k) || 0);
+      const expOut = round2(rec.outMonthly + plannedOut);
       const closing = round2(opening + expIn - expOut);
-      months.push({ month: k, opening: round2(opening), invIn, contractIn, expIn, expOut, closing });
+      months.push({ month: k, opening: round2(opening), invIn, contractIn, expIn, expOut, plannedOut, closing });
       opening = closing;
     }
-    return { start, rec, unpaid, dropped, months, contracts: activeContracts };
+    return { start, rec, unpaid, dropped, months, contracts: activeContracts, nDebt, nBuy };
   }
 
   function renderForecast(body) {
@@ -3185,6 +3236,7 @@
       + `${f.rec.items.length} recurring item${f.rec.items.length === 1 ? '' : 's'} `
       + `(${esc(money(f.rec.inMonthly))} in / ${esc(money(f.rec.outMonthly))} out each month), `
       + `${f.contracts.length} contract${f.contracts.length === 1 ? '' : 's'}, `
+      + ((f.nDebt || f.nBuy) ? `${f.nDebt} debt${f.nDebt === 1 ? '' : 's'} + ${f.nBuy} planned purchase${f.nBuy === 1 ? '' : 's'}, ` : '')
       + `and ${f.unpaid.length} unpaid invoice${f.unpaid.length === 1 ? '' : 's'}. Arithmetic only — no forecasting model.`
       + (f.dropped ? ` (${f.dropped} invoice${f.dropped === 1 ? '' : 's'} due beyond ${n} months left out.)` : '')
       + (f.rec.items.length ? '' : ' Flag bills as “repeats monthly” on the Money in &amp; out tab to sharpen this.');
@@ -3297,6 +3349,95 @@
     body.appendChild(wrap);
   }
 
+  // ── Commitments: debts owed + planned purchases (money out, hand-entered) ────
+  async function reloadCommitments() {
+    try { const c = await fetch('/finance/commitments').then((r) => r.json()); if (Array.isArray(c)) state.commitments = c; }
+    catch (e) { console.error('load commitments failed', e); }
+  }
+  async function addCommitment(kind) {
+    const label = kind === 'debt' ? 'New debt' : 'New purchase';
+    try { await postJson('/finance/commitments', { kind, label, active: true }); await reloadCommitments(); renderFinanceContent(); }
+    catch (e) { alert('Could not add: ' + e.message); }
+  }
+  async function saveCommitment(id, patch) {
+    try { await patchJson('/finance/commitments/' + id, patch); await reloadCommitments(); }
+    catch (e) { alert('Could not save: ' + e.message); }
+  }
+  async function removeCommitment(id) {
+    if (!confirm('Delete this? It will stop feeding the forecast.')) return;
+    try { await fetch('/finance/commitments/' + id, { method: 'DELETE' }); await reloadCommitments(); renderFinanceContent(); }
+    catch (e) { alert('Could not delete: ' + e.message); }
+  }
+
+  function commitmentCard(c) {
+    const isDebt = c.kind === 'debt';
+    const card = document.createElement('div'); card.className = 'fin-ctr-card' + (c.active ? '' : ' inactive');
+    const grid = isDebt ? `
+        <label>Owed now<input class="fin-cmt-balance" type="number" step="0.01" inputmode="decimal" value="${c.balance ? esc(String(c.balance)) : ''}" placeholder="0.00"></label>
+        <label>Repay / month<input class="fin-cmt-amount" type="number" step="0.01" inputmode="decimal" value="${c.amount ? esc(String(c.amount)) : ''}" placeholder="0.00"></label>
+        <label>Repay from<input class="fin-cmt-start" type="month" value="${esc(c.start_month || '')}"></label>
+        <label>Until (blank = paid off)<input class="fin-cmt-end" type="month" value="${esc(c.end_month || '')}"></label>` : `
+        <label>Cost<input class="fin-cmt-amount" type="number" step="0.01" inputmode="decimal" value="${c.amount ? esc(String(c.amount)) : ''}" placeholder="0.00"></label>
+        <label>When<input class="fin-cmt-due" type="month" value="${esc(c.due_month || '')}"></label>`;
+    card.innerHTML = `
+      <div class="fin-ctr-row1">
+        <span class="fin-cmt-tag ${isDebt ? 'debt' : 'buy'}">${isDebt ? 'Debt' : 'Purchase'}</span>
+        <input class="fin-ctr-label" type="text" value="${esc(c.label || '')}" placeholder="${isDebt ? 'Who / what you owe' : 'What you’re buying'}">
+        <label class="fin-ctr-active"><input type="checkbox" ${c.active ? 'checked' : ''}> active</label>
+      </div>
+      <div class="fin-ctr-grid">${grid}</div>
+      <div class="fin-ctr-foot"><button type="button" class="fin-ctr-del">Delete</button></div>`;
+    const q = (sel) => card.querySelector(sel);
+    // Value edits re-render so the forecast + total position update immediately
+    // (change fires on blur, so the field is already committed).
+    const onSave = (patch) => saveCommitment(c.id, patch).then(() => renderFinanceContent());
+    q('.fin-ctr-label').addEventListener('change', (e) => saveCommitment(c.id, { label: e.target.value }));
+    q('.fin-ctr-active input').addEventListener('change', (e) => onSave({ active: e.target.checked }));
+    if (q('.fin-cmt-amount')) q('.fin-cmt-amount').addEventListener('change', (e) => onSave({ amount: e.target.value }));
+    if (q('.fin-cmt-balance')) q('.fin-cmt-balance').addEventListener('change', (e) => onSave({ balance: e.target.value }));
+    if (q('.fin-cmt-due')) q('.fin-cmt-due').addEventListener('change', (e) => onSave({ due_month: e.target.value }));
+    if (q('.fin-cmt-start')) q('.fin-cmt-start').addEventListener('change', (e) => onSave({ start_month: e.target.value }));
+    if (q('.fin-cmt-end')) q('.fin-cmt-end').addEventListener('change', (e) => onSave({ end_month: e.target.value }));
+    q('.fin-ctr-del').addEventListener('click', () => removeCommitment(c.id));
+    return card;
+  }
+
+  function renderCommitments(sub) {
+    const wrap = document.createElement('div'); wrap.className = 'fin-screen fin-contracts';
+    const lead = document.createElement('p'); lead.className = 'fin-lead';
+    lead.textContent = 'Money going out that the bank hasn’t seen yet. A debt is what you owe now — it lowers your total position, and any monthly repayment shows on the Forecast until it’s paid off. A planned purchase is a one-off spend that lands as money-out in the month you pick. Enter things NOT already ticked “repeats monthly” on Transactions, so nothing is counted twice.';
+    wrap.appendChild(lead);
+
+    const list = document.createElement('div'); list.className = 'fin-ctr-list';
+    const items = (state.commitments || []).slice().sort((a, b) => {
+      if ((a.kind === 'debt') !== (b.kind === 'debt')) return a.kind === 'debt' ? -1 : 1;   // debts first
+      return String(a.label).localeCompare(String(b.label));
+    });
+    if (!items.length) {
+      const e = document.createElement('div'); e.className = 'fin-soon'; e.textContent = 'Nothing here yet — add a debt you owe or a purchase you’re planning below.';
+      list.appendChild(e);
+    } else {
+      for (const c of items) list.appendChild(commitmentCard(c));
+    }
+    wrap.appendChild(list);
+
+    const adds = document.createElement('div'); adds.className = 'fin-cmt-adds';
+    const addDebt = document.createElement('button'); addDebt.type = 'button'; addDebt.className = 'fin-ctr-add';
+    addDebt.textContent = '+ Debt I owe'; addDebt.addEventListener('click', () => addCommitment('debt'));
+    const addBuy = document.createElement('button'); addBuy.type = 'button'; addBuy.className = 'fin-ctr-add';
+    addBuy.textContent = '+ Planned purchase'; addBuy.addEventListener('click', () => addCommitment('purchase'));
+    adds.appendChild(addDebt); adds.appendChild(addBuy);
+    wrap.appendChild(adds);
+
+    sub.appendChild(wrap);
+  }
+  // Sum of what you currently owe (active debts' balances) — lowers total position.
+  function debtOwedTotal() {
+    return round2((state.commitments || [])
+      .filter((c) => c.active && c.kind === 'debt')
+      .reduce((s, c) => s + (Number(c.balance) || 0), 0));
+  }
+
   // ── Overview screen: dashboard + forecast on top, sub-tabs beneath ──────────
   function renderOverviewScreen(body) {
     const hasTx = state.transactions.length > 0;
@@ -3324,6 +3465,7 @@
     const tab = state.overviewTab || 'transactions';
     if (tab === 'subscriptions') renderSubscriptions(sub);
     else if (tab === 'contracts') renderContracts(sub);
+    else if (tab === 'commitments') renderCommitments(sub);
     else renderTransactionsTab(sub);
   }
 
