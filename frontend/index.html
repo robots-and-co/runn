@@ -388,14 +388,6 @@
   .total.is-active .amt { background: var(--brand); color: #fff; border-color: var(--brand); }
   .total.is-active .amt::before { opacity: .8; }
 
-  /* Left pane flips between jobs and invoices (toggled by the $ total) */
-  .billing-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px; display: none; }
-  body.show-invoices #jobList,
-  body.show-invoices .focus-bar,
-  body.show-invoices .list-sub,
-  body.show-invoices .list-search,
-  body.show-invoices .list-foot { display: none; }
-  body.show-invoices .billing-list { display: block; }
   .bill-entry.active { border-color: var(--brand); box-shadow: inset 3px 0 0 var(--brand); }
 
   /* ── Billing pane ───────────────────────────────── */
@@ -446,6 +438,10 @@
   .jobs-btn.is-active, .finance-btn.is-active {
     background: var(--brand); border-color: var(--brand); color: #fff;
   }
+  /* Finance carries the billable total as a small figure beside its label. */
+  .finance-btn .fin-amt { font-size: 12px; font-weight: 700; color: var(--muted); margin-left: 7px; }
+  .finance-btn .fin-amt::before { content: '$'; opacity: .6; }
+  .finance-btn.is-active .fin-amt { color: #fff; }
   .total { margin-left: 8px; }
 
   /* Finances mirrors the invoices layout exactly: the tabs live as a LEFT LIST
@@ -476,6 +472,17 @@
   .fin-nav .main { flex: 1; min-width: 0; }
   .fin-nav .ttl { font-weight: 600; font-size: 15px; }
   .fin-nav .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  /* Collapsible sections (Invoices, Reports) in the finance left list. */
+  .fin-exp { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+    padding: 13px 14px; margin-bottom: 8px; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--surface); cursor: pointer; font: inherit; }
+  .fin-exp:hover { border-color: var(--brand); }
+  .fin-exp .caret { color: var(--muted); font-size: 11px; transition: transform .15s ease; }
+  .fin-exp.open .caret { transform: rotate(90deg); }
+  .fin-exp .ttl { font-weight: 600; font-size: 15px; flex: 1; }
+  .fin-exp .count { color: var(--muted); font-size: 13px; }
+  .fin-exp-body { margin: -2px 0 12px; }
+  .fin-exp-body .empty { color: var(--muted); font-size: 13px; padding: 4px 6px 10px; }
   .finance-body { flex: 1; overflow: auto; padding: 18px; }
   .fin-screen { max-width: 860px; }
   .fin-lead { color: var(--muted); font-size: 14px; margin: 0 0 16px; line-height: 1.5; }
@@ -1278,10 +1285,7 @@
         <button class="logo" id="logoReset" type="button" title="Reload — clears cached copies for a clean test">R</button>
         <h1>Runn</h1>
         <button class="jobs-btn is-active" id="jobsBtn" type="button" title="Jobs — your task list">Jobs</button>
-        <button class="finance-btn" id="financeBtn" type="button" title="Finances — money in &amp; out, all kept on this machine">Finance</button>
-        <button class="total clickable" id="billingBtn" type="button" title="Invoices — tap to flip this list to billing">
-          <span class="amt" id="valueTotal">0.00</span>
-        </button>
+        <button class="finance-btn" id="financeBtn" type="button" title="Finances — invoices, money in &amp; out, all kept on this machine"><span class="fin-lbl">Finance</span><span class="fin-amt" id="valueTotal">0.00</span></button>
       </div>
       <div class="list-flip" id="listFlip">
         <div class="usage-strip" id="usageStrip" hidden title="">
@@ -1301,7 +1305,6 @@
                  placeholder="Focus or a quote…" aria-label="Focus or quote"></textarea>
         </div>
         <div class="job-list" id="jobList"></div>
-        <div class="billing-list" id="billingList"></div>
         <div class="finance-list" id="financeList"></div>
       </div>
       <div class="list-foot">
@@ -1396,9 +1399,10 @@
     filterProject: '',     // '' = all projects (only meaningful within a client)
     picking: false,        // choosing a client for a new job
     draftClientId: null,   // client chosen for the not-yet-saved draft
-    invoicesPane: false,   // left pane flipped from jobs → invoices (tap the $ total)
     invoices: new Map(),   // id -> issued invoice record
     billingSel: null,      // null = list; {kind:'draft',clientId} | {kind:'invoice',id}
+    finInvOpen: false,     // Finance left list: Invoices expander open?
+    finReportsOpen: false, // Finance left list: Reports expander open?
     editing: null,         // working copy of the invoice draft being composed
     editingTurn: null,     // {id, idx} of a private user turn being edited (pre-invite)
     expandedBubbles: new Set(), // keys of AI bubbles the user opened by hand — kept open across re-renders (incl. mid-turn)
@@ -2456,29 +2460,20 @@
   // in the main pane (a slide-over on mobile, the right column on desktop).
   const isMobile = () => window.matchMedia('(max-width: 720px)').matches;
   // Set true right before a programmatic history.back() so the resulting popstate
-  // is swallowed (avoids the back from closePreview cascading into exitInvoices).
+  // is swallowed (avoids the back from closePreview cascading into exitFinance).
   let suppressPop = false;
 
-  // Highlight exactly one header nav button for the view you're in. Jobs (the
-  // default list) is active whenever neither Finances nor Invoices is open.
+  // Two header nav buttons, radio-style: Jobs and Finance. Finance is active
+  // whenever the Finance area is open (invoices now live inside it); Jobs
+  // otherwise. Tapping the view you're already on does nothing.
   function syncNav() {
     $('financeBtn').classList.toggle('is-active', !!state.financePane);
-    $('billingBtn').classList.toggle('is-active', !!state.invoicesPane);
-    $('jobsBtn').classList.toggle('is-active', !state.financePane && !state.invoicesPane);
+    $('jobsBtn').classList.toggle('is-active', !state.financePane);
   }
-  // The three header buttons act like radio buttons: tapping the view you're
-  // already on does nothing (no toggle-off). Jobs button returns to the jobs
-  // list, closing whichever pane is open.
+  // Jobs button: return to the jobs list, closing the Finance area if open.
   function showJobs() {
-    if (!state.financePane && !state.invoicesPane) { syncNav(); return; }
-    flipPane(() => {
-      if (state.financePane) exitFinance();
-      else if (state.invoicesPane) exitInvoices();
-    });
-  }
-  function toggleInvoices() {
-    if (state.invoicesPane) return;   // already on invoices — ignore
-    flipPane(() => { enterInvoices(); });
+    if (!state.financePane) { syncNav(); return; }
+    flipPane(() => { exitFinance(); });
   }
   // Half-flip the list body out (edge-on), run `applyChange` while it's hidden,
   // then flip the new content back in. Honours reduced-motion (instant swap).
@@ -2503,59 +2498,34 @@
     };
     flip.addEventListener('animationend', onOut);
   }
-  function enterInvoices() {
-    state.invoicesPane = true;
-    state.currentId = null;
-    state.picking = false;
-    state.billingSel = null;
-    state.editing = null;
-    resetNewJobPicker();
-    // Leave finances if it was open (they share the list body).
-    state.financePane = false;
-    document.body.classList.remove('show-finance', 'show-finance-main');
-    document.body.classList.add('show-invoices');
-    syncNav();
-    if (isMobile()) {
-      if (!(history.state && history.state.runnInvoices)) history.pushState({ runnInvoices: true }, '');
-    } else {
-      document.body.classList.add('show-billing');   // desktop: doc/placeholder fills the main column
-    }
-    renderList();
-    renderBilling();
-  }
-  function exitInvoices(opts) {
-    const fromPop = opts === true || (opts && opts.fromPop === true);
-    state.invoicesPane = false;
-    state.billingSel = null;
-    state.editing = null;
-    document.body.classList.remove('show-invoices', 'show-billing');
-    syncNav();
-    renderList();
-    renderChat();
-    if (!fromPop && history.state && history.state.runnInvoices) history.back();
-  }
-  // Open one invoice/draft document in the main pane.
+  // Open one invoice/draft document in the main pane. Invoices live inside the
+  // Finance area now: the finance left list stays put (show-finance), and the
+  // doc pane (show-billing) takes over the main column from the finance content
+  // pane (show-finance-main).
   function openInvoiceDoc(sel) {
     state.billingSel = sel;
+    document.body.classList.remove('show-finance-main');
     document.body.classList.add('show-billing');
     // Mobile: push a history entry so the device back button returns to the
-    // invoice LIST (closeBillingDoc) rather than exiting the pane to the jobs list.
+    // finance list (closeBillingDoc) rather than exiting the whole area.
     if (isMobile() && !(history.state && history.state.runnBillingDoc)) history.pushState({ runnBillingDoc: true }, '');
     renderBilling();
   }
-  // Close the open document, returning to the invoice list (mobile slides back;
-  // desktop falls to the placeholder).
+  // Close the open document, returning to the finance list (mobile slides back;
+  // desktop falls to the finance content pane, e.g. the Overview).
   function closeBillingDoc(opts) {
     const fromPop = opts === true || (opts && opts.fromPop === true);
     state.billingSel = null;
     state.editing = null;
-    if (isMobile()) document.body.classList.remove('show-billing');
-    renderBilling();
+    document.body.classList.remove('show-billing');
+    if (!isMobile()) document.body.classList.add('show-finance-main');
+    renderFinanceNav();
+    renderFinanceContent();
     if (!fromPop && history.state && history.state.runnBillingDoc) { suppressPop = true; history.back(); }
   }
   // Don't auto-rerender billing out from under an in-progress draft edit.
   function maybeRenderBilling() {
-    if (!state.invoicesPane) return;
+    if (!state.financePane) return;
     if (state.billingSel && state.billingSel.kind === 'draft') return;
     renderBilling();
   }
@@ -2578,7 +2548,7 @@
     { key: 'subscriptions', label: 'Subscriptions' },
     { key: 'contracts', label: 'Contracts' },
   ];
-  // Flip the list body between jobs and the finance tab list, like toggleInvoices.
+  // Flip the list body between jobs and the finance list (radio-style).
   function toggleFinance() {
     if (state.financePane) return;   // already on finances — ignore
     flipPane(() => { enterFinance(); });
@@ -2587,10 +2557,11 @@
     state.financePane = true;
     state.currentId = null;
     state.importPreview = null;
-    // Keep whichever finance tab you were last on (defaults to 'import' first time).
-    // Leave invoices if it was open (they share the list body).
-    document.body.classList.remove('show-invoices', 'show-billing');
-    state.invoicesPane = false;
+    state.billingSel = null;    // land on the finance content, not a stale invoice doc
+    state.editing = null;
+    // Land on the Overview screen each time the area is opened.
+    state.financeScreen = 'overview';
+    document.body.classList.remove('show-billing');
     document.body.classList.add('show-finance');
     syncNav();
     if (isMobile()) {
@@ -2605,7 +2576,9 @@
     const fromPop = opts === true || (opts && opts.fromPop === true);
     state.financePane = false;
     state.importPreview = null;
-    document.body.classList.remove('show-finance', 'show-finance-main');
+    state.billingSel = null;
+    state.editing = null;
+    document.body.classList.remove('show-finance', 'show-finance-main', 'show-billing');
     syncNav();
     renderList();
     renderChat();
@@ -2617,9 +2590,17 @@
     if (!s || !s.ready) return;
     state.financeScreen = key;
     state.importPreview = null;
+    closeAnyInvoiceDoc();
     document.body.classList.add('show-finance-main');
     if (isMobile() && !(history.state && history.state.runnFinanceContent)) history.pushState({ runnFinanceContent: true }, '');
     renderFinance();
+  }
+  // Leaving an open invoice doc for a finance content screen: drop the selection
+  // and hand the main column back to the finance content pane.
+  function closeAnyInvoiceDoc() {
+    state.billingSel = null;
+    state.editing = null;
+    document.body.classList.remove('show-billing');
   }
   // Mobile back chevron on the content pane → return to the tab list.
   function closeFinanceContent(opts) {
@@ -2652,31 +2633,80 @@
     renderFinanceNav();
     renderFinanceContent();
   }
-  // The left-pane list: Overview, then the generated BAS reports.
+  // The left-pane list: Overview on top, then the Invoices and Reports sections
+  // as collapsible expanders.
   function renderFinanceNav() {
     const list = $('financeList');
     if (!list) return;
     list.innerHTML = '';
+    // Overview (active only when its content is showing, not an open invoice doc).
     for (const s of FINANCE_SCREENS) {
       const b = document.createElement('button');
-      b.className = 'fin-nav' + (s.key === state.financeScreen ? ' active' : '');
+      b.className = 'fin-nav' + (s.key === state.financeScreen && !state.billingSel ? ' active' : '');
       b.innerHTML = `<span class="main"><span class="ttl">${esc(s.label)}</span><span class="sub">${esc(s.hint)}</span></span>`;
       b.addEventListener('click', () => openFinanceScreen(s.key));
       list.appendChild(b);
     }
+    // Invoices expander: drafts (done work not yet billed) + issued invoices.
+    const groups = billingGroups();
+    const invs = [...state.invoices.values()].sort((a, b) => String(b.issued_at).localeCompare(String(a.issued_at)));
+    const invCount = groups.length + invs.length;
+    list.appendChild(expander('Invoices', invCount, 'finInvOpen', (bodyEl) => {
+      if (!invCount) { const e = document.createElement('div'); e.className = 'empty';
+        e.textContent = 'Nothing to bill yet. Mark a job “done” and it lands here as a draft.'; bodyEl.appendChild(e); return; }
+      for (const g of groups) {
+        const n = g.rows.length;
+        bodyEl.appendChild(billEntry({
+          title: g.client.name || 'Client',
+          sub: `${n} ${n === 1 ? 'item' : 'items'} · not yet invoiced`,
+          sum: money(g.total),
+          active: !!(state.billingSel && state.billingSel.kind === 'draft' && state.billingSel.clientId === g.client.id),
+          onClick: () => openDraft(g.client.id),
+        }));
+      }
+      for (const inv of invs) {
+        const company = inv.snapshot?.to?.company || clientName(inv.client_id) || '';
+        bodyEl.appendChild(billEntry({
+          title: '#' + inv.id,
+          sub: `${company} · ${fmtDate(inv.issued_at)}`,
+          badge: inv.status,
+          sum: money(inv.total),
+          active: !!(state.billingSel && state.billingSel.kind === 'invoice' && state.billingSel.id === inv.id),
+          onClick: () => openInvoiceDoc({ kind: 'invoice', id: inv.id }),
+        }));
+      }
+    }));
+    // Reports expander: the generated BAS reports.
     const reports = financeReports();
-    if (reports.length) {
-      const head = document.createElement('div'); head.className = 'fin-nav-head'; head.textContent = 'BAS reports';
-      list.appendChild(head);
+    list.appendChild(expander('Reports', reports.length, 'finReportsOpen', (bodyEl) => {
+      if (!reports.length) { const e = document.createElement('div'); e.className = 'empty';
+        e.textContent = 'Import a bank CSV to generate BAS reports.'; bodyEl.appendChild(e); return; }
       for (const rep of reports) {
-        const active = state.financeScreen === 'report' && state.reportSel && state.reportSel.key === rep.key;
+        const active = state.financeScreen === 'report' && !state.billingSel && state.reportSel && state.reportSel.key === rep.key;
         const b = document.createElement('button');
         b.className = 'fin-nav' + (active ? ' active' : '');
         b.innerHTML = `<span class="main"><span class="ttl">${esc(rep.label)}</span><span class="sub">${esc(rep.sub)}</span></span>`;
         b.addEventListener('click', () => openFinanceReport(rep));
-        list.appendChild(b);
+        bodyEl.appendChild(b);
       }
+    }));
+  }
+  // A collapsible section header + body. `flag` is the state key holding its
+  // open/closed state; `fill(bodyEl)` populates the body when open.
+  function expander(label, count, flag, fill) {
+    const frag = document.createDocumentFragment();
+    const open = !!state[flag];
+    const head = document.createElement('button'); head.type = 'button';
+    head.className = 'fin-exp' + (open ? ' open' : '');
+    head.innerHTML = `<span class="caret">▶</span><span class="ttl">${esc(label)}</span><span class="count">${count}</span>`;
+    head.addEventListener('click', () => { state[flag] = !state[flag]; renderFinanceNav(); });
+    frag.appendChild(head);
+    if (open) {
+      const bodyEl = document.createElement('div'); bodyEl.className = 'fin-exp-body';
+      fill(bodyEl);
+      frag.appendChild(bodyEl);
     }
+    return frag;
   }
   // The selected tab's content, in the main pane.
   function renderFinanceContent() {
@@ -2694,6 +2724,7 @@
   function openFinanceReport(rep) {
     state.financeScreen = 'report';
     state.reportSel = rep;
+    closeAnyInvoiceDoc();
     document.body.classList.add('show-finance-main');
     if (isMobile() && !(history.state && history.state.runnFinanceContent)) history.pushState({ runnFinanceContent: true }, '');
     renderFinance();
@@ -2944,11 +2975,9 @@
     const d = new Date(ym + '-01T00:00:00');
     return isNaN(d) ? ym : d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
   }
-  // Drill-down: leave finances, open the invoice on the invoices screen.
+  // Drill-down from the Overview: expand the Invoices section and open the doc.
   function goToInvoice(id) {
-    state.financePane = false;
-    document.body.classList.remove('show-finance');
-    enterInvoices();
+    state.finInvOpen = true;
     openInvoiceDoc({ kind: 'invoice', id });
   }
 
@@ -3580,11 +3609,20 @@
     out.forEach((g) => g.rows.sort((a, b) => String(a.job.done_at || a.job.updated_at).localeCompare(String(b.job.done_at || b.job.updated_at))));
     return out.sort((a, b) => b.total - a.total);
   }
-  // Two surfaces: the list (left pane) and the open document (main pane).
+  // Re-render the invoice surface within the Finance area: the left list (its
+  // Invoices/Reports expanders) always, plus either the open document or — when
+  // nothing is selected — a fall back to the finance content pane.
   function renderBilling() {
-    if (!state.invoicesPane) return;
-    renderBillingList($('billingList'));
-    renderBillingDoc();
+    if (!state.financePane) return;
+    renderFinanceNav();
+    if (state.billingSel) {
+      renderBillingDoc();
+    } else {
+      // Dropped back to the list (e.g. issued, voided, or last draft line removed).
+      document.body.classList.remove('show-billing');
+      if (!isMobile()) document.body.classList.add('show-finance-main');
+      renderFinanceContent();
+    }
   }
   // The status pill beside the billing-pane title (issued docs only).
   function setBillingBadge(status) {
@@ -3603,49 +3641,6 @@
     setBillingBadge(null);
     titleEl.textContent = 'Billing';
     body.innerHTML = '<div class="empty">Select a draft or an invoice to open it.</div>';
-  }
-
-  function renderBillingList(body) {
-    body.innerHTML = '';   // rebuild from scratch — otherwise repeat renders stack duplicate sections
-    const groups = billingGroups();
-    const invs = [...state.invoices.values()].sort((a, b) => String(b.issued_at).localeCompare(String(a.issued_at)));
-    if (!groups.length && !invs.length) {
-      body.innerHTML = '<div class="empty">Nothing to bill yet. Mark a job “done” and it lands here as a draft.</div>';
-      return;
-    }
-    if (groups.length) {
-      const h = document.createElement('div'); h.className = 'bill-section-h'; h.textContent = 'Drafts';
-      body.appendChild(h);
-      for (const g of groups) {
-        const n = g.rows.length;
-        body.appendChild(billEntry({
-          title: g.client.name || 'Client',
-          sub: `${n} ${n === 1 ? 'item' : 'items'} · not yet invoiced`,
-          sum: money(g.total),
-          active: !!(state.billingSel && state.billingSel.kind === 'draft' && state.billingSel.clientId === g.client.id),
-          onClick: () => openDraft(g.client.id),
-        }));
-      }
-    }
-    const ih = document.createElement('div'); ih.className = 'bill-section-h'; ih.textContent = 'Invoices';
-    body.appendChild(ih);
-    if (!invs.length) {
-      const e = document.createElement('div'); e.className = 'empty'; e.style.padding = '20px 8px';
-      e.textContent = 'No issued invoices yet.';
-      body.appendChild(e);
-    } else {
-      for (const inv of invs) {
-        const company = inv.snapshot?.to?.company || clientName(inv.client_id) || '';
-        body.appendChild(billEntry({
-          title: '#' + inv.id,
-          sub: `${company} · ${fmtDate(inv.issued_at)}`,
-          badge: inv.status,
-          sum: money(inv.total),
-          active: !!(state.billingSel && state.billingSel.kind === 'invoice' && state.billingSel.id === inv.id),
-          onClick: () => openInvoiceDoc({ kind: 'invoice', id: inv.id }),
-        }));
-      }
-    }
   }
 
   function billEntry({ title, sub, sum, badge, active, onClick }) {
@@ -4142,16 +4137,12 @@
     }
   }
   function openJob(id) {
-    if (state.invoicesPane) {
-      state.invoicesPane = false;
-      state.billingSel = null;
-      state.editing = null;
-      document.body.classList.remove('show-invoices', 'show-billing');
-    }
     if (state.financePane) {
       state.financePane = false;
+      state.billingSel = null;
+      state.editing = null;
       state.importPreview = null;
-      document.body.classList.remove('show-finance', 'show-finance-main');
+      document.body.classList.remove('show-finance', 'show-finance-main', 'show-billing');
     }
     syncNav();
     state.currentId = id;
@@ -5169,7 +5160,6 @@
   // ── Wiring ──────────────────────────────────────
   $('backBtn').addEventListener('click', () => closeChat());
   $('jobsBtn').addEventListener('click', showJobs);
-  $('billingBtn').addEventListener('click', toggleInvoices);
   $('financeBtn').addEventListener('click', toggleFinance);
   // The doc-pane chevrons (mobile only) return to their list.
   $('billingBack').addEventListener('click', closeBillingDoc);
@@ -5180,10 +5170,9 @@
     const preview = $('invPreview');
     if (preview && preview.classList.contains('open')) { closePreview({ fromPop: true }); return; }
     if (document.body.classList.contains('show-chat')) closeChat({ fromPop: true });
+    else if (state.financePane && state.billingSel) closeBillingDoc({ fromPop: true });
     else if (state.financePane && document.body.classList.contains('show-finance-main') && isMobile()) closeFinanceContent({ fromPop: true });
     else if (state.financePane) exitFinance({ fromPop: true });
-    else if (state.invoicesPane && state.billingSel) closeBillingDoc({ fromPop: true });
-    else if (state.invoicesPane) exitInvoices({ fromPop: true });
   });
   $('newJobBtn').addEventListener('click', startNewJob);
   $('newJobPicker').addEventListener('change', (e) => {
