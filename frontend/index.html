@@ -384,7 +384,7 @@
   .total .amt::before { content: '$'; opacity: .6; }
   .total.clickable { cursor: pointer; }
   .total.clickable:hover .amt { border-color: var(--brand); }
-  /* active = the left pane is currently flipped to invoices */
+  /* active = the Finance area is currently open */
   .total.is-active .amt { background: var(--brand); color: #fff; border-color: var(--brand); }
   .total.is-active .amt::before { opacity: .8; }
 
@@ -423,25 +423,18 @@
   .badge.st-sent { background: #fdeede; color: #a85513; }
   .badge.st-paid { background: #e2f3e6; color: #2f7a45; }
 
-  /* ── Header nav buttons (Jobs · Finance) ── */
-  /* Two text switchers that split and stretch to fill the width left after the
-     logo and title; the invoices total stays pinned on the right. */
-  .jobs-btn, .finance-btn {
+  /* ── Header nav: Jobs button (text) + the $ total (opens Finance) ── */
+  /* Jobs stretches to fill the width left after the logo/title; the $ total
+     stays pinned on the right and now opens the Finance area. */
+  .jobs-btn {
     flex: 1; min-width: 0; height: 34px;
     display: inline-flex; align-items: center; justify-content: center;
     background: var(--surface); border: 1px solid #dbe3ec; border-radius: 8px;
     font: inherit; font-size: 14px; font-weight: 600; color: var(--ink);
-    cursor: pointer; padding: 0 10px; white-space: nowrap;
+    cursor: pointer; padding: 0 10px; white-space: nowrap; margin-left: 4px;
   }
-  .jobs-btn { margin-left: 4px; }
-  .jobs-btn:hover, .finance-btn:hover { border-color: var(--brand); }
-  .jobs-btn.is-active, .finance-btn.is-active {
-    background: var(--brand); border-color: var(--brand); color: #fff;
-  }
-  /* Finance carries the billable total as a small figure beside its label. */
-  .finance-btn .fin-amt { font-size: 12px; font-weight: 700; color: var(--muted); margin-left: 7px; }
-  .finance-btn .fin-amt::before { content: '$'; opacity: .6; }
-  .finance-btn.is-active .fin-amt { color: #fff; }
+  .jobs-btn:hover { border-color: var(--brand); }
+  .jobs-btn.is-active { background: var(--brand); border-color: var(--brand); color: #fff; }
   .total { margin-left: 8px; }
 
   /* Finances mirrors the invoices layout exactly: the tabs live as a LEFT LIST
@@ -1285,7 +1278,9 @@
         <button class="logo" id="logoReset" type="button" title="Reload — clears cached copies for a clean test">R</button>
         <h1>Runn</h1>
         <button class="jobs-btn is-active" id="jobsBtn" type="button" title="Jobs — your task list">Jobs</button>
-        <button class="finance-btn" id="financeBtn" type="button" title="Finances — invoices, money in &amp; out, all kept on this machine"><span class="fin-lbl">Finance</span><span class="fin-amt" id="valueTotal">0.00</span></button>
+        <button class="total clickable" id="financeBtn" type="button" title="Finances — invoices, money in &amp; out, all kept on this machine">
+          <span class="amt" id="valueTotal">0.00</span>
+        </button>
       </div>
       <div class="list-flip" id="listFlip">
         <div class="usage-strip" id="usageStrip" hidden title="">
