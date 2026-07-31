@@ -1612,20 +1612,28 @@
   // A discount line is just a negative amount; render it as -$150.00, not $-150.00.
   const moneySigned = (sym, n) => { n = Number(n) || 0; return n < 0 ? `-${sym}${money2(-n)}` : `${sym}${money2(n)}`; };
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-  // Subscription cadences and their monthly-equivalent multiplier. A weekly bill
-  // costs ~4.33× a monthly one; a yearly one costs 1/12 per month. The Forecast
-  // and Subscriptions total smear each to a per-month figure so a $1,200 annual
-  // premium counts as $100/month, not $1,200 every month. A missing cadence on an
-  // older row means monthly.
+  // Subscription cadences. perMonth is the monthly-equivalent multiplier used by
+  // the Subscriptions "per month" column (weekly ~4.33×, yearly 1/12×). In the
+  // Forecast, weekly/monthly are spread evenly across every month, but the
+  // "scheduled" ones (quarterly, yearly) instead LAND in the month they next fall
+  // due — every `stepMonths` from the last time the bank saw them — so a yearly
+  // premium shows as one hit, not a slice each month. A missing cadence means
+  // monthly.
   const FIN_CADENCES = [
-    { key: 'weekly',    label: 'Weekly',    every: 'week',    perMonth: 52 / 12 },
-    { key: 'monthly',   label: 'Monthly',   every: 'month',   perMonth: 1 },
-    { key: 'quarterly', label: 'Quarterly', every: 'quarter', perMonth: 1 / 3 },
-    { key: 'annually',  label: 'Yearly',    every: 'year',    perMonth: 1 / 12 },
+    { key: 'weekly',    label: 'Weekly',    perMonth: 52 / 12, scheduled: false },
+    { key: 'monthly',   label: 'Monthly',   perMonth: 1,       scheduled: false },
+    { key: 'quarterly', label: 'Quarterly', perMonth: 1 / 3,   scheduled: true, stepMonths: 3 },
+    { key: 'annually',  label: 'Yearly',    perMonth: 1 / 12,  scheduled: true, stepMonths: 12 },
   ];
   const CAD_BY_KEY = Object.fromEntries(FIN_CADENCES.map((c) => [c.key, c]));
   const cad = (key) => CAD_BY_KEY[key] || CAD_BY_KEY.monthly;
   const cadPerMonth = (key) => cad(key).perMonth;
+  // Step a YYYY-MM month key forward (or back) by n whole months.
+  const addMonths = (ym, n) => {
+    const [y, m] = ym.split('-').map(Number);
+    const t = y * 12 + (m - 1) + n;
+    return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, '0')}`;
+  };
   // "Today" is the Melbourne calendar day, not UTC: toISOString() is always UTC,
   // so before ~10am local it would read as yesterday. Pin the zone explicitly so
   // the date is right wherever this runs (NUC, container, or a remote browser).
@@ -3139,7 +3147,7 @@
     const items = [...byPayee.values()].map((t) => {
       const amount = Number(t.amount) || 0;
       const cadence = t.cadence || 'monthly';
-      return { narrative: t.narrative, amount, cadence, monthly: round2(amount * cadPerMonth(cadence)) };
+      return { narrative: t.narrative, amount, cadence, date: t.date, monthly: round2(amount * cadPerMonth(cadence)) };
     });
     const inMonthly = round2(items.filter((i) => i.monthly > 0).reduce((s, i) => s + i.monthly, 0));
     const outMonthly = round2(items.filter((i) => i.monthly < 0).reduce((s, i) => s + -i.monthly, 0));
@@ -3155,6 +3163,30 @@
     let cur = firstYm;
     for (let i = 0; i < nMonths; i++) { keys.push(cur); cur = nextYm(cur); }
     const lastKey = keys[keys.length - 1];
+    // Recurring bills. Weekly/monthly are spread evenly — their monthly-equivalent
+    // rides in every month. Quarterly/yearly instead LAND in the month they next
+    // fall due, projected forward by whole steps from the last time the bank saw
+    // them, so a yearly premium spikes once instead of drizzling all year.
+    let recFlatIn = 0, recFlatOut = 0;
+    const recSchedIn = new Map(), recSchedOut = new Map();
+    const bump = (map, k, v) => map.set(k, round2((map.get(k) || 0) + v));
+    for (const it of rec.items) {
+      const c = cad(it.cadence);
+      if (!c.scheduled) {
+        if (it.monthly > 0) recFlatIn = round2(recFlatIn + it.monthly);
+        else recFlatOut = round2(recFlatOut + -it.monthly);
+        continue;
+      }
+      const anchor = String(it.date || '').slice(0, 7);
+      if (anchor.length !== 7) continue;                  // no usable date → can't place it
+      let occ = addMonths(anchor, c.stepMonths);
+      let guard = 0;
+      while (occ < firstYm && guard++ < 600) occ = addMonths(occ, c.stepMonths);
+      for (; occ <= lastKey && guard++ < 600; occ = addMonths(occ, c.stepMonths)) {
+        if (it.amount > 0) bump(recSchedIn, occ, it.amount);
+        else bump(recSchedOut, occ, -it.amount);
+      }
+    }
     // Unpaid invoices land in their due month; anything overdue or due before the
     // window lands in month 1; anything past the horizon is left out (and counted).
     const unpaid = unpaidInvoices();
@@ -3225,11 +3257,13 @@
     for (const k of keys) {
       const invIn = round2(invByMonth.get(k) || 0);
       const contractIn = contractForMonth(k);
-      const expIn = round2(rec.inMonthly + invIn + contractIn);
+      const recIn = round2(recFlatIn + (recSchedIn.get(k) || 0));
+      const recOut = round2(recFlatOut + (recSchedOut.get(k) || 0));
+      const expIn = round2(recIn + invIn + contractIn);
       const plannedOut = round2(plannedByMonth.get(k) || 0);
-      const expOut = round2(rec.outMonthly + plannedOut);
+      const expOut = round2(recOut + plannedOut);
       const closing = round2(opening + expIn - expOut);
-      months.push({ month: k, opening: round2(opening), invIn, contractIn, expIn, expOut, plannedOut, closing });
+      months.push({ month: k, opening: round2(opening), invIn, contractIn, recIn, recOut, expIn, expOut, plannedOut, closing });
       opening = closing;
     }
     return { start, rec, unpaid, dropped, months, contracts: activeContracts, nDebt, nBuy };
@@ -3271,7 +3305,7 @@
     const basis = document.createElement('div'); basis.className = 'fin-note';
     basis.innerHTML = `Built from cash on hand <b>${esc(money(f.start))}</b>, `
       + `${f.rec.items.length} recurring item${f.rec.items.length === 1 ? '' : 's'} `
-      + `(${esc(money(f.rec.inMonthly))} in / ${esc(money(f.rec.outMonthly))} out each month), `
+      + `(${esc(money(f.rec.inMonthly))} in / ${esc(money(f.rec.outMonthly))} out a month on average — weekly and monthly spread evenly, quarterly and yearly land in the month they fall due), `
       + `${f.contracts.length} contract${f.contracts.length === 1 ? '' : 's'}, `
       + ((f.nDebt || f.nBuy) ? `${f.nDebt} debt${f.nDebt === 1 ? '' : 's'} + ${f.nBuy} planned purchase${f.nBuy === 1 ? '' : 's'}, ` : '')
       + `and ${f.unpaid.length} unpaid invoice${f.unpaid.length === 1 ? '' : 's'}. Arithmetic only — no forecasting model.`
@@ -3519,7 +3553,7 @@
   function renderSubscriptions(sub) {
     const wrap = document.createElement('div'); wrap.className = 'fin-screen';
     const lead = document.createElement('p'); lead.className = 'fin-lead';
-    lead.textContent = 'Your regular outgoings — anything set to repeat on a money-out row in Transactions. Weekly, monthly, quarterly or yearly; the “Per month” column spreads each to a monthly figure, which is what the Forecast spends.';
+    lead.textContent = 'Your regular outgoings — anything set to repeat on a money-out row in Transactions. Weekly, monthly, quarterly or yearly; the “Per month” column spreads each to a monthly figure so they compare like-for-like. (The Forecast is more precise: it lands quarterly and yearly bills in the actual month they fall due.)';
     wrap.appendChild(lead);
     const byPayee = new Map();
     for (const t of state.transactions) {
@@ -3559,7 +3593,7 @@
     wrap.appendChild(table);
     if (mixed) {
       const note = document.createElement('div'); note.className = 'fin-note';
-      note.textContent = 'Per month spreads weekly, quarterly and yearly bills evenly across the year (weekly ×4.33, quarterly ÷3, yearly ÷12).';
+      note.textContent = 'Per month spreads weekly, quarterly and yearly bills evenly for comparison (weekly ×4.33, quarterly ÷3, yearly ÷12). The Forecast instead lands quarterly and yearly bills in the month they next fall due — projected from when the bank last saw them.';
       wrap.appendChild(note);
     }
     sub.appendChild(wrap);
