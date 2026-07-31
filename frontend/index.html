@@ -524,7 +524,12 @@
   }
   .fin-cat-select.unset { color: var(--muted); border-style: dashed; }
   .fin-cat-select:focus { border-color: var(--brand); outline: none; }
-  .fin-rep { width: 17px; height: 17px; cursor: pointer; accent-color: var(--brand); }
+  .fin-rep {
+    font: inherit; font-size: 12.5px; padding: 4px 6px; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--ink);
+  }
+  .fin-rep.unset { color: var(--muted); border-style: dashed; }
+  .fin-rep:focus { border-color: var(--brand); outline: none; }
   .fin-dash { color: var(--muted); }
   .fin-inv-cell { white-space: nowrap; }
   .fin-inv-match {
@@ -1607,6 +1612,20 @@
   // A discount line is just a negative amount; render it as -$150.00, not $-150.00.
   const moneySigned = (sym, n) => { n = Number(n) || 0; return n < 0 ? `-${sym}${money2(-n)}` : `${sym}${money2(n)}`; };
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  // Subscription cadences and their monthly-equivalent multiplier. A weekly bill
+  // costs ~4.33× a monthly one; a yearly one costs 1/12 per month. The Forecast
+  // and Subscriptions total smear each to a per-month figure so a $1,200 annual
+  // premium counts as $100/month, not $1,200 every month. A missing cadence on an
+  // older row means monthly.
+  const FIN_CADENCES = [
+    { key: 'weekly',    label: 'Weekly',    every: 'week',    perMonth: 52 / 12 },
+    { key: 'monthly',   label: 'Monthly',   every: 'month',   perMonth: 1 },
+    { key: 'quarterly', label: 'Quarterly', every: 'quarter', perMonth: 1 / 3 },
+    { key: 'annually',  label: 'Yearly',    every: 'year',    perMonth: 1 / 12 },
+  ];
+  const CAD_BY_KEY = Object.fromEntries(FIN_CADENCES.map((c) => [c.key, c]));
+  const cad = (key) => CAD_BY_KEY[key] || CAD_BY_KEY.monthly;
+  const cadPerMonth = (key) => cad(key).perMonth;
   // "Today" is the Melbourne calendar day, not UTC: toISOString() is always UTC,
   // so before ~10am local it would read as yesterday. Pin the zone explicitly so
   // the date is right wherever this runs (NUC, container, or a remote browser).
@@ -2828,7 +2847,7 @@
     }
     const p = document.createElement('p');
     p.className = 'fin-lead';
-    p.innerHTML = 'Every bank row, newest first. Sort each into a category and flag anything that repeats monthly — do it once and future imports copy it. For money in, confirm which invoice it paid so it isn’t counted twice.';
+    p.innerHTML = 'Every bank row, newest first. Sort each into a category and, under Repeats, set how often anything regular recurs (Weekly … Yearly) — do it once and future imports copy it. For money in, confirm which invoice it paid so it isn’t counted twice.';
     wrap.appendChild(p);
 
     const table = document.createElement('table');
@@ -2880,13 +2899,21 @@
     });
     tdCat.appendChild(sel);
 
-    // Repeats-monthly toggle
+    // Repeats — off, or how often. Choosing a cadence flags it recurring; future
+    // imports of this payee inherit both the flag and the cadence.
     const tdRep = document.createElement('td');
     tdRep.className = 'ctr';
-    const rep = document.createElement('input');
-    rep.type = 'checkbox'; rep.className = 'fin-rep'; rep.checked = !!t.recurring;
-    rep.title = 'Repeats monthly — future imports of this payee inherit it';
-    rep.addEventListener('change', () => patchTxn(t.id, { recurring: rep.checked }));
+    const rep = document.createElement('select');
+    rep.className = 'fin-rep' + (t.recurring ? '' : ' unset');
+    rep.title = 'How often this repeats — future imports of this payee inherit it';
+    rep.appendChild(new Option('—', ''));
+    for (const c of FIN_CADENCES) rep.appendChild(new Option(c.label, c.key));
+    rep.value = t.recurring ? (t.cadence || 'monthly') : '';
+    rep.addEventListener('change', () => {
+      rep.classList.toggle('unset', !rep.value);
+      if (rep.value) patchTxn(t.id, { recurring: true, cadence: rep.value });
+      else patchTxn(t.id, { recurring: false });
+    });
     tdRep.appendChild(rep);
 
     // Invoice match (money-in only)
@@ -3107,9 +3134,15 @@
       const prev = byPayee.get(key);
       if (!prev || String(t.date) > String(prev.date)) byPayee.set(key, t);
     }
-    const items = [...byPayee.values()].map((t) => ({ narrative: t.narrative, amount: Number(t.amount) || 0 }));
-    const inMonthly = round2(items.filter((i) => i.amount > 0).reduce((s, i) => s + i.amount, 0));
-    const outMonthly = round2(items.filter((i) => i.amount < 0).reduce((s, i) => s + -i.amount, 0));
+    // Each stream carries its native charge (amount, at its cadence) and the
+    // monthly-equivalent (monthly) the forecast actually spends per month.
+    const items = [...byPayee.values()].map((t) => {
+      const amount = Number(t.amount) || 0;
+      const cadence = t.cadence || 'monthly';
+      return { narrative: t.narrative, amount, cadence, monthly: round2(amount * cadPerMonth(cadence)) };
+    });
+    const inMonthly = round2(items.filter((i) => i.monthly > 0).reduce((s, i) => s + i.monthly, 0));
+    const outMonthly = round2(items.filter((i) => i.monthly < 0).reduce((s, i) => s + -i.monthly, 0));
     return { items, inMonthly, outMonthly };
   }
   function buildForecast(nMonths) {
@@ -3243,7 +3276,7 @@
       + ((f.nDebt || f.nBuy) ? `${f.nDebt} debt${f.nDebt === 1 ? '' : 's'} + ${f.nBuy} planned purchase${f.nBuy === 1 ? '' : 's'}, ` : '')
       + `and ${f.unpaid.length} unpaid invoice${f.unpaid.length === 1 ? '' : 's'}. Arithmetic only — no forecasting model.`
       + (f.dropped ? ` (${f.dropped} invoice${f.dropped === 1 ? '' : 's'} due beyond ${n} months left out.)` : '')
-      + (f.rec.items.length ? '' : ' Flag bills as “repeats monthly” on the Money in &amp; out tab to sharpen this.');
+      + (f.rec.items.length ? '' : ' Set regular bills to repeat (Weekly … Yearly) on the Money in &amp; out tab to sharpen this.');
     wrap.appendChild(basis);
 
     // Projected balance — one bar per month, red when it goes negative.
@@ -3479,12 +3512,14 @@
     renderMoneyInOut(sub);
   }
 
-  // Subscriptions = regular outgoings: money-out rows flagged "repeats monthly",
-  // one per payee at its latest amount. Read-only; you flag them on Transactions.
+  // Subscriptions = regular outgoings: money-out rows set to repeat on the
+  // Transactions tab, one per payee at its latest amount. Read-only here; you set
+  // the cadence on Transactions. The "Per month" column and total are the
+  // monthly-equivalent, so weekly/quarterly/yearly bills compare like-for-like.
   function renderSubscriptions(sub) {
     const wrap = document.createElement('div'); wrap.className = 'fin-screen';
     const lead = document.createElement('p'); lead.className = 'fin-lead';
-    lead.textContent = 'Your regular outgoings — anything ticked “repeats monthly” on a money-out row in Transactions. These drive the money-out side of the Forecast.';
+    lead.textContent = 'Your regular outgoings — anything set to repeat on a money-out row in Transactions. Weekly, monthly, quarterly or yearly; the “Per month” column spreads each to a monthly figure, which is what the Forecast spends.';
     wrap.appendChild(lead);
     const byPayee = new Map();
     for (const t of state.transactions) {
@@ -3493,28 +3528,40 @@
       const prev = byPayee.get(key);
       if (!prev || String(t.date) > String(prev.date)) byPayee.set(key, t);
     }
-    const items = [...byPayee.values()].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+    const items = [...byPayee.values()].map((t) => {
+      const cadence = t.cadence || 'monthly';
+      const native = Math.abs(Number(t.amount) || 0);
+      return { narrative: t.narrative, category: t.category, cadence, native, monthly: round2(native * cadPerMonth(cadence)) };
+    }).sort((a, b) => b.monthly - a.monthly);
     if (!items.length) {
       const e = document.createElement('div'); e.className = 'fin-soon';
-      e.textContent = 'No subscriptions yet — tick “repeats monthly” on a money-out row in the Transactions tab.';
+      e.textContent = 'No subscriptions yet — set a money-out row to repeat (Weekly … Yearly) on the Transactions tab.';
       wrap.appendChild(e); sub.appendChild(wrap); return;
     }
-    const total = round2(items.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0));
+    const total = round2(items.reduce((s, i) => s + i.monthly, 0));
+    const mixed = items.some((i) => i.cadence !== 'monthly');
     const table = document.createElement('table'); table.className = 'fin-table';
-    table.innerHTML = '<thead><tr><th>Payee</th><th>Category</th><th class="num">Per month</th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Payee</th><th>Category</th><th>Repeats</th><th class="num">Amount</th><th class="num">Per month</th></tr></thead>';
     const tb = document.createElement('tbody');
-    for (const t of items) {
+    for (const i of items) {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td class="narr">${esc(t.narrative || '—')}</td>
-        <td>${esc(t.category ? (catById(t.category)?.name || t.category) : '—')}</td>
-        <td class="num amt out">${esc(money(Math.abs(Number(t.amount) || 0)))}</td>`;
+      tr.innerHTML = `<td class="narr">${esc(i.narrative || '—')}</td>
+        <td>${esc(i.category ? (catById(i.category)?.name || i.category) : '—')}</td>
+        <td>${esc(cad(i.cadence).label)}</td>
+        <td class="num amt out">${esc(money(i.native))}</td>
+        <td class="num amt out">${esc(money(i.monthly))}</td>`;
       tb.appendChild(tr);
     }
     const foot = document.createElement('tr'); foot.className = 'fin-sub-total';
-    foot.innerHTML = `<td>${items.length} subscription${items.length === 1 ? '' : 's'}</td><td></td><td class="num amt out"><b>${esc(money(total))}</b></td>`;
+    foot.innerHTML = `<td>${items.length} subscription${items.length === 1 ? '' : 's'}</td><td></td><td></td><td></td><td class="num amt out"><b>${esc(money(total))}</b></td>`;
     tb.appendChild(foot);
     table.appendChild(tb);
     wrap.appendChild(table);
+    if (mixed) {
+      const note = document.createElement('div'); note.className = 'fin-note';
+      note.textContent = 'Per month spreads weekly, quarterly and yearly bills evenly across the year (weekly ×4.33, quarterly ÷3, yearly ÷12).';
+      wrap.appendChild(note);
+    }
     sub.appendChild(wrap);
   }
 

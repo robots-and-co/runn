@@ -41,6 +41,12 @@ const DEFAULT_CATEGORIES = [
 
 const nowIso = () => new Date().toISOString();
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+
+// How often a recurring row repeats. Only meaningful when recurring is true;
+// a missing cadence on an older row means 'monthly'. The forecast converts each
+// to a monthly-equivalent figure (see the frontend), so the taxonomy lives here.
+const CADENCES = ['weekly', 'monthly', 'quarterly', 'annually'];
+function normCadence(c) { return CADENCES.includes(c) ? c : 'monthly'; }
 function slugify(s) {
   return String(s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || null;
 }
@@ -275,6 +281,7 @@ async function importCsv({ csv, account, dryRun, opening_balance, opening_date }
       serial: t.serial,
       category: null,      // our own category (learn-once rule may fill it below)
       recurring: false,    // learn-once recurring flag
+      cadence: 'monthly',  // how often it repeats (weekly|monthly|quarterly|annually)
       invoice_id: null,    // reconciliation link — set when matched to an invoice
       _key: t._key,
       imported_at: nowIso(),
@@ -363,14 +370,15 @@ async function readRules() {
 async function listRules() { return (await readRules()).rules; }
 async function writeRules(store) { await atomicWriteJson(RULES_PATH, store); }
 
-async function upsertRule({ narrative, category, recurring } = {}) {
+async function upsertRule({ narrative, category, recurring, cadence } = {}) {
   const stem = narrativeStem(narrative);
   if (!stem) return null;
   const store = await readRules();
   let rule = store.rules.find((r) => r.match === stem);
-  if (!rule) { rule = { match: stem, category: null, recurring: false, created_at: nowIso() }; store.rules.push(rule); }
+  if (!rule) { rule = { match: stem, category: null, recurring: false, cadence: 'monthly', created_at: nowIso() }; store.rules.push(rule); }
   if (category !== undefined) rule.category = category || null;
   if (recurring !== undefined) rule.recurring = !!recurring;
+  if (cadence !== undefined) rule.cadence = normCadence(cadence);
   rule.updated_at = nowIso();
   // A rule with nothing to say is just noise — drop it.
   if (rule.category == null && !rule.recurring) store.rules = store.rules.filter((r) => r !== rule);
@@ -391,7 +399,7 @@ function applyRulesToRow(row, rules) {
   const rule = rules.find((r) => r.match === stem);
   if (!rule) return row;
   if (rule.category != null && row.category == null) row.category = rule.category;
-  if (rule.recurring && !row.recurring) row.recurring = true;
+  if (rule.recurring && !row.recurring) { row.recurring = true; row.cadence = normCadence(rule.cadence); }
   row.rule_applied = rule.match;
   return row;
 }
@@ -407,10 +415,11 @@ async function patchTransaction(id, patch = {}) {
   let taught = false;
   if ('category' in patch) { t.category = patch.category || null; taught = true; }
   if ('recurring' in patch) { t.recurring = !!patch.recurring; taught = true; }
+  if ('cadence' in patch) { t.cadence = normCadence(patch.cadence); taught = true; }
   if ('invoice_id' in patch) { t.invoice_id = patch.invoice_id || null; } // reconciliation link
   await writeLedger(ledger);
   if (taught && patch.make_rule !== false) {
-    await upsertRule({ narrative: t.narrative, category: t.category, recurring: t.recurring });
+    await upsertRule({ narrative: t.narrative, category: t.category, recurring: t.recurring, cadence: t.cadence });
   }
   return t;
 }
