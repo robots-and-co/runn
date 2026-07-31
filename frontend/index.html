@@ -452,6 +452,10 @@
   .fin-nav .main { flex: 1; min-width: 0; }
   .fin-nav .ttl { font-weight: 600; font-size: 15px; }
   .fin-nav .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  /* Top-level Overview: reserve the chevron's width with an invisible caret so
+     its label lines up with Invoices/Reports, without showing a chevron. */
+  #financeList > .fin-nav { gap: 9px; }
+  #financeList > .fin-nav .caret { font-size: 11px; color: transparent; }
   /* Collapsible sections (Invoices, Reports) in the finance left list. */
   .fin-exp { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
     padding: 13px 14px; margin-bottom: 8px; border: 1px solid var(--border);
@@ -2627,7 +2631,7 @@
     for (const s of FINANCE_SCREENS) {
       const b = document.createElement('button');
       b.className = 'fin-nav' + (s.key === state.financeScreen && !state.billingSel ? ' active' : '');
-      b.innerHTML = `<span class="main"><span class="ttl">${esc(s.label)}</span></span>`;
+      b.innerHTML = `<span class="caret" aria-hidden="true">▶</span><span class="main"><span class="ttl">${esc(s.label)}</span></span>`;
       b.addEventListener('click', () => openFinanceScreen(s.key));
       list.appendChild(b);
     }
