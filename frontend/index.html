@@ -2520,7 +2520,7 @@
   // Contracts — lives as tabs UNDER the Overview, and the Forecast is merged into
   // the Overview dashboard.
   const FINANCE_SCREENS = [
-    { key: 'overview', label: 'Overview', hint: 'Cash, forecast, and your books', ready: true },
+    { key: 'overview', label: 'Overview', ready: true },
   ];
   const OVERVIEW_TABS = [
     { key: 'transactions', label: 'Transactions' },
@@ -2627,7 +2627,7 @@
     for (const s of FINANCE_SCREENS) {
       const b = document.createElement('button');
       b.className = 'fin-nav' + (s.key === state.financeScreen && !state.billingSel ? ' active' : '');
-      b.innerHTML = `<span class="main"><span class="ttl">${esc(s.label)}</span><span class="sub">${esc(s.hint)}</span></span>`;
+      b.innerHTML = `<span class="main"><span class="ttl">${esc(s.label)}</span></span>`;
       b.addEventListener('click', () => openFinanceScreen(s.key));
       list.appendChild(b);
     }
