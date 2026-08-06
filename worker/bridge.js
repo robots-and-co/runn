@@ -282,7 +282,7 @@ function dispatchPendingSpawnForCwd(cwd) {
 // first line / trailing question (frontend fallbackSummary), so lead with the
 // answer and keep it tight.
 const RESPONSE_DIRECTIVE = [
-  '# Response format — THE most important rule, obey it every single turn',
+  '# The 1st rule of Runn club — obey it every single turn',
   '',
   'The reader is dyslexic. Long replies physically exhaust them. They have asked',
   'for this many times. It overrides every other instruction about how you write',
