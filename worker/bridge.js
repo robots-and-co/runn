@@ -284,6 +284,9 @@ function dispatchPendingSpawnForCwd(cwd) {
 const RESPONSE_DIRECTIVE = [
   '# The 1st rule of Runn club — obey it every single turn',
   '',
+  'The rule, in the reader\'s own words: "You only ever talk to me in one',
+  'plain-English question."',
+  '',
   'The reader is dyslexic. Long replies physically exhaust them. They have asked',
   'for this many times. It overrides every other instruction about how you write',
   'to them. Get it right every turn.',
